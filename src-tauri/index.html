@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>CostDog</title>
+<style>
+:root{--bg:#0f0f17;--bar:#16161e;--card:#1e1e2e;--border:#2a2a3a;--text:#cdd6f4;--dim:#6c7086;--accent:#89b4fa;--green:#a6e3a1;--red:#f38ba8;--yellow:#f9e2af;--purple:#cba6f7}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color:var(--text);overflow:hidden;user-select:none}
+.bar{display:flex;align-items:center;justify-content:space-between;padding:0 10px;height:36px;background:linear-gradient(180deg,var(--bar),var(--bg));border-bottom:1px solid var(--border);-webkit-app-region:drag}
+.bar-left{display:flex;align-items:center;gap:10px}
+.bar-logo{font-size:12px;color:var(--accent);font-weight:700;overflow:hidden;width:40px;height:24px;position:relative}
+.dog{position:absolute;bottom:0;font-size:18px;animation:walk 3s linear infinite}
+@keyframes walk{0%{left:40px}100%{left:-10px}}
+.bar-sep{width:1px;height:14px;background:var(--border)}
+.bar-stat{display:flex;align-items:baseline;gap:4px}
+.bar-lbl{font-size:9px;color:var(--dim);letter-spacing:.5px}
+.bar-val{font-size:12px;font-weight:700}
+.vc{color:var(--red)}.vt{color:var(--yellow)}.vs{color:var(--accent)}
+.bar-right{display:flex;align-items:center;gap:2px}
+.bbtn{background:none;border:1px solid transparent;color:var(--dim);width:24px;height:24px;border-radius:4px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;-webkit-app-region:no-drag}
+.bbtn:hover{color:var(--text);background:var(--card);border-color:var(--border)}
+.detail{display:none;padding:12px;overflow-y:auto;height:calc(100vh - 36px)}
+.detail.show{display:block}
+.dh{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.dt{font-size:12px;color:var(--dim);font-weight:600}
+.xb{background:none;border:none;color:var(--dim);font-size:16px;cursor:pointer;padding:2px 6px;border-radius:3px}
+.xb:hover{color:var(--red)}
+.tabs{display:flex;gap:2px;margin-bottom:10px}
+.tab{padding:4px 10px;background:transparent;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--dim);font-size:10px;font-family:inherit}
+.tab.on{background:var(--card);color:var(--accent);border-color:var(--accent)}
+.alert{padding:6px 10px;border-radius:4px;margin-bottom:6px;font-size:11px}
+.aw{background:rgba(249,226,175,.08);border:1px solid rgba(249,226,175,.2);color:var(--yellow)}
+.ad{background:rgba(243,139,168,.08);border:1px solid rgba(243,139,168,.2);color:var(--red)}
+.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px}
+.sc{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 10px;position:relative;overflow:hidden}
+.sc::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.sc.s1::before{background:var(--accent)}.sc.s2::before{background:var(--red)}.sc.s3::before{background:var(--purple)}
+.sc.s4::before{background:var(--yellow)}.sc.s5::before{background:var(--green)}.sc.s6::before{background:var(--dim)}
+.sl{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.8px}
+.sv{font-size:16px;font-weight:700;margin-top:1px}
+.c{color:var(--red)}.ti{color:var(--yellow)}.to{color:var(--green)}.d{color:var(--purple)}.s{color:var(--accent)}
+.st{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin:10px 0 6px;font-weight:600}
+.mr{display:flex;justify-content:space-between;align-items:center;padding:5px 8px;font-size:11px;border-radius:4px;margin-bottom:2px;background:var(--card);border:1px solid var(--border)}
+.mn{color:var(--dim);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mc{font-weight:700}.ml{color:var(--dim);font-size:10px;margin-left:6px}
+table{width:100%;border-collapse:collapse;font-size:10px}
+th{text-align:left;padding:5px 6px;color:var(--dim);border-bottom:1px solid var(--border);font-size:9px;text-transform:uppercase;letter-spacing:.5px}
+td{padding:4px 6px;border-bottom:1px solid rgba(42,42,58,.5)}
+tr:hover{background:rgba(137,180,250,.03)}
+.badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700}
+.bcc{background:rgba(137,180,250,.12);color:var(--accent)}.bcx{background:rgba(166,227,161,.12);color:var(--green)}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+</style>
+</head>
+<body>
+<div class="bar">
+  <div class="bar-left">
+    <span class="bar-logo"><span class="dog">🐕</span></span>
+    <div class="bar-sep"></div>
+    <div class="bar-stat"><span class="bar-lbl">TODAY</span><span class="bar-val vc" id="bc">$0</span></div>
+    <div class="bar-sep"></div>
+    <div class="bar-stat"><span class="bar-lbl">TOK</span><span class="bar-val vt" id="bt">0</span></div>
+    <div class="bar-sep"></div>
+    <div class="bar-stat"><span class="bar-lbl">SESS</span><span class="bar-val vs" id="bs">0</span></div>
+    <div class="bar-sep"></div>
+    <button class="bbtn" onclick="doScan()" id="sb" title="Refresh">&#x21bb;</button>
+    <button class="bbtn" onclick="toggle()" title="Details">&#x25BC;</button>
+  </div>
+  <div class="bar-right">
+    <button class="bbtn" onclick="closeWindow()" title="Close">&#x2715;</button>
+  </div>
+</div>
+<div class="detail" id="detail">
+  <div class="dh"><span class="dt">CostDog — Cost Monitor</span><button class="xb" onclick="toggle()">&#x2715;</button></div>
+  <div class="tabs">
+    <div class="tab on" data-r="today">Today</div>
+    <div class="tab" data-r="week">7D</div>
+    <div class="tab" data-r="month">30D</div>
+    <div class="tab" data-r="all">All</div>
+  </div>
+  <div id="alerts"></div>
+  <div class="grid">
+    <div class="sc s1"><div class="sl">Sessions</div><div class="sv s" id="ds">0</div></div>
+    <div class="sc s2"><div class="sl">Cost</div><div class="sv c" id="dc">$0</div></div>
+    <div class="sc s3"><div class="sl">Disk</div><div class="sv d" id="dd">0</div></div>
+    <div class="sc s4"><div class="sl">Input</div><div class="sv ti" id="di">0</div></div>
+    <div class="sc s5"><div class="sl">Output</div><div class="sv to" id="do">0</div></div>
+    <div class="sc s6"><div class="sl">Cache</div><div class="sv" id="dk" style="color:var(--dim)">0</div></div>
+  </div>
+  <div class="st">Top Models</div>
+  <div id="dm"></div>
+  <div class="st">Recent Sessions</div>
+  <table><thead><tr><th>Src</th><th>Model</th><th>Proj</th><th>In</th><th>Out</th><th>$</th></tr></thead><tbody id="dt"></tbody></table>
+</div>
+<script>
+let D=null,R='today',open=false;
+const M={today:'today',week:'week',month:'month',all:'allTime'};
+function fT(n){if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n}
+function fC(n){if(n>=100)return'$'+n.toFixed(0);if(n>=1)return'$'+n.toFixed(2);return'$'+n.toFixed(4)}
+function fB(n){if(n>=1073741824)return(n/1073741824).toFixed(1)+'GB';if(n>=1048576)return(n/1048576).toFixed(1)+'MB';if(n>=1024)return(n/1024).toFixed(1)+'KB';return n+'B'}
+function toggle(){
+  open=!open;
+  document.getElementById('detail').classList.toggle('show',open);
+  document.body.style.overflow=open?'auto':'hidden';
+  // Use Tauri command to resize window
+  if(window.__TAURI_INTERNALS__){
+    window.__TAURI_INTERNALS__.invoke('resize_window',{width:410,height:open?520:36});
+  }
+}
+function closeWindow(){
+  if(window.__TAURI_INTERNALS__){
+    window.__TAURI_INTERNALS__.invoke('close_window');
+  }
+}
+function render(){
+  if(!D)return;
+  const t=D.today;
+  document.getElementById('bc').textContent=fC(t.cost);
+  document.getElementById('bt').textContent=fT(t.tokenUsage.inputTokens+t.tokenUsage.outputTokens);
+  document.getElementById('bs').textContent=t.sessions;
+  const d=D[M[R]];if(!d)return;
+  document.getElementById('ds').textContent=d.sessions;
+  document.getElementById('dc').textContent=fC(d.cost);
+  document.getElementById('di').textContent=fT(d.tokenUsage.inputTokens);
+  document.getElementById('do').textContent=fT(d.tokenUsage.outputTokens);
+  document.getElementById('dk').textContent=fT(d.tokenUsage.cacheReadTokens);
+  document.getElementById('dd').textContent=fB(d.diskWriteBytes);
+  const ms=d.topModels||[];
+  let mh='';
+  if(!ms.length) mh='<div style="color:var(--dim);font-size:11px;padding:4px 8px">No data</div>';
+  else ms.slice(0,5).forEach(m=>{mh+='<div class="mr"><span class="mn">'+m.model+'</span><span><span class="mc c">'+fC(m.cost)+'</span><span class="ml">'+m.calls+' calls</span></span></div>'});
+  document.getElementById('dm').innerHTML=mh;
+  let ah='';(D.alerts||[]).forEach(a=>{ah+='<div class="alert '+(a.level==='danger'?'ad':'aw')+'">'+(a.level==='danger'?'&#x1F534;':'&#x1F7E1;')+' '+a.message+'</div>'});
+  document.getElementById('alerts').innerHTML=ah;
+  const ss=D.recentSessions||[];
+  let th='';
+  if(!ss.length) th='<tr><td colspan="6" style="color:var(--dim);text-align:center;padding:12px">No data</td></tr>';
+  else ss.slice(0,15).forEach(s=>{th+='<tr><td><span class="badge '+(s.source==='claude-code'?'bcc':'bcx')+'">'+(s.source==='claude-code'?'CC':'CX')+'</span></td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
+  document.getElementById('dt').innerHTML=th;
+}
+async function load(){
+  try{
+    let data;
+    if(window.__TAURI_INTERNALS__){
+      // Use Tauri command to fetch data
+      const result=await window.__TAURI_INTERNALS__.invoke('get_data');
+      data=JSON.parse(result);
+    }else{
+      // Fallback to direct fetch
+      const r=await fetch('http://localhost:3456/api/dashboard');
+      data=await r.json();
+    }
+    D=data;render();
+  }catch(e){
+    document.getElementById('bc').textContent='--';
+    console.error('Load error:',e);
+  }
+}
+async function doScan(){const b=document.getElementById('sb');b.disabled=true;b.textContent='...';try{await fetch('http://localhost:3456/api/scan',{method:'POST'})}catch(e){}await load();b.disabled=false;b.innerHTML='&#x21bb;'}
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');R=t.dataset.r;render()}));
+load();setInterval(load,30000);
+</script>
+</body>
+</html>

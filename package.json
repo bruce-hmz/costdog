@@ -1,0 +1,38 @@
+{
+  "name": "costdog",
+  "version": "0.1.0",
+  "description": "🐕 Cost & resource monitor for Claude Code and Codex CLI",
+  "main": "dist/cli/index.js",
+  "bin": {
+    "costdog": "dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli/index.ts",
+    "dev:web": "tsx src/cli/index.ts web",
+    "start": "node dist/cli/index.js",
+    "start:web": "node dist/cli/index.js web",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "icons": "node scripts/generate-icons.js"
+  },
+  "keywords": ["claude-code", "codex", "cost", "monitor", "token", "openrouter"],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "@tauri-apps/api": "^2.3.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.0.0",
+    "better-sqlite3": "^12.11.1",
+    "chalk": "^5.6.2",
+    "express": "^5.2.1",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.3.0"
+  }
+}

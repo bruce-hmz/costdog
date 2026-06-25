@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🐕 CostDog — Cost Monitor</title>
+  <style>
+    :root {
+      --bg: #0d1117; --card: #161b22; --border: #30363d;
+      --text: #e6edf3; --dim: #8b949e; --accent: #58a6ff;
+      --green: #3fb950; --red: #f85149; --yellow: #d29922; --purple: #bc8cff;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+    header h1 { font-size: 24px; }
+    header h1 span { color: var(--accent); }
+    .scan-btn { background: var(--accent); color: #000; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+    .scan-btn:hover { opacity: 0.85; }
+    .scan-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+    .tab { padding: 8px 16px; background: var(--card); border: 1px solid var(--border); border-radius: 6px 6px 0 0; cursor: pointer; color: var(--dim); }
+    .tab.active { background: var(--border); color: var(--text); border-bottom-color: var(--border); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }
+    .card-label { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .card-value { font-size: 32px; font-weight: 700; }
+    .card-sub { font-size: 13px; color: var(--dim); margin-top: 4px; }
+    .cost { color: var(--red); }
+    .tokens-in { color: var(--yellow); }
+    .tokens-out { color: var(--green); }
+    .disk { color: var(--purple); }
+    .sessions-count { color: var(--accent); }
+    table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+    th { text-align: left; padding: 12px 16px; font-size: 12px; color: var(--dim); text-transform: uppercase; border-bottom: 1px solid var(--border); }
+    td { padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 14px; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover { background: rgba(88,166,255,0.05); }
+    .source-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .source-claude-code { background: rgba(88,166,255,0.15); color: var(--accent); }
+    .source-codex { background: rgba(63,185,80,0.15); color: var(--green); }
+    .alert { padding: 12px 16px; border-radius: 6px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .alert-warn { background: rgba(210,153,34,0.15); border: 1px solid rgba(210,153,34,0.3); }
+    .alert-danger { background: rgba(248,81,73,0.15); border: 1px solid rgba(248,81,73,0.3); }
+    .alert-info { background: rgba(88,166,255,0.15); border: 1px solid rgba(88,166,255,0.3); }
+    .chart-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .chart-bar-label { width: 120px; font-size: 13px; color: var(--dim); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .chart-bar-fill { height: 22px; border-radius: 4px; min-width: 2px; transition: width 0.3s; }
+    .chart-bar-value { font-size: 12px; color: var(--dim); }
+    .empty { text-align: center; padding: 40px; color: var(--dim); }
+    .refresh-info { font-size: 12px; color: var(--dim); }
+    #loading { display: flex; justify-content: center; padding: 60px; }
+    .spinner { width: 32px; height: 32px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🐕 <span>CostDog</span> <small style="font-size:13px;color:var(--dim)">v0.1</small></h1>
+      <div style="display:flex;gap:12px;align-items:center">
+        <span class="refresh-info" id="lastScan"></span>
+        <button class="scan-btn" id="scanBtn" onclick="doScan()">⟳ Scan Now</button>
+      </div>
+    </header>
+
+    <div class="tabs">
+      <div class="tab active" data-range="today">Today</div>
+      <div class="tab" data-range="week">7 Days</div>
+      <div class="tab" data-range="month">30 Days</div>
+      <div class="tab" data-range="allTime">All Time</div>
+    </div>
+
+    <div id="loading"><div class="spinner"></div></div>
+    <div id="content" style="display:none">
+
+      <!-- Alerts -->
+      <div id="alerts"></div>
+
+      <!-- Stats Cards -->
+      <div class="grid" id="statsCards"></div>
+
+      <!-- Model Breakdown -->
+      <div class="card" style="margin-bottom:24px">
+        <div class="card-label">Cost by Model</div>
+        <div id="modelChart"></div>
+      </div>
+
+      <!-- Recent Sessions -->
+      <div class="card">
+        <div class="card-label">Recent Sessions</div>
+        <table>
+          <thead>
+            <tr><th>Source</th><th>Model</th><th>Project</th><th>Input</th><th>Output</th><th>Disk</th><th>Cost</th></tr>
+          </thead>
+          <tbody id="sessionsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let dashData = null;
+    let currentRange = 'today';
+
+    const RANGE_MAP = { today: 'today', week: 'week', month: 'month', allTime: 'allTime' };
+
+    function fmtTokens(n) {
+      if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+      if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+      return n;
+    }
+    function fmtCost(n) {
+      if (n >= 100) return '$' + n.toFixed(0);
+      if (n >= 1) return '$' + n.toFixed(2);
+      return '$' + n.toFixed(4);
+    }
+    function fmtBytes(n) {
+      if (n >= 1073741824) return (n/1073741824).toFixed(1) + ' GB';
+      if (n >= 1048576) return (n/1048576).toFixed(1) + ' MB';
+      if (n >= 1024) return (n/1024).toFixed(1) + ' KB';
+      return n + ' B';
+    }
+
+    function renderDashboard() {
+      if (!dashData) return;
+      const d = dashData[RANGE_MAP[currentRange]];
+      if (!d) return;
+
+      // Stats cards
+      document.getElementById('statsCards').innerHTML = `
+        <div class="card"><div class="card-label">Sessions</div><div class="card-value sessions-count">${d.sessions}</div></div>
+        <div class="card"><div class="card-label">Total Cost</div><div class="card-value cost">${fmtCost(d.cost)}</div><div class="card-sub">Input: ${fmtTokens(d.tokenUsage.inputTokens)} · Output: ${fmtTokens(d.tokenUsage.outputTokens)}</div></div>
+        <div class="card"><div class="card-label">Cache Read</div><div class="card-value tokens-in">${fmtTokens(d.tokenUsage.cacheReadTokens)}</div><div class="card-sub">tokens saved from cache</div></div>
+        <div class="card"><div class="card-label">Disk Writes</div><div class="card-value disk">${fmtBytes(d.diskWriteBytes)}</div><div class="card-sub">from Write/Edit tools</div></div>
+      `;
+
+      // Model chart
+      const models = d.topModels || [];
+      const maxCost = Math.max(...models.map(m => m.cost), 0.01);
+      const colors = ['#f85149','#58a6ff','#3fb950','#d29922','#bc8cff','#f0883e'];
+      document.getElementById('modelChart').innerHTML = models.length === 0
+        ? '<div class="empty">No data</div>'
+        : models.map((m, i) => `
+          <div class="chart-bar">
+            <div class="chart-bar-label">${m.model}</div>
+            <div class="chart-bar-fill" style="width:${Math.max(2,(m.cost/maxCost)*100)}%;background:${colors[i%colors.length]}"></div>
+            <div class="chart-bar-value">${fmtCost(m.cost)} (${m.calls} calls)</div>
+          </div>
+        `).join('');
+
+      // Alerts
+      const alerts = dashData.alerts || [];
+      document.getElementById('alerts').innerHTML = alerts.map(a => `
+        <div class="alert alert-${a.level}">
+          <span>${a.level==='danger'?'🔴':a.level==='warn'?'🟡':'🔵'}</span>
+          <span>${a.message}</span>
+        </div>
+      `).join('');
+
+      // Sessions table
+      const sessions = dashData.recentSessions || [];
+      document.getElementById('sessionsBody').innerHTML = sessions.length === 0
+        ? '<tr><td colspan="7" class="empty">No sessions found</td></tr>'
+        : sessions.slice(0, 15).map(s => `
+          <tr>
+            <td><span class="source-badge source-${s.source}">${s.source}</span></td>
+            <td>${s.model||'-'}</td>
+            <td>${s.project||'-'}</td>
+            <td class="tokens-in">${fmtTokens(s.input_tokens||0)}</td>
+            <td class="tokens-out">${fmtTokens(s.output_tokens||0)}</td>
+            <td class="disk">${fmtBytes(s.disk_write_bytes||0)}</td>
+            <td class="cost">${fmtCost(s.cost||0)}</td>
+          </tr>
+        `).join('');
+    }
+
+    async function loadDashboard() {
+      try {
+        const resp = await fetch('/api/dashboard');
+        dashData = await resp.json();
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('content').style.display = 'block';
+        document.getElementById('lastScan').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+        renderDashboard();
+      } catch(e) {
+        document.getElementById('loading').innerHTML = '<div class="empty">Failed to load data: '+e.message+'</div>';
+      }
+    }
+
+    async function doScan() {
+      const btn = document.getElementById('scanBtn');
+      btn.disabled = true; btn.textContent = '⟳ Scanning...';
+      await loadDashboard();
+      btn.disabled = false; btn.textContent = '⟳ Scan Now';
+    }
+
+    // Tab switching
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        currentRange = tab.dataset.range;
+        renderDashboard();
+      });
+    });
+
+    // Auto-refresh every 60s
+    loadDashboard();
+    setInterval(loadDashboard, 60000);
+  </script>
+</body>
+</html>
