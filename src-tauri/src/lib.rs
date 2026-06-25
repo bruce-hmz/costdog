@@ -163,19 +163,22 @@ fn parse_json_file(path: &PathBuf) -> Result<serde_json::Value, String> {
 }
 
 // Decode project directory name back to a path-like project name
-// e.g., "D--codes-costdog" -> "D:\codes\costdog" (on Windows)
+// Windows: "D--codes-costdog" -> "D:\codes\costdog"
+// macOS/Linux: "Users-bruce-codes-costdog" -> "/Users/bruce/codes/costdog"
 fn decode_project_dir(dir_name: &str) -> String {
-    // The directory name encodes the path: drive letter + double-dash for each separator
-    // e.g., "D--codes-costdog" or "C--Users-EDY"
-    let parts: Vec<&str> = dir_name.split("--").collect();
-    if parts.len() == 2 {
-        // Windows drive letter: "D" + "codes-costdog"
-        let drive = parts[0];
-        let rest = parts[1].replace('-', "\\");
-        format!("{}:\\{}", drive, rest)
+    if cfg!(target_os = "windows") {
+        // Windows: "D--codes-costdog" -> "D:\codes\costdog"
+        let parts: Vec<&str> = dir_name.split("--").collect();
+        if parts.len() == 2 {
+            let drive = parts[0];
+            let rest = parts[1].replace('-', "\\");
+            format!("{}:\\{}", drive, rest)
+        } else {
+            dir_name.replace('-', "\\")
+        }
     } else {
-        // Fallback: just replace dashes with backslashes
-        dir_name.replace('-', "\\")
+        // macOS/Linux: "Users-bruce-codes-costdog" -> "/Users/bruce/codes/costdog"
+        format!("/{}", dir_name.replace('-', "/"))
     }
 }
 
