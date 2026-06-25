@@ -612,7 +612,14 @@ fn scan() -> Result<String, String> {
 #[tauri::command]
 fn close_window(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        window.close().ok();
+        #[cfg(target_os = "macos")]
+        {
+            window.hide().ok();
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            window.close().ok();
+        }
     }
 }
 
