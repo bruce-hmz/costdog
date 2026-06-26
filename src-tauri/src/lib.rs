@@ -4,7 +4,7 @@ use tauri::tray::TrayIconBuilder;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::fs;
-use std::io::{Read, BufRead, BufReader};
+use std::io::{BufRead, BufReader};
 use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -157,13 +157,6 @@ fn get_db_connection() -> Result<rusqlite::Connection, String> {
         return ensure_db_exists();
     }
     rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())
-}
-
-fn parse_json_file(path: &PathBuf) -> Result<serde_json::Value, String> {
-    let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).map_err(|e| e.to_string())?;
-    serde_json::from_str(&contents).map_err(|e| e.to_string())
 }
 
 // Decode project directory name back to a path-like project name
@@ -329,6 +322,112 @@ fn scan_claude_sessions() -> Vec<SessionData> {
     sessions
 }
 
+// Codex CLI writes rollout-*.jsonl event streams (NOT flat .json). Each line is a
+// JSON object with a `type` field:
+//   session_meta -> payload.id (session id), payload.cwd (project), payload.timestamp,
+//                   payload.model_provider
+//   turn_context -> payload.model
+//   event_msg    -> payload.type == "token_count" carries payload.info.total_token_usage
+//                   which is CUMULATIVE (last value wins): input_tokens, output_tokens,
+//                   cached_input_tokens, reasoning_output_tokens.
+// Codex input_tokens is the TOTAL prompt (includes cached), so we subtract cached to get
+// the non-cached portion calculate_cost expects (cache read is billed separately at 0.1x).
+fn parse_codex_rollout(path: &PathBuf) -> Option<SessionData> {
+    let file = fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+
+    let mut session_id = String::new();
+    let mut cwd = String::new();
+    let mut model = String::from("unknown");
+    let mut start_time = String::new();
+    let mut end_time = String::new();
+    // last cumulative token_count wins
+    let mut input = 0u64;
+    let mut output = 0u64;
+    let mut cached = 0u64;
+    let mut reasoning = 0u64;
+
+    for line in reader.lines() {
+        let line = match line { Ok(l) => l, Err(_) => continue };
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let v: serde_json::Value = match serde_json::from_str(line) { Ok(v) => v, Err(_) => continue };
+
+        if let Some(ts) = v["timestamp"].as_str() {
+            end_time = ts.to_string();
+        }
+
+        let rtype = v["type"].as_str().unwrap_or("");
+        let payload = &v["payload"];
+
+        if rtype == "session_meta" {
+            if let Some(id) = payload["id"].as_str() { session_id = id.to_string(); }
+            if let Some(c) = payload["cwd"].as_str() { cwd = c.to_string(); }
+            if let Some(ts) = payload["timestamp"].as_str() {
+                start_time = ts.to_string();
+            } else if start_time.is_empty() {
+                if let Some(ts) = v["timestamp"].as_str() { start_time = ts.to_string(); }
+            }
+            if let Some(mp) = payload["model_provider"].as_str() {
+                if !mp.is_empty() { model = mp.to_string(); }
+            }
+        } else if rtype == "turn_context" {
+            if let Some(m) = payload["model"].as_str() {
+                if !m.is_empty() { model = m.to_string(); }
+            }
+        } else if rtype == "event_msg" {
+            if payload["type"].as_str() == Some("token_count") {
+                let total = &payload["info"]["total_token_usage"];
+                if !total.is_null() {
+                    input = total["input_tokens"].as_u64().unwrap_or(0);
+                    output = total["output_tokens"].as_u64().unwrap_or(0);
+                    cached = total["cached_input_tokens"].as_u64().unwrap_or(0);
+                    reasoning = total["reasoning_output_tokens"].as_u64().unwrap_or(0);
+                }
+            }
+        }
+    }
+
+    if session_id.is_empty() {
+        return None;
+    }
+
+    let non_cached_input = input.saturating_sub(cached);
+    let project = cwd.rsplit(|c| c == '/' || c == '\\').next().unwrap_or("").to_string();
+
+    Some(SessionData {
+        session_id,
+        source: "codex".to_string(),
+        model,
+        project,
+        start_time,
+        end_time,
+        input_tokens: non_cached_input,
+        output_tokens: output,
+        cache_read_tokens: cached,
+        cache_creation_tokens: 0,
+        reasoning_tokens: reasoning,
+        disk_write_bytes: 0,
+        cost: 0.0,
+    })
+}
+
+fn walk_rollout_files<F: FnMut(&PathBuf)>(dir: &PathBuf, cb: &mut F) {
+    let entries = match fs::read_dir(dir) { Ok(e) => e, Err(_) => return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_rollout_files(&path, cb);
+        } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with("rollout-") && name.ends_with(".jsonl") {
+                cb(&path);
+            }
+        }
+    }
+}
+
 fn scan_codex_sessions() -> Vec<SessionData> {
     let sessions_dir = get_codex_sessions_dir();
     if !sessions_dir.exists() {
@@ -336,35 +435,13 @@ fn scan_codex_sessions() -> Vec<SessionData> {
     }
 
     let mut sessions = Vec::new();
-
-    if let Ok(files) = fs::read_dir(&sessions_dir) {
-        for file in files.flatten() {
-            let file_path = file.path();
-            if file_path.extension().map_or(false, |ext| ext == "json") {
-                if let Ok(data) = parse_json_file(&file_path) {
-                    if let Some(session_id) = data["session_id"].as_str() {
-                        let session = SessionData {
-                            session_id: session_id.to_string(),
-                            source: "codex".to_string(),
-                            model: data["model"].as_str().unwrap_or("unknown").to_string(),
-                            project: data["project"].as_str().unwrap_or("").to_string(),
-                            start_time: data["start_time"].as_str().unwrap_or("").to_string(),
-                            end_time: data["end_time"].as_str().unwrap_or("").to_string(),
-                            input_tokens: data["input_tokens"].as_u64().unwrap_or(0),
-                            output_tokens: data["output_tokens"].as_u64().unwrap_or(0),
-                            cache_read_tokens: data["cache_read_tokens"].as_u64().unwrap_or(0),
-                            cache_creation_tokens: 0,
-                            reasoning_tokens: 0,
-                            disk_write_bytes: data["disk_write_bytes"].as_u64().unwrap_or(0),
-                            cost: 0.0,
-                        };
-                        sessions.push(session);
-                    }
-                }
-            }
+    let mut on_file = |path: &PathBuf| {
+        if let Some(s) = parse_codex_rollout(path) {
+            sessions.push(s);
         }
-    }
-
+    };
+    walk_rollout_files(&sessions_dir, &mut on_file);
+    eprintln!("[CostDog] Codex scan: {} sessions", sessions.len());
     sessions
 }
 
