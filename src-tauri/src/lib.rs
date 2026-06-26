@@ -1,4 +1,6 @@
 use tauri::{Manager, Emitter};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::fs;
@@ -623,6 +625,33 @@ fn close_window(app: tauri::AppHandle) {
     }
 }
 
+// macOS menu-bar tray: the bar window has no title bar (decorations: false),
+// so the close button hides it. The tray is the only way to bring it back and
+// to quit the app cleanly. Built in code; no tauri.conf.json entry needed.
+fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let show_i = MenuItem::with_id(app, "show", "Show CostDog", true, None::<&str>)?;
+    let quit_i = MenuItem::with_id(app, "quit", "Quit CostDog", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+    TrayIconBuilder::with_id("main-tray")
+        .tooltip("CostDog")
+        .icon(app.default_window_icon().expect("default window icon missing").clone())
+        .menu(&menu)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -633,6 +662,11 @@ pub fn run() {
             window.set_always_on_top(true).ok();
             window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: 410.0, height: 36.0 })).ok();
             window.set_title("CostDog").ok();
+
+            // System tray (restore hidden bar + quit). Failure is non-fatal: log and continue.
+            if let Err(e) = build_tray(app.handle()) {
+                eprintln!("[CostDog] tray init failed: {}", e);
+            }
 
             // Initial scan (synchronous - completes before window loads)
             if let Err(e) = full_scan() {
