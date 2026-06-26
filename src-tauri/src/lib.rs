@@ -143,10 +143,24 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             level TEXT NOT NULL,
             message TEXT NOT NULL,
+            alert_key TEXT,
             timestamp TEXT DEFAULT (datetime('now')),
             dismissed INTEGER DEFAULT 0
         );"
     ).map_err(|e| e.to_string())?;
+
+    // Migration: CREATE TABLE IF NOT EXISTS won't add alert_key to an existing table.
+    let has_alert_key: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('alerts') WHERE name = 'alert_key'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if has_alert_key == 0 {
+        conn.execute("ALTER TABLE alerts ADD COLUMN alert_key TEXT", [])
+            .map_err(|e| e.to_string())?;
+    }
 
     Ok(conn)
 }
@@ -610,11 +624,22 @@ fn upsert_session(conn: &rusqlite::Connection, session: &SessionData) -> Result<
     Ok(())
 }
 
-fn add_alert(conn: &rusqlite::Connection, level: &str, message: &str) -> Result<(), String> {
-    conn.execute(
-        "INSERT INTO alerts (level, message) VALUES (?, ?)",
-        rusqlite::params![level, message],
+/// Insert or refresh today's alert for `key`. One row per (key, day): if today's alert
+/// already exists, update its message/level (so the amount stays fresh); otherwise insert.
+/// Prevents the 30s rescan from spawning thousands of duplicate rows.
+fn add_alert(conn: &rusqlite::Connection, key: &str, level: &str, message: &str) -> Result<(), String> {
+    let updated = conn.execute(
+        "UPDATE alerts SET message = ?, level = ?, timestamp = datetime('now','localtime'), dismissed = 0
+         WHERE alert_key = ? AND date(timestamp) = date('now','localtime')",
+        rusqlite::params![message, level, key],
     ).map_err(|e| e.to_string())?;
+    if updated == 0 {
+        conn.execute(
+            "INSERT INTO alerts (level, message, alert_key, timestamp)
+             VALUES (?, ?, ?, datetime('now','localtime'))",
+            rusqlite::params![level, message, key],
+        ).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -627,13 +652,13 @@ fn check_alerts(conn: &rusqlite::Connection, sessions: &[SessionData]) -> Result
     // High daily cost alert
     let today_cost: f64 = today_sessions.iter().map(|s| s.cost).sum();
     if today_cost > 10.0 {
-        add_alert(conn, "warn", &format!("Daily cost exceeds $10: ${:.2}", today_cost))?;
+        add_alert(conn, "daily_cost", "warn", &format!("Daily cost exceeds $10: ${:.2}", today_cost))?;
     }
 
     // High disk write alert
     let today_disk: u64 = today_sessions.iter().map(|s| s.disk_write_bytes).sum();
     if today_disk > 100 * 1024 * 1024 {
-        add_alert(conn, "danger", &format!("Excessive disk writes: {:.1} MB", today_disk as f64 / 1024.0 / 1024.0))?;
+        add_alert(conn, "disk_write", "danger", &format!("Excessive disk writes: {:.1} MB", today_disk as f64 / 1024.0 / 1024.0))?;
     }
 
     Ok(())
