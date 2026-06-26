@@ -54,7 +54,7 @@ tr:hover{background:rgba(137,180,250,.03)}
 </style>
 </head>
 <body>
-<div class="bar">
+<div class="bar" id="bar">
   <div class="bar-left">
     <span class="bar-logo"><span class="dog">🐕</span></span>
     <div class="bar-sep"></div>
@@ -189,6 +189,14 @@ function tauriListen(eventName, callback){
 
 // Auto-refresh: listen for scan completion events from Rust
 tauriListen('refresh-data',()=>{load();});
+
+// Window dragging via Tauri API (for macOS where CSS -webkit-app-region may not work)
+document.getElementById('bar').addEventListener('mousedown',function(e){
+  if(e.target.closest('.bbtn'))return; // don't drag on buttons
+  if(window.__TAURI_INTERNALS__){
+    window.__TAURI_INTERNALS__.invoke('plugin:window|start_dragging');
+  }
+});
 
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');R=t.dataset.r;render()}));
 load();
