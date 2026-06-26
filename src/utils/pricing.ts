@@ -39,7 +39,8 @@ async function fetchOpenRouterPricing(): Promise<ModelPricing[]> {
       });
     }
     return models;
-  } catch {
+  } catch (e) {
+    console.warn('[CostDog] OpenRouter pricing fetch failed:', e instanceof Error ? e.message : e);
     return [];
   }
 }
@@ -81,6 +82,7 @@ export async function loadPricing(): Promise<ModelPricing[]> {
   }
 
   // Last resort: return fallback
+  console.warn('[CostDog] pricing unavailable (fetch failed, no usable cache) — using fallback pricing');
   return Object.entries(FALLBACK_PRICING).map(([id, p]) => ({
     modelId: id,
     displayName: id,
@@ -149,20 +151,22 @@ export function calculateCost(
   inputTokens: number,
   outputTokens: number,
   cacheReadTokens: number,
+  cacheCreationTokens: number,
+  reasoningTokens: number,
   modelId: string,
   pricing: ModelPricing[],
 ): number {
   const price = findModelPrice(modelId, pricing);
   if (!price) return 0;
 
-  // Cache reads are typically 90% cheaper
-  const cacheReadPrice = price.input * 0.1;
-  // inputTokens includes all tokens; cacheReadTokens is a subset
-  const nonCachedInput = Math.max(0, inputTokens - cacheReadTokens);
-
-  const inputCost = (nonCachedInput / 1_000_000) * price.input;
-  const cacheReadCost = (cacheReadTokens / 1_000_000) * cacheReadPrice;
-  const outputCost = (outputTokens / 1_000_000) * price.output;
-
-  return inputCost + cacheReadCost + outputCost;
+  const perM = 1_000_000;
+  // inputTokens is the NON-cached portion: Anthropic reports it separately from cache
+  // read/creation, and the Codex parser subtracts cached tokens. So no subtraction here.
+  return (
+    (inputTokens / perM) * price.input +
+    (cacheReadTokens / perM) * (price.input * 0.1) +
+    (cacheCreationTokens / perM) * (price.input * 1.25) +
+    (outputTokens / perM) * price.output +
+    (reasoningTokens / perM) * price.output
+  );
 }
