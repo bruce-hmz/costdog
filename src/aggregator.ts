@@ -121,18 +121,18 @@ function checkAlerts(sessions: SessionSummary[]) {
   // High daily cost alert
   const todayCost = todaySessions.reduce((sum, s) => sum + s.cost, 0);
   if (todayCost > 10) {
-    addAlert('warn', `Daily cost exceeds $10: $${todayCost.toFixed(2)}`);
+    addAlert('daily_cost', 'warn', `Daily cost exceeds $10: $${todayCost.toFixed(2)}`);
   }
 
   // High disk write alert (Codex logging bug detection)
   const todayDisk = todaySessions.reduce((sum, s) => sum + s.diskWriteBytes, 0);
   if (todayDisk > 100 * 1024 * 1024) { // 100 MB
-    addAlert('danger', `Excessive disk writes detected: ${(todayDisk / 1024 / 1024).toFixed(1)} MB today`);
+    addAlert('disk_write', 'danger', `Excessive disk writes detected: ${(todayDisk / 1024 / 1024).toFixed(1)} MB today`);
   }
 
   // High token usage alert
   const todayTokens = todaySessions.reduce((sum, s) => sum + s.tokenUsage.inputTokens + s.tokenUsage.outputTokens, 0);
   if (todayTokens > 10_000_000) {
-    addAlert('warn', `High token usage: ${(todayTokens / 1_000_000).toFixed(1)}M tokens today`);
+    addAlert('high_tokens', 'warn', `High token usage: ${(todayTokens / 1_000_000).toFixed(1)}M tokens today`);
   }
 }

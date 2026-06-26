@@ -53,10 +53,17 @@ export function getDb(): Database.Database {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       level TEXT NOT NULL,
       message TEXT NOT NULL,
+      alert_key TEXT,
       timestamp TEXT DEFAULT (datetime('now')),
       dismissed INTEGER DEFAULT 0
     );
   `);
+
+  // Migration: CREATE TABLE IF NOT EXISTS won't add alert_key to an existing table.
+  const alertCols = _db.prepare('PRAGMA table_info(alerts)').all() as { name: string }[];
+  if (!alertCols.some(c => c.name === 'alert_key')) {
+    _db.exec('ALTER TABLE alerts ADD COLUMN alert_key TEXT');
+  }
 
   return _db;
 }
@@ -177,9 +184,18 @@ export function getRecentSessions(limit = 20) {
 /**
  * Add an alert
  */
-export function addAlert(level: string, message: string) {
+export function addAlert(key: string, level: string, message: string) {
   const db = getDb();
-  db.prepare('INSERT INTO alerts (level, message) VALUES (?, ?)').run(level, message);
+  // One row per (key, day): refresh today's existing row (keeps amount fresh), else insert.
+  const res = db.prepare(
+    `UPDATE alerts SET message = ?, level = ?, timestamp = datetime('now','localtime'), dismissed = 0
+     WHERE alert_key = ? AND date(timestamp) = date('now','localtime')`
+  ).run(message, level, key);
+  if (res.changes === 0) {
+    db.prepare(
+      `INSERT INTO alerts (level, message, alert_key, timestamp) VALUES (?, ?, ?, datetime('now','localtime'))`
+    ).run(level, message, key);
+  }
 }
 
 /**
