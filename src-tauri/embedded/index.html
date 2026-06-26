@@ -7,7 +7,7 @@
 :root{--bg:#0f0f17;--bar:#16161e;--card:#1e1e2e;--border:#2a2a3a;--text:#cdd6f4;--dim:#6c7086;--accent:#89b4fa;--green:#a6e3a1;--red:#f38ba8;--yellow:#f9e2af;--purple:#cba6f7}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color:var(--text);overflow:hidden;user-select:none}
-.bar{display:flex;align-items:center;justify-content:space-between;padding:0 10px;height:36px;background:linear-gradient(180deg,var(--bar),var(--bg));border-bottom:1px solid var(--border);-webkit-app-region:drag}
+.bar{display:flex;align-items:center;justify-content:space-between;padding:0 10px;height:36px;background:linear-gradient(180deg,var(--bar),var(--bg));border-bottom:1px solid var(--border)}
 .bar-left{display:flex;align-items:center;gap:10px}
 .bar-logo{font-size:12px;color:var(--accent);font-weight:700;overflow:hidden;width:40px;height:24px;position:relative}
 .dog{position:absolute;bottom:0;font-size:18px;animation:walk 3s linear infinite}
@@ -54,7 +54,7 @@ tr:hover{background:rgba(137,180,250,.03)}
 </style>
 </head>
 <body>
-<div class="bar" id="bar">
+<div class="bar" data-tauri-drag-region>
   <div class="bar-left">
     <span class="bar-logo"><span class="dog">🐕</span></span>
     <div class="bar-sep"></div>
@@ -190,13 +190,6 @@ function tauriListen(eventName, callback){
 // Auto-refresh: listen for scan completion events from Rust
 tauriListen('refresh-data',()=>{load();});
 
-// Window dragging via Tauri API (for macOS where CSS -webkit-app-region may not work)
-document.getElementById('bar').addEventListener('mousedown',function(e){
-  if(e.target.closest('.bbtn'))return; // don't drag on buttons
-  if(window.__TAURI_INTERNALS__){
-    window.__TAURI_INTERNALS__.invoke('plugin:window|start_dragging');
-  }
-});
 
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');R=t.dataset.r;render()}));
 load();
