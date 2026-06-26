@@ -117,7 +117,9 @@ export function parseCodexRollout(filePath: string): SessionSummary | null {
 
     // Use the last token count (cumulative) as the session total
     if (lastTokenCount) {
-      tokenUsage.inputTokens = lastTokenCount.inputTokens;
+      // Codex total.input_tokens includes the cached portion; subtract it so the cost
+      // calc (which bills cache read separately at 0.1x) doesn't double-count it.
+      tokenUsage.inputTokens = Math.max(0, lastTokenCount.inputTokens - lastTokenCount.cacheReadTokens);
       tokenUsage.outputTokens = lastTokenCount.outputTokens;
       tokenUsage.cacheReadTokens = lastTokenCount.cacheReadTokens;
       tokenUsage.reasoningOutputTokens = lastTokenCount.reasoningOutputTokens;

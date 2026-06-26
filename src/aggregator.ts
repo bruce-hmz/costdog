@@ -51,6 +51,8 @@ export async function fullScan(): Promise<{ newSessions: number; totalSessions: 
       s.tokenUsage.inputTokens,
       s.tokenUsage.outputTokens,
       s.tokenUsage.cacheReadTokens,
+      s.tokenUsage.cacheCreationTokens,
+      s.tokenUsage.reasoningOutputTokens,
       s.model,
       pricing,
     );

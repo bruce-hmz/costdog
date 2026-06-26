@@ -38,17 +38,6 @@ export function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
     CREATE INDEX IF NOT EXISTS idx_sessions_model ON sessions(model);
 
-    CREATE TABLE IF NOT EXISTS daily_cache (
-      date TEXT NOT NULL,
-      sessions INTEGER DEFAULT 0,
-      input_tokens INTEGER DEFAULT 0,
-      output_tokens INTEGER DEFAULT 0,
-      cache_read_tokens INTEGER DEFAULT 0,
-      cost REAL DEFAULT 0,
-      disk_write_bytes INTEGER DEFAULT 0,
-      PRIMARY KEY (date)
-    );
-
     CREATE TABLE IF NOT EXISTS alerts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       level TEXT NOT NULL,
