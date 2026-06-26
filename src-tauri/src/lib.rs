@@ -81,6 +81,8 @@ struct SessionData {
     input_tokens: u64,
     output_tokens: u64,
     cache_read_tokens: u64,
+    cache_creation_tokens: u64,
+    reasoning_tokens: u64,
     disk_write_bytes: u64,
     cost: f64,
 }
@@ -272,6 +274,8 @@ fn scan_claude_sessions() -> Vec<SessionData> {
                                     input_tokens: 0,
                                     output_tokens: 0,
                                     cache_read_tokens: 0,
+                                    cache_creation_tokens: 0,
+                                    reasoning_tokens: 0,
                                     disk_write_bytes: 0,
                                     cost: 0.0,
                                 });
@@ -295,8 +299,9 @@ fn scan_claude_sessions() -> Vec<SessionData> {
                                 let input_tokens = usage["input_tokens"].as_u64().unwrap_or(0);
                                 let output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
                                 let cache_read = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                                let cache_creation = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
 
-                                if input_tokens > 0 || output_tokens > 0 {
+                                if input_tokens > 0 || output_tokens > 0 || cache_creation > 0 {
                                     if let Some(entry) = session_map.get_mut(&session_id) {
                                         // Update model from the latest assistant message
                                         if let Some(model) = data["message"]["model"].as_str() {
@@ -308,6 +313,7 @@ fn scan_claude_sessions() -> Vec<SessionData> {
                                         entry.input_tokens += input_tokens;
                                         entry.output_tokens += output_tokens;
                                         entry.cache_read_tokens += cache_read;
+                                        entry.cache_creation_tokens += cache_creation;
                                     }
                                 }
                             }
@@ -347,6 +353,8 @@ fn scan_codex_sessions() -> Vec<SessionData> {
                             input_tokens: data["input_tokens"].as_u64().unwrap_or(0),
                             output_tokens: data["output_tokens"].as_u64().unwrap_or(0),
                             cache_read_tokens: data["cache_read_tokens"].as_u64().unwrap_or(0),
+                            cache_creation_tokens: 0,
+                            reasoning_tokens: 0,
                             disk_write_bytes: data["disk_write_bytes"].as_u64().unwrap_or(0),
                             cost: 0.0,
                         };
@@ -360,32 +368,165 @@ fn scan_codex_sessions() -> Vec<SessionData> {
     sessions
 }
 
-fn calculate_cost(input_tokens: u64, output_tokens: u64, _cache_tokens: u64, _model: &str) -> f64 {
-    // Simple cost calculation (can be enhanced with actual pricing)
-    let input_cost = (input_tokens as f64) * 0.000003;
-    let output_cost = (output_tokens as f64) * 0.000015;
-    input_cost + output_cost
+// ---- Pricing ----
+// Shares ~/.costdog/pricing-cache.json with the TS CLI/web so both sides agree.
+// Anthropic billing: input $X/M, output $Y/M, cache read 0.1x input,
+// cache write (creation) 1.25x input. Reasoning tokens billed as output.
+// Note: Anthropic's usage.input_tokens is already the non-cached portion
+// (separate from cache_read/cache_creation), so we do NOT subtract cache here.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PricedModel {
+    #[serde(rename = "modelId")]
+    model_id: String,
+    #[serde(rename = "inputPricePerMToken")]
+    input: f64,
+    #[serde(rename = "outputPricePerMToken")]
+    output: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PricingCache {
+    models: Vec<PricedModel>,
+    #[serde(rename = "fetchedAt")]
+    fetched_at: String,
+}
+
+fn get_pricing_cache_path() -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let data_dir = std::env::var("COSTDOG_DATA_DIR")
+        .unwrap_or_else(|_| home.join(".costdog").to_string_lossy().to_string());
+    PathBuf::from(data_dir).join("pricing-cache.json")
+}
+
+fn pricing_is_stale(fetched_at: &str) -> bool {
+    match chrono::DateTime::parse_from_rfc3339(fetched_at) {
+        Ok(t) => chrono::Utc::now().signed_duration_since(t).num_hours() >= 24,
+        Err(_) => true,
+    }
+}
+
+fn fetch_openrouter_pricing() -> Result<Vec<PricedModel>, String> {
+    let resp = reqwest::blocking::get("https://openrouter.ai/api/v1/models")
+        .map_err(|e| format!("reqwest: {}", e))?;
+    let body = resp.text().map_err(|e| format!("read body: {}", e))?;
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("parse json: {}", e))?;
+    let arr = v["data"].as_array().ok_or_else(|| "no data array".to_string())?;
+    let mut out = Vec::new();
+    for m in arr {
+        let id = match m["id"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => continue,
+        };
+        // OpenRouter prices are per-token; normalize to $ per million tokens.
+        let input = m["pricing"]["prompt"].as_f64().unwrap_or(0.0) * 1_000_000.0;
+        let output = m["pricing"]["completion"].as_f64().unwrap_or(0.0) * 1_000_000.0;
+        out.push(PricedModel { model_id: id, input, output });
+    }
+    Ok(out)
+}
+
+/// Load pricing: fresh cache -> fetch -> stale cache -> empty (costs become 0, "unpriced").
+fn load_pricing() -> Vec<PricedModel> {
+    let cache_path = get_pricing_cache_path();
+    if let Ok(content) = fs::read_to_string(&cache_path) {
+        if let Ok(cache) = serde_json::from_str::<PricingCache>(&content) {
+            if !cache.models.is_empty() && !pricing_is_stale(&cache.fetched_at) {
+                return cache.models;
+            }
+        }
+    }
+    if let Ok(models) = fetch_openrouter_pricing() {
+        if !models.is_empty() {
+            let to_write = PricingCache {
+                models: models.clone(),
+                fetched_at: chrono::Utc::now().to_rfc3339(),
+            };
+            if let Some(parent) = cache_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = fs::write(&cache_path, serde_json::to_string(&to_write).unwrap_or_default());
+            return models;
+        }
+    }
+    if let Ok(content) = fs::read_to_string(&cache_path) {
+        if let Ok(cache) = serde_json::from_str::<PricingCache>(&content) {
+            return cache.models;
+        }
+    }
+    eprintln!("[CostDog] pricing unavailable (no cache, fetch failed) — costs will be 0");
+    Vec::new()
+}
+
+/// Match a model id to (input $/M, output $/M). Tiers: exact -> '/'-suffix -> contains.
+fn find_model_price(model_id: &str, prices: &[PricedModel]) -> Option<(f64, f64)> {
+    if model_id.is_empty() {
+        return None;
+    }
+    let lower = model_id.to_lowercase();
+    for m in prices {
+        if m.model_id.to_lowercase() == lower {
+            return Some((m.input, m.output));
+        }
+    }
+    for m in prices {
+        if m.model_id.split('/').last().map(|s| s.to_lowercase()) == Some(lower.clone()) {
+            return Some((m.input, m.output));
+        }
+    }
+    for m in prices {
+        let a = m.model_id.to_lowercase();
+        if a.contains(lower.as_str()) || lower.contains(a.as_str()) {
+            return Some((m.input, m.output));
+        }
+    }
+    None
+}
+
+fn calculate_cost(
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_creation_tokens: u64,
+    reasoning_tokens: u64,
+    model: &str,
+    prices: &[PricedModel],
+) -> f64 {
+    let (pin, pout) = match find_model_price(model, prices) {
+        Some(p) => p,
+        None => return 0.0,
+    };
+    let per_m = 1_000_000.0_f64;
+    (input_tokens as f64 / per_m) * pin
+        + (cache_read_tokens as f64 / per_m) * (pin * 0.1)
+        + (cache_creation_tokens as f64 / per_m) * (pin * 1.25)
+        + (output_tokens as f64 / per_m) * pout
+        + (reasoning_tokens as f64 / per_m) * pout
 }
 
 fn upsert_session(conn: &rusqlite::Connection, session: &SessionData) -> Result<(), String> {
     conn.execute(
         "INSERT INTO sessions (session_id, source, model, project, start_time, end_time,
-            input_tokens, output_tokens, cache_read_tokens, disk_write_bytes, cost)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+            reasoning_output_tokens, disk_write_bytes, cost)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_id, source) DO UPDATE SET
             model = excluded.model,
             end_time = excluded.end_time,
             input_tokens = excluded.input_tokens,
             output_tokens = excluded.output_tokens,
             cache_read_tokens = excluded.cache_read_tokens,
+            cache_creation_tokens = excluded.cache_creation_tokens,
+            reasoning_output_tokens = excluded.reasoning_output_tokens,
             disk_write_bytes = excluded.disk_write_bytes,
             cost = excluded.cost,
             scanned_at = datetime('now')",
         rusqlite::params![
             session.session_id, session.source, session.model, session.project,
             session.start_time, session.end_time, session.input_tokens,
-            session.output_tokens, session.cache_read_tokens, session.disk_write_bytes,
-            session.cost
+            session.output_tokens, session.cache_read_tokens,
+            session.cache_creation_tokens, session.reasoning_tokens,
+            session.disk_write_bytes, session.cost
         ],
     ).map_err(|e| e.to_string())?;
 
@@ -430,6 +571,7 @@ fn full_scan() -> Result<usize, String> {
 
     eprintln!("[CostDog] Scan found {} sessions total", all_sessions.len());
 
+    let prices = load_pricing();
     let mut new_count = 0;
     for session in &all_sessions {
         let mut s = session.clone();
@@ -437,7 +579,10 @@ fn full_scan() -> Result<usize, String> {
             s.input_tokens,
             s.output_tokens,
             s.cache_read_tokens,
+            s.cache_creation_tokens,
+            s.reasoning_tokens,
             &s.model,
+            &prices,
         );
         upsert_session(&conn, &s)?;
         new_count += 1;
