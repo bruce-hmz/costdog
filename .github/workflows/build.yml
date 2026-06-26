@@ -51,6 +51,6 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'CostDog ${{ github.ref_name }}'
           releaseBody: 'See the assets for download links.'
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin' || '' }}
