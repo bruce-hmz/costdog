@@ -43,7 +43,15 @@ export async function fullScan(): Promise<{ newSessions: number; totalSessions: 
 
   const claudeSessions = scanClaudeSessions();
   const codexSessions = scanCodexSessions();
-  const allSessions = [...claudeSessions, ...codexSessions];
+  const allSessions = [...claudeSessions, ...codexSessions].filter(
+    (s) =>
+      s.tokenUsage.inputTokens +
+        s.tokenUsage.outputTokens +
+        s.tokenUsage.cacheReadTokens +
+        s.tokenUsage.cacheCreationTokens +
+        s.tokenUsage.reasoningOutputTokens >
+      0,
+  );
 
   let newCount = 0;
   for (const s of allSessions) {
