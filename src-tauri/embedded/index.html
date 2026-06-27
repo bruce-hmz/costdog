@@ -54,7 +54,7 @@ tr:hover{background:rgba(137,180,250,.03)}
 </style>
 </head>
 <body>
-<div class="bar" data-tauri-drag-region="deep">
+<div class="bar">
   <div class="bar-left">
     <span class="bar-logo"><span class="dog">🐕</span></span>
     <div class="bar-sep"></div>
@@ -189,6 +189,25 @@ function tauriListen(eventName, callback){
 
 // Auto-refresh: listen for scan completion events from Rust
 tauriListen('refresh-data',()=>{load();});
+
+// Drag the bar by calling the core start_dragging command directly — the same
+// __TAURI_INTERNALS__.invoke pattern the app already uses for resize/close.
+// data-tauri-drag-region's auto-handler was unreliable across WKWebView/WebView2,
+// so drive dragging explicitly. Buttons are excluded so refresh/toggle/close work.
+(function(){
+  const bar=document.querySelector('.bar');
+  if(!bar||!window.__TAURI_INTERNALS__)return;
+  bar.addEventListener('mousedown',function(e){
+    if(e.button!==0)return;
+    if(e.target.closest('button'))return;
+    var cost=document.getElementById('bc');
+    var p=window.__TAURI_INTERNALS__.invoke('plugin:window|start_dragging');
+    // DIAGNOSTIC (invisible on success): if start_dragging is rejected at runtime
+    // (e.g. capability not effective), surface the error in the cost slot so we can
+    // see it without devtools. If the bar moves, this never shows.
+    if(p&&p.catch)p.catch(function(err){if(cost)cost.textContent='[drag]'+String(err).slice(0,24);});
+  });
+})();
 
 
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');R=t.dataset.r;render()}));
