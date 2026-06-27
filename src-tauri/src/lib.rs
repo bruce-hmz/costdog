@@ -1061,7 +1061,6 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 #[tauri::command]
 async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
-    use tauri_plugin_process::ProcessExt;
     use tauri_plugin_updater::UpdaterExt;
 
     let update = app
@@ -1090,7 +1089,7 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
         .download_and_install(|_chunk, _total| {}, || {})
         .await
         .map_err(|e| e.to_string())?;
-    app.restart();
+    app.request_restart();
     Ok(version)
 }
 
