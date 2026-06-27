@@ -63,8 +63,9 @@ export function getDb(): Database.Database {
   const sessionCols = _db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[];
   if (!sessionCols.some(c => c.name === 'date')) {
     _db.transaction(() => {
-      _db.exec('ALTER TABLE sessions RENAME TO sessions_v1');
-      _db.exec(`CREATE TABLE sessions (
+      const db = _db!;
+      db.exec('ALTER TABLE sessions RENAME TO sessions_v1');
+      db.exec(`CREATE TABLE sessions (
         session_id TEXT NOT NULL, source TEXT NOT NULL, date TEXT NOT NULL DEFAULT '',
         model TEXT, project TEXT, start_time TEXT, end_time TEXT,
         input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
@@ -73,17 +74,17 @@ export function getDb(): Database.Database {
         cost REAL DEFAULT 0, scanned_at TEXT DEFAULT (datetime('now')),
         PRIMARY KEY (session_id, source, date)
       )`);
-      _db.exec(`INSERT INTO sessions (session_id, source, date, model, project, start_time, end_time,
+      db.exec(`INSERT INTO sessions (session_id, source, date, model, project, start_time, end_time,
         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
         reasoning_output_tokens, disk_write_bytes, cost, scanned_at)
         SELECT session_id, source, date(start_time), model, project, start_time, end_time,
           input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
           reasoning_output_tokens, disk_write_bytes, cost, scanned_at FROM sessions_v1`);
-      _db.exec('DROP TABLE sessions_v1');
-      _db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(start_time)');
-      _db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source)');
-      _db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_model ON sessions(model)');
-      _db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date)');
+      db.exec('DROP TABLE sessions_v1');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(start_time)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_model ON sessions(model)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date)');
     })();
   }
 
