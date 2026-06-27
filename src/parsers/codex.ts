@@ -125,9 +125,15 @@ export function parseCodexRollout(filePath: string): SessionSummary | null {
       tokenUsage.reasoningOutputTokens = lastTokenCount.reasoningOutputTokens;
     }
 
+    const d = startTime ? new Date(startTime) : null;
+    const date = d && !isNaN(d.getTime())
+      ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      : '';
+
     return {
       sessionId,
       source: 'codex',
+      date,
       model,
       project: path.basename(project),
       startTime,
