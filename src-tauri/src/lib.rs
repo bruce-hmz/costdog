@@ -74,6 +74,7 @@ struct DashboardData {
 struct SessionData {
     session_id: String,
     source: String,
+    date: String,
     model: String,
     project: String,
     start_time: String,
@@ -120,6 +121,7 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
         "CREATE TABLE IF NOT EXISTS sessions (
             session_id TEXT NOT NULL,
             source TEXT NOT NULL,
+            date TEXT NOT NULL DEFAULT '',
             model TEXT,
             project TEXT,
             start_time TEXT,
@@ -132,12 +134,13 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
             disk_write_bytes INTEGER DEFAULT 0,
             cost REAL DEFAULT 0,
             scanned_at TEXT DEFAULT (datetime('now')),
-            PRIMARY KEY (session_id, source)
+            PRIMARY KEY (session_id, source, date)
         );
 
         CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(start_time);
         CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
         CREATE INDEX IF NOT EXISTS idx_sessions_model ON sessions(model);
+        CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date);
 
         CREATE TABLE IF NOT EXISTS alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -168,6 +171,46 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
     if has_alert_key == 0 {
         conn.execute("ALTER TABLE alerts ADD COLUMN alert_key TEXT", [])
             .map_err(|e| e.to_string())?;
+    }
+
+    // Migration: per-day attribution. Old sessions table had PK (session_id, source) and no
+    // date column — recreate with a date column + PK (session_id, source, date) so a session
+    // spanning midnight stores one row per day. Existing rows copied with date=date(start_time);
+    // the next full scan repopulates correct per-day (local) rows.
+    let has_date: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'date'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if has_date == 0 {
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        tx.execute_batch(
+            "ALTER TABLE sessions RENAME TO sessions_v1;
+            CREATE TABLE sessions (
+                session_id TEXT NOT NULL, source TEXT NOT NULL, date TEXT NOT NULL DEFAULT '',
+                model TEXT, project TEXT, start_time TEXT, end_time TEXT,
+                input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
+                cache_read_tokens INTEGER DEFAULT 0, cache_creation_tokens INTEGER DEFAULT 0,
+                reasoning_output_tokens INTEGER DEFAULT 0, disk_write_bytes INTEGER DEFAULT 0,
+                cost REAL DEFAULT 0, scanned_at TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (session_id, source, date)
+            );
+            INSERT INTO sessions (session_id, source, date, model, project, start_time, end_time,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                reasoning_output_tokens, disk_write_bytes, cost, scanned_at)
+            SELECT session_id, source, date(start_time), model, project, start_time, end_time,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                reasoning_output_tokens, disk_write_bytes, cost, scanned_at FROM sessions_v1;
+            DROP TABLE sessions_v1;
+            CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(start_time);
+            CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
+            CREATE INDEX IF NOT EXISTS idx_sessions_model ON sessions(model);
+            CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date);",
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
     }
 
     Ok(conn)
@@ -201,6 +244,15 @@ fn decode_project_dir(dir_name: &str) -> String {
     }
 }
 
+fn local_date(ts: &str) -> String {
+    if ts.is_empty() {
+        return String::new();
+    }
+    chrono::DateTime::parse_from_rfc3339(ts)
+        .map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string())
+        .unwrap_or_default()
+}
+
 fn scan_claude_sessions() -> Vec<SessionData> {
     let projects_dir = get_claude_sessions_dir();
     if !projects_dir.exists() {
@@ -208,8 +260,8 @@ fn scan_claude_sessions() -> Vec<SessionData> {
         return Vec::new();
     }
 
-    // Aggregate session data: session_id -> accumulated data
-    let mut session_map: HashMap<String, SessionData> = HashMap::new();
+    // Aggregate per (session_id, local date) so a session spanning midnight splits across days.
+    let mut session_map: HashMap<(String, String), SessionData> = HashMap::new();
     let mut file_count = 0;
     let mut line_count = 0;
 
@@ -268,9 +320,11 @@ fn scan_claude_sessions() -> Vec<SessionData> {
                             }
 
                             let timestamp = data["timestamp"].as_str().unwrap_or("").to_string();
+                            let date = local_date(&timestamp);
+                            let key = (session_id.clone(), date.clone());
 
-                            // Initialize session entry if not exists
-                            if !session_map.contains_key(&session_id) {
+                            // Initialize (session, day) bucket if not exists
+                            if !session_map.contains_key(&key) {
                                 let cwd = data["cwd"].as_str().unwrap_or("");
                                 let project = if !cwd.is_empty() {
                                     // Use cwd as project name if available
@@ -279,9 +333,10 @@ fn scan_claude_sessions() -> Vec<SessionData> {
                                     project_display.clone()
                                 };
 
-                                session_map.insert(session_id.clone(), SessionData {
+                                session_map.insert(key.clone(), SessionData {
                                     session_id: session_id.clone(),
                                     source: "claude-code".to_string(),
+                                    date: date.clone(),
                                     model: "unknown".to_string(),
                                     project,
                                     start_time: timestamp.clone(),
@@ -297,7 +352,7 @@ fn scan_claude_sessions() -> Vec<SessionData> {
                             }
 
                             // Update timestamps
-                            if let Some(entry) = session_map.get_mut(&session_id) {
+                            if let Some(entry) = session_map.get_mut(&key) {
                                 if !timestamp.is_empty() {
                                     if entry.start_time.is_empty() || timestamp < entry.start_time {
                                         entry.start_time = timestamp.clone();
@@ -317,7 +372,7 @@ fn scan_claude_sessions() -> Vec<SessionData> {
                                 let cache_creation = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
 
                                 if input_tokens > 0 || output_tokens > 0 || cache_creation > 0 {
-                                    if let Some(entry) = session_map.get_mut(&session_id) {
+                                    if let Some(entry) = session_map.get_mut(&key) {
                                         // Update model from the latest assistant message
                                         if let Some(model) = data["message"]["model"].as_str() {
                                             if model != "unknown" {
@@ -418,10 +473,12 @@ fn parse_codex_rollout(path: &PathBuf) -> Option<SessionData> {
 
     let non_cached_input = input.saturating_sub(cached);
     let project = cwd.rsplit(|c| c == '/' || c == '\\').next().unwrap_or("").to_string();
+    let date = local_date(&start_time);
 
     Some(SessionData {
         session_id,
         source: "codex".to_string(),
+        date,
         model,
         project,
         start_time,
@@ -675,11 +732,11 @@ fn calculate_cost(
 
 fn upsert_session(conn: &rusqlite::Connection, session: &SessionData) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO sessions (session_id, source, model, project, start_time, end_time,
+        "INSERT INTO sessions (session_id, source, date, model, project, start_time, end_time,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             reasoning_output_tokens, disk_write_bytes, cost)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(session_id, source) DO UPDATE SET
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(session_id, source, date) DO UPDATE SET
             model = excluded.model,
             end_time = excluded.end_time,
             input_tokens = excluded.input_tokens,
@@ -691,7 +748,7 @@ fn upsert_session(conn: &rusqlite::Connection, session: &SessionData) -> Result<
             cost = excluded.cost,
             scanned_at = datetime('now')",
         rusqlite::params![
-            session.session_id, session.source, session.model, session.project,
+            session.session_id, session.source, session.date, session.model, session.project,
             session.start_time, session.end_time, session.input_tokens,
             session.output_tokens, session.cache_read_tokens,
             session.cache_creation_tokens, session.reasoning_tokens,
@@ -791,7 +848,7 @@ fn get_aggregate_stats(conn: &rusqlite::Connection, start: &str, end: &str) -> R
             COALESCE(SUM(disk_write_bytes), 0) as disk_write_bytes,
             COALESCE(SUM(cost), 0) as cost
         FROM sessions
-        WHERE date(start_time) >= ? AND date(start_time) <= ?"
+        WHERE date >= ? AND date <= ?"
     ).map_err(|e| e.to_string())?;
 
     let result = stmt.query_row(rusqlite::params![start, end], |row| {
@@ -876,7 +933,7 @@ fn get_data() -> Result<String, String> {
     let mut stmt = conn.prepare(
         "SELECT session_id, source, model, project, start_time, end_time,
                 input_tokens, output_tokens, cache_read_tokens, cost, disk_write_bytes
-        FROM sessions ORDER BY start_time DESC LIMIT 20"
+        FROM sessions ORDER BY date DESC, start_time DESC LIMIT 20"
     ).map_err(|e| e.to_string())?;
 
     let recent_sessions: Vec<RecentSession> = stmt.query_map([], |row| {

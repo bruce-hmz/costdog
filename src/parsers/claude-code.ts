@@ -24,14 +24,8 @@ interface ClaudeMessage {
       output_tokens: number;
       cache_creation_input_tokens?: number;
       cache_read_input_tokens?: number;
-      server_tool_use?: {
-        web_search_requests?: number;
-        web_fetch_requests?: number;
-      };
-      cache_creation?: {
-        ephemeral_1h_input_tokens?: number;
-        ephemeral_5m_input_tokens?: number;
-      };
+      server_tool_use?: { web_search_requests?: number; web_fetch_requests?: number };
+      cache_creation?: { ephemeral_1h_input_tokens?: number; ephemeral_5m_input_tokens?: number };
       [key: string]: any;
     };
   };
@@ -45,97 +39,118 @@ interface ClaudeMessage {
   gitBranch?: string;
 }
 
+/** Local YYYY-MM-DD of an ISO timestamp (so "today" matches the user's clock). */
+function localDate(isoTs: string): string {
+  if (!isoTs) return '';
+  const d = new Date(isoTs);
+  if (isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+interface DayBucket {
+  date: string;
+  startTime: string;
+  endTime: string;
+  model: string;
+  usage: TokenUsage;
+  diskWriteBytes: number;
+}
+
 /**
- * Parse a single Claude Code session JSONL file
+ * Parse a single Claude Code session JSONL file into per-day summaries.
+ * Usage is bucketed by the LOCAL date of each assistant message, so a session that
+ * spans midnight is split across days (and "today" reflects turns done today).
  */
-export function parseSessionFile(filePath: string): SessionSummary | null {
+export function parseSessionFile(filePath: string): SessionSummary[] {
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
     const lines = content.split('\n').filter(Boolean);
+    if (lines.length === 0) return [];
 
-    if (lines.length === 0) return null;
-
-    const tokenUsage: TokenUsage = {
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-      reasoningOutputTokens: 0,
-    };
-
+    const days = new Map<string, DayBucket>();
     const toolCalls: Record<string, number> = {};
-    let diskWriteBytes = 0;
-    let model = '';
     let sessionId = '';
     let project = '';
-    let startTime = '';
-    let endTime = '';
+
+    const bucketFor = (ts: string, model: string): DayBucket | null => {
+      const date = localDate(ts);
+      if (!date) return null;
+      let b = days.get(date);
+      if (!b) {
+        b = { date, startTime: ts, endTime: ts, model: model || '', usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, reasoningOutputTokens: 0 }, diskWriteBytes: 0 };
+        days.set(date, b);
+      }
+      return b;
+    };
 
     for (const line of lines) {
-      try {
-        const msg: ClaudeMessage = JSON.parse(line);
+      let msg: ClaudeMessage;
+      try { msg = JSON.parse(line); } catch { continue; }
 
-        // Track session metadata
-        if (!sessionId && msg.sessionId) sessionId = msg.sessionId;
-        if (!project && msg.cwd) project = msg.cwd;
-        if (msg.timestamp) {
-          if (!startTime) startTime = msg.timestamp;
-          endTime = msg.timestamp;
-        }
+      if (!sessionId && msg.sessionId) sessionId = msg.sessionId;
+      if (!project && msg.cwd) project = msg.cwd;
+      const ts = msg.timestamp || '';
 
-        // Extract token usage from assistant messages
-        const usage = msg.message?.usage;
-        if (usage) {
-          tokenUsage.inputTokens += usage.input_tokens || 0;
-          tokenUsage.outputTokens += usage.output_tokens || 0;
-          tokenUsage.cacheReadTokens += usage.cache_read_input_tokens || 0;
-          tokenUsage.cacheCreationTokens += usage.cache_creation_input_tokens || 0;
-        }
+      const model = msg.message?.model || '';
+      const b = ts ? bucketFor(ts, model) : null;
+      if (b) {
+        if (ts < b.startTime) b.startTime = ts;
+        if (ts > b.endTime) b.endTime = ts;
+        if (model) b.model = model;
+      }
 
-        // Track model
-        if (msg.message?.model) {
-          model = msg.message.model;
-        }
+      const usage = msg.message?.usage;
+      if (usage && b) {
+        b.usage.inputTokens += usage.input_tokens || 0;
+        b.usage.outputTokens += usage.output_tokens || 0;
+        b.usage.cacheReadTokens += usage.cache_read_input_tokens || 0;
+        b.usage.cacheCreationTokens += usage.cache_creation_input_tokens || 0;
+      }
 
-        // Track tool calls and disk writes
-        const content = msg.message?.content || [];
-        for (const block of content) {
-          if (block.type === 'tool_use' && block.name) {
-            toolCalls[block.name] = (toolCalls[block.name] || 0) + 1;
-
-            // Calculate disk writes
-            if (block.name === 'Write' && block.input?.content) {
-              diskWriteBytes += Buffer.byteLength(block.input.content, 'utf-8');
-            }
-            if (block.name === 'Edit' && block.input?.new_string) {
-              diskWriteBytes += Buffer.byteLength(block.input.new_string, 'utf-8');
-            }
+      // Disk writes attribute to the day of the message
+      const blocks = msg.message?.content || [];
+      for (const block of blocks) {
+        if (block.type === 'tool_use' && block.name) {
+          toolCalls[block.name] = (toolCalls[block.name] || 0) + 1;
+          if (block.name === 'Write' && block.input?.content) {
+            if (b) b.diskWriteBytes += Buffer.byteLength(block.input.content, 'utf-8');
+          }
+          if (block.name === 'Edit' && block.input?.new_string) {
+            if (b) b.diskWriteBytes += Buffer.byteLength(block.input.new_string, 'utf-8');
           }
         }
-      } catch {
-        // Skip malformed lines
       }
     }
 
-    return {
-      sessionId,
-      source: 'claude-code',
-      model,
-      project: path.basename(project),
-      startTime,
-      endTime,
-      tokenUsage,
-      toolCalls,
-      diskWriteBytes,
-      cost: 0, // Will be calculated by pricing module
-    };
+    const projectname = path.basename(project);
+    const out: SessionSummary[] = [];
+    for (const b of days.values()) {
+      out.push({
+        sessionId,
+        source: 'claude-code',
+        date: b.date,
+        model: b.model || 'unknown',
+        project: projectname,
+        startTime: b.startTime,
+        endTime: b.endTime,
+        tokenUsage: b.usage,
+        toolCalls,
+        diskWriteBytes: b.diskWriteBytes,
+        cost: 0,
+      });
+    }
+    return out;
   } catch {
-    return null;
+    return [];
   }
 }
 
 /**
- * Scan all Claude Code sessions
+ * Scan all Claude Code sessions. Returns per-day summaries (a long session yields
+ * multiple entries, one per local day it was active).
  */
 export function scanClaudeSessions(): SessionSummary[] {
   const sessionsDir = getClaudeSessionsDir();
@@ -149,12 +164,10 @@ export function scanClaudeSessions(): SessionSummary[] {
       for (const entry of entries) {
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) {
-          // Skip subagent directories
           if (entry.name === 'subagents') continue;
           walkDir(fullPath);
         } else if (entry.name.endsWith('.jsonl')) {
-          const session = parseSessionFile(fullPath);
-          if (session) results.push(session);
+          results.push(...parseSessionFile(fullPath));
         }
       }
     } catch {

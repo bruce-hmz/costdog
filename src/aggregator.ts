@@ -4,14 +4,15 @@ import { loadPricing, calculateCost } from './utils/pricing';
 import { upsertSession, getAggregateStats, getTopModels, getRecentSessions, getAlerts, addAlert } from './db/schema';
 import { SessionSummary, DailySummary, DashboardData, Alert } from './types';
 
+function localDay(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function dateRange(days: number): { start: string; end: string } {
   const end = new Date();
   const start = new Date();
   start.setDate(start.getDate() - days);
-  return {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
-  };
+  return { start: localDay(start), end: localDay(end) };
 }
 
 function toDailySummary(stats: any, topModels: any[]): DailySummary {
@@ -68,6 +69,7 @@ export async function fullScan(): Promise<{ newSessions: number; totalSessions: 
     upsertSession({
       sessionId: s.sessionId,
       source: s.source,
+      date: s.date,
       model: s.model,
       project: s.project,
       startTime: s.startTime,

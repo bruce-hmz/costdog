@@ -19,6 +19,7 @@ export function getDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS sessions (
       session_id TEXT NOT NULL,
       source TEXT NOT NULL,
+      date TEXT NOT NULL DEFAULT '',
       model TEXT,
       project TEXT,
       start_time TEXT,
@@ -31,12 +32,13 @@ export function getDb(): Database.Database {
       disk_write_bytes INTEGER DEFAULT 0,
       cost REAL DEFAULT 0,
       scanned_at TEXT DEFAULT (datetime('now')),
-      PRIMARY KEY (session_id, source)
+      PRIMARY KEY (session_id, source, date)
     );
 
     CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(start_time);
     CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
     CREATE INDEX IF NOT EXISTS idx_sessions_model ON sessions(model);
+    CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date);
 
     CREATE TABLE IF NOT EXISTS alerts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,6 +56,37 @@ export function getDb(): Database.Database {
     _db.exec('ALTER TABLE alerts ADD COLUMN alert_key TEXT');
   }
 
+  // Migration: per-day attribution. Old sessions table had PK (session_id, source) and no
+  // date column, so a session spanning midnight was bucketed to its start day only. Recreate
+  // with a date column + PK (session_id, source, date) so each day is its own row. Existing
+  // rows are copied with date = date(start_time); the next full scan repopulates per-day rows.
+  const sessionCols = _db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[];
+  if (!sessionCols.some(c => c.name === 'date')) {
+    _db.transaction(() => {
+      _db.exec('ALTER TABLE sessions RENAME TO sessions_v1');
+      _db.exec(`CREATE TABLE sessions (
+        session_id TEXT NOT NULL, source TEXT NOT NULL, date TEXT NOT NULL DEFAULT '',
+        model TEXT, project TEXT, start_time TEXT, end_time TEXT,
+        input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
+        cache_read_tokens INTEGER DEFAULT 0, cache_creation_tokens INTEGER DEFAULT 0,
+        reasoning_output_tokens INTEGER DEFAULT 0, disk_write_bytes INTEGER DEFAULT 0,
+        cost REAL DEFAULT 0, scanned_at TEXT DEFAULT (datetime('now')),
+        PRIMARY KEY (session_id, source, date)
+      )`);
+      _db.exec(`INSERT INTO sessions (session_id, source, date, model, project, start_time, end_time,
+        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+        reasoning_output_tokens, disk_write_bytes, cost, scanned_at)
+        SELECT session_id, source, date(start_time), model, project, start_time, end_time,
+          input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+          reasoning_output_tokens, disk_write_bytes, cost, scanned_at FROM sessions_v1`);
+      _db.exec('DROP TABLE sessions_v1');
+      _db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(start_time)');
+      _db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source)');
+      _db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_model ON sessions(model)');
+      _db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date)');
+    })();
+  }
+
   // Drop sessions that logged no token usage — 0-cost noise. Also enforced at scan time.
   _db.exec('DELETE FROM sessions WHERE input_tokens=0 AND output_tokens=0 AND cache_read_tokens=0 AND cache_creation_tokens=0 AND reasoning_output_tokens=0');
 
@@ -66,6 +99,7 @@ export function getDb(): Database.Database {
 export function upsertSession(s: {
   sessionId: string;
   source: string;
+  date: string;
   model: string;
   project: string;
   startTime: string;
@@ -80,11 +114,11 @@ export function upsertSession(s: {
 }) {
   const db = getDb();
   db.prepare(`
-    INSERT INTO sessions (session_id, source, model, project, start_time, end_time,
+    INSERT INTO sessions (session_id, source, date, model, project, start_time, end_time,
       input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
       reasoning_output_tokens, disk_write_bytes, cost)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(session_id, source) DO UPDATE SET
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(session_id, source, date) DO UPDATE SET
       model = excluded.model,
       end_time = excluded.end_time,
       input_tokens = excluded.input_tokens,
@@ -96,7 +130,7 @@ export function upsertSession(s: {
       cost = excluded.cost,
       scanned_at = datetime('now')
   `).run(
-    s.sessionId, s.source, s.model, s.project, s.startTime, s.endTime,
+    s.sessionId, s.source, s.date, s.model, s.project, s.startTime, s.endTime,
     s.inputTokens, s.outputTokens, s.cacheReadTokens, s.cacheCreationTokens,
     s.reasoningOutputTokens, s.diskWriteBytes, s.cost,
   );
@@ -109,7 +143,7 @@ export function getDailySummary(startDate: string, endDate: string) {
   const db = getDb();
   return db.prepare(`
     SELECT
-      date(start_time) as date,
+      date,
       COUNT(*) as sessions,
       SUM(input_tokens) as input_tokens,
       SUM(output_tokens) as output_tokens,
@@ -117,9 +151,9 @@ export function getDailySummary(startDate: string, endDate: string) {
       SUM(cost) as cost,
       SUM(disk_write_bytes) as disk_write_bytes
     FROM sessions
-    WHERE date(start_time) >= ? AND date(start_time) <= ?
-    GROUP BY date(start_time)
-    ORDER BY date(start_time) DESC
+    WHERE date >= ? AND date <= ?
+    GROUP BY date
+    ORDER BY date DESC
   `).all(startDate, endDate);
 }
 
@@ -137,7 +171,7 @@ export function getAggregateStats(startDate: string, endDate: string) {
       COALESCE(SUM(disk_write_bytes), 0) as disk_write_bytes,
       COALESCE(SUM(cost), 0) as cost
     FROM sessions
-    WHERE date(start_time) >= ? AND date(start_time) <= ?
+    WHERE date >= ? AND date <= ?
   `).get(startDate, endDate) as any;
 }
 
@@ -154,7 +188,7 @@ export function getTopModels(startDate: string, endDate: string, limit = 5) {
       SUM(output_tokens) as output_tokens,
       SUM(cost) as cost
     FROM sessions
-    WHERE date(start_time) >= ? AND date(start_time) <= ?
+    WHERE date >= ? AND date <= ?
     GROUP BY model
     ORDER BY cost DESC
     LIMIT ?
@@ -168,7 +202,7 @@ export function getRecentSessions(limit = 20) {
   const db = getDb();
   return db.prepare(`
     SELECT * FROM sessions
-    ORDER BY start_time DESC
+    ORDER BY date DESC, start_time DESC
     LIMIT ?
   `).all(limit);
 }

@@ -17,6 +17,7 @@ export interface ToolCall {
 export interface SessionSummary {
   sessionId: string;
   source: 'claude-code' | 'codex';
+  date: string;
   model: string;
   project: string;
   startTime: string;
