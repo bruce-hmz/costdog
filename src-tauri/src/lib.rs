@@ -481,7 +481,12 @@ struct PricingCache {
     models: Vec<PricedModel>,
     #[serde(rename = "fetchedAt")]
     fetched_at: String,
+    /// Bumped on incompatible cache changes so a stale/bad cache is ignored & refetched.
+    #[serde(default)]
+    version: u32,
 }
+
+const PRICING_CACHE_VERSION: u32 = 2;
 
 fn get_pricing_cache_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -497,6 +502,16 @@ fn pricing_is_stale(fetched_at: &str) -> bool {
     }
 }
 
+// OpenRouter returns prices as JSON *strings* (e.g. "prompt": "0.000015"), so Value::as_f64
+// (which only parses JSON numbers) returns None and we'd store 0. Handle both string and number.
+fn price_as_f64(v: &serde_json::Value) -> f64 {
+    match v {
+        serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0),
+        serde_json::Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
+        _ => 0.0,
+    }
+}
+
 fn fetch_openrouter_pricing() -> Result<Vec<PricedModel>, String> {
     let resp = reqwest::blocking::get("https://openrouter.ai/api/v1/models")
         .map_err(|e| format!("reqwest: {}", e))?;
@@ -509,9 +524,9 @@ fn fetch_openrouter_pricing() -> Result<Vec<PricedModel>, String> {
             Some(s) if !s.is_empty() => s.to_string(),
             _ => continue,
         };
-        // OpenRouter prices are per-token; normalize to $ per million tokens.
-        let input = m["pricing"]["prompt"].as_f64().unwrap_or(0.0) * 1_000_000.0;
-        let output = m["pricing"]["completion"].as_f64().unwrap_or(0.0) * 1_000_000.0;
+        // OpenRouter prices are per-token ($/token); normalize to $ per million tokens.
+        let input = price_as_f64(&m["pricing"]["prompt"]) * 1_000_000.0;
+        let output = price_as_f64(&m["pricing"]["completion"]) * 1_000_000.0;
         out.push(PricedModel { model_id: id, input, output });
     }
     Ok(out)
@@ -522,7 +537,10 @@ fn load_pricing() -> Vec<PricedModel> {
     let cache_path = get_pricing_cache_path();
     if let Ok(content) = fs::read_to_string(&cache_path) {
         if let Ok(cache) = serde_json::from_str::<PricingCache>(&content) {
-            if !cache.models.is_empty() && !pricing_is_stale(&cache.fetched_at) {
+            if !cache.models.is_empty()
+                && !pricing_is_stale(&cache.fetched_at)
+                && cache.version == PRICING_CACHE_VERSION
+            {
                 return cache.models;
             }
         }
@@ -532,6 +550,7 @@ fn load_pricing() -> Vec<PricedModel> {
             let to_write = PricingCache {
                 models: models.clone(),
                 fetched_at: chrono::Utc::now().to_rfc3339(),
+                version: PRICING_CACHE_VERSION,
             };
             if let Some(parent) = cache_path.parent() {
                 let _ = fs::create_dir_all(parent);
@@ -550,6 +569,46 @@ fn load_pricing() -> Vec<PricedModel> {
 }
 
 /// Match a model id to (input $/M, output $/M). Tiers: exact -> '/'-suffix -> contains.
+/// Replace '-' between two digits with '.', e.g. "claude-opus-4-8" -> "claude-opus-4.8".
+/// Claude Code logs versions with dashes; OpenRouter lists them with dots.
+fn normalize_digit_dashes(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    for i in 0..bytes.len() {
+        let c = bytes[i];
+        if c == b'-'
+            && i > 0
+            && i + 1 < bytes.len()
+            && bytes[i - 1].is_ascii_digit()
+            && bytes[i + 1].is_ascii_digit()
+        {
+            out.push('.');
+        } else {
+            out.push(c as char);
+        }
+    }
+    out
+}
+
+/// Last-resort prices ($/M input, $/M output) for models OpenRouter doesn't list.
+fn fallback_price(model_id: &str) -> Option<(f64, f64)> {
+    let lower = model_id.to_lowercase();
+    const TABLE: &[(&str, f64, f64)] = &[
+        ("mimo-v2.5-pro", 0.5, 2.0),
+        ("glm-5.1", 1.0, 3.0),
+        ("glm-5.2", 0.95, 3.0),
+    ];
+    for (id, pin, pout) in TABLE {
+        let id_l = id.to_lowercase();
+        if lower.contains(id_l.as_str()) || id_l.contains(lower.as_str()) {
+            return Some((*pin, *pout));
+        }
+    }
+    None
+}
+
+/// Match a model id to (input $/M, output $/M). Tiers:
+/// exact -> '/'-suffix -> dash/dot-normalized -> contains -> fallback table.
 fn find_model_price(model_id: &str, prices: &[PricedModel]) -> Option<(f64, f64)> {
     if model_id.is_empty() {
         return None;
@@ -565,13 +624,24 @@ fn find_model_price(model_id: &str, prices: &[PricedModel]) -> Option<(f64, f64)
             return Some((m.input, m.output));
         }
     }
+    // Claude Code: "claude-opus-4-8" (dash); OpenRouter: "anthropic/claude-opus-4.8" (dot).
+    let normalized = normalize_digit_dashes(&lower);
+    if normalized != lower {
+        for m in prices {
+            let m_lower = m.model_id.to_lowercase();
+            let suffix = m_lower.split('/').last().unwrap_or("").to_string();
+            if m_lower == normalized || suffix == normalized {
+                return Some((m.input, m.output));
+            }
+        }
+    }
     for m in prices {
         let a = m.model_id.to_lowercase();
         if a.contains(lower.as_str()) || lower.contains(a.as_str()) {
             return Some((m.input, m.output));
         }
     }
-    None
+    fallback_price(model_id)
 }
 
 fn calculate_cost(
