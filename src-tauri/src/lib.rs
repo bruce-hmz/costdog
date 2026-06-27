@@ -140,7 +140,6 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
         CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(start_time);
         CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
         CREATE INDEX IF NOT EXISTS idx_sessions_model ON sessions(model);
-        CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date);
 
         CREATE TABLE IF NOT EXISTS alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -212,6 +211,11 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
         .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
     }
+
+    // Date index — created after the per-day migration so the column is guaranteed to exist
+    // (the initial execute_batch can't reference `date` on a pre-migration DB).
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date)", [])
+        .map_err(|e| e.to_string())?;
 
     Ok(conn)
 }
