@@ -1075,8 +1075,8 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
 
     let install = app
         .dialog()
-        .title("CostDog")
         .message(format!("CostDog {} is available. Update now?", update.version))
+        .title("CostDog")
         .ok_button_label("Update")
         .cancel_button_label("Later")
         .blocking_ask();
@@ -1087,7 +1087,7 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
     let version = update.version.clone();
     let _ = app.emit("update-installing", &version);
     update
-        .download_and_install(|_| {})
+        .download_and_install(|_chunk, _total| {}, || {})
         .await
         .map_err(|e| e.to_string())?;
     app.restart();
