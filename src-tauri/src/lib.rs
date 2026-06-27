@@ -1024,8 +1024,9 @@ fn close_window(app: tauri::AppHandle) {
 // to quit the app cleanly. Built in code; no tauri.conf.json entry needed.
 fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let show_i = MenuItem::with_id(app, "show", "Show CostDog", true, None::<&str>)?;
+    let update_i = MenuItem::with_id(app, "check-update", "Check for Updates…", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit CostDog", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+    let menu = Menu::with_items(app, &[&show_i, &update_i, &quit_i])?;
 
     TrayIconBuilder::with_id("main-tray")
         .tooltip("CostDog")
@@ -1038,6 +1039,14 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                     let _ = window.set_focus();
                 }
             }
+            "check-update" => {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = check_for_updates(handle).await {
+                        eprintln!("[CostDog] update check failed: {}", e);
+                    }
+                });
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -1046,11 +1055,52 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Check for a newer release; if found, prompt via native dialog and, on consent,
+/// download + install + relaunch. Driven by the tray "Check for Updates" item and a
+/// delayed auto-check on launch.
+#[tauri::command]
+async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+    use tauri_plugin_updater::UpdaterExt;
+
+    let update = app
+        .updater()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(update) = update else {
+        return Ok("up-to-date".to_string());
+    };
+
+    let install = app
+        .dialog()
+        .message(format!("CostDog {} is available. Update now?", update.version))
+        .title("CostDog")
+        .buttons(MessageDialogButtons::OkCancelCustom("Update".to_string(), "Later".to_string()))
+        .blocking_show();
+    if !install {
+        return Ok(update.version);
+    }
+
+    let version = update.version.clone();
+    let _ = app.emit("update-installing", &version);
+    update
+        .download_and_install(|_chunk, _total| {}, || {})
+        .await
+        .map_err(|e| e.to_string())?;
+    app.request_restart();
+    Ok(version)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![resize_window, get_data, scan, close_window])
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![resize_window, get_data, scan, close_window, check_for_updates])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
             window.set_always_on_top(true).ok();
@@ -1078,6 +1128,18 @@ pub fn run() {
                     // Emit event to frontend to refresh data
                     let _ = app_handle.emit("refresh-data", ());
                 }
+            });
+
+            // Auto-check for updates a few seconds after launch (non-blocking).
+            let update_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                let h = update_handle;
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = check_for_updates(h).await {
+                        eprintln!("[CostDog] update check failed: {}", e);
+                    }
+                });
             });
 
             Ok(())

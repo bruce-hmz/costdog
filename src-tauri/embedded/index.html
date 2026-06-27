@@ -190,6 +190,9 @@ function tauriListen(eventName, callback){
 // Auto-refresh: listen for scan completion events from Rust
 tauriListen('refresh-data',()=>{load();});
 
+// While an update is downloading/installing, turn the refresh button into a down-arrow.
+tauriListen('update-installing',()=>{const b=document.getElementById('sb');if(b)b.innerHTML='&#x2B07;&#xFE0E;';});
+
 // Drag the bar by calling the core start_dragging command directly — the same
 // __TAURI_INTERNALS__.invoke pattern the app already uses for resize/close.
 // data-tauri-drag-region's auto-handler was unreliable across WKWebView/WebView2,
