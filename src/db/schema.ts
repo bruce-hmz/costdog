@@ -54,6 +54,9 @@ export function getDb(): Database.Database {
     _db.exec('ALTER TABLE alerts ADD COLUMN alert_key TEXT');
   }
 
+  // Drop sessions that logged no token usage — 0-cost noise. Also enforced at scan time.
+  _db.exec('DELETE FROM sessions WHERE input_tokens=0 AND output_tokens=0 AND cache_read_tokens=0 AND cache_creation_tokens=0 AND reasoning_output_tokens=0');
+
   return _db;
 }
 

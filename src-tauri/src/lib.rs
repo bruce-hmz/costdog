@@ -149,6 +149,14 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
         );"
     ).map_err(|e| e.to_string())?;
 
+    // Drop sessions that logged no token usage (opened-but-unused sessions, or models
+    // that don't report usage) — they are 0-cost noise. Also enforced at scan time.
+    conn.execute(
+        "DELETE FROM sessions WHERE input_tokens=0 AND output_tokens=0 AND cache_read_tokens=0 AND cache_creation_tokens=0 AND reasoning_output_tokens=0",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
     // Migration: CREATE TABLE IF NOT EXISTS won't add alert_key to an existing table.
     let has_alert_key: i64 = conn
         .query_row(
@@ -739,7 +747,15 @@ fn full_scan() -> Result<usize, String> {
 
     let claude_sessions = scan_claude_sessions();
     let codex_sessions = scan_codex_sessions();
-    let all_sessions = [claude_sessions, codex_sessions].concat();
+    let all_sessions = [claude_sessions, codex_sessions]
+        .concat()
+        .into_iter()
+        .filter(|s| {
+            s.input_tokens + s.output_tokens + s.cache_read_tokens
+                + s.cache_creation_tokens + s.reasoning_tokens
+                > 0
+        })
+        .collect::<Vec<_>>();
 
     eprintln!("[CostDog] Scan found {} sessions total", all_sessions.len());
 
