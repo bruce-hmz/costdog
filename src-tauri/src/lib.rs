@@ -1060,7 +1060,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 /// delayed auto-check on launch.
 #[tauri::command]
 async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
-    use tauri_plugin_dialog::DialogExt;
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
     use tauri_plugin_updater::UpdaterExt;
 
     let update = app
@@ -1077,9 +1077,8 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
         .dialog()
         .message(format!("CostDog {} is available. Update now?", update.version))
         .title("CostDog")
-        .ok_button_label("Update")
-        .cancel_button_label("Later")
-        .blocking_ask();
+        .buttons(MessageDialogButtons::OkCancelCustom("Update", "Later"))
+        .blocking_show();
     if !install {
         return Ok(update.version);
     }
