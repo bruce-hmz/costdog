@@ -200,12 +200,7 @@ tauriListen('refresh-data',()=>{load();});
   bar.addEventListener('mousedown',function(e){
     if(e.button!==0)return;
     if(e.target.closest('button'))return;
-    var cost=document.getElementById('bc');
-    var p=window.__TAURI_INTERNALS__.invoke('plugin:window|start_dragging');
-    // DIAGNOSTIC (invisible on success): if start_dragging is rejected at runtime
-    // (e.g. capability not effective), surface the error in the cost slot so we can
-    // see it without devtools. If the bar moves, this never shows.
-    if(p&&p.catch)p.catch(function(err){if(cost)cost.textContent='[drag]'+String(err).slice(0,24);});
+    window.__TAURI_INTERNALS__.invoke('plugin:window|start_dragging');
   });
 })();
 
