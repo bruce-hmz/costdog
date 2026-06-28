@@ -193,9 +193,10 @@ tauriListen('refresh-data',()=>{load();});
 // While an update is downloading/installing, turn the refresh button into a down-arrow.
 tauriListen('update-installing',()=>{const b=document.getElementById('sb');if(b)b.innerHTML='&#x2B07;&#xFE0E;';});
 
-// Surface the update process in the cost slot: checking / downloading X% / installing.
-tauriListen('update-status',function(s){var b=document.getElementById('bc');if(b){b.textContent=s;b.style.color='var(--accent)';}});
-tauriListen('update-progress',function(p){var b=document.getElementById('bc');if(b){b.textContent='⬇ '+p+'%';b.style.color='var(--accent)';}});
+// Surface the update process in the cost slot: downloading X% / installing.
+// (event callback receives the full Event object; use .payload for the value)
+tauriListen('update-status',function(e){var s=(e&&e.payload!=null)?e.payload:e;var b=document.getElementById('bc');if(b){b.textContent=s;b.style.color='var(--accent)';}});
+tauriListen('update-progress',function(e){var p=(e&&e.payload!=null)?e.payload:e;var b=document.getElementById('bc');if(b){b.textContent='⬇ '+p+'%';b.style.color='var(--accent)';}});
 
 // Drag the bar by calling the core start_dragging command directly — the same
 // __TAURI_INTERNALS__.invoke pattern the app already uses for resize/close.

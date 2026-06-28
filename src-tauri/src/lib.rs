@@ -1065,16 +1065,30 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
     use tauri_plugin_updater::UpdaterExt;
 
-    let _ = app.emit("update-status", "checking");
-    let update = app
+    let current = app.package_info().version.clone();
+    let update = match app
         .updater()
         .map_err(|e| e.to_string())?
         .check()
         .await
-        .map_err(|e| e.to_string())?;
-    let Some(update) = update else {
-        let _ = app.emit("update-status", "latest");
-        return Ok("up-to-date".to_string());
+    {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            let _ = app
+                .dialog()
+                .message(format!("CostDog {} 已是最新版本。", current))
+                .title("CostDog")
+                .blocking_show();
+            return Ok("up-to-date".to_string());
+        }
+        Err(e) => {
+            let _ = app
+                .dialog()
+                .message(format!("检查更新失败: {}", e))
+                .title("CostDog")
+                .blocking_show();
+            return Err(e.to_string());
+        }
     };
 
     let install = app
@@ -1084,7 +1098,6 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
         .buttons(MessageDialogButtons::OkCancelCustom("Update".to_string(), "Later".to_string()))
         .blocking_show();
     if !install {
-        let _ = app.emit("update-status", "cancelled");
         return Ok(update.version);
     }
 
