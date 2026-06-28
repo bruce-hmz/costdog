@@ -1023,13 +1023,15 @@ fn close_window(app: tauri::AppHandle) {
 // so the close button hides it. The tray is the only way to bring it back and
 // to quit the app cleanly. Built in code; no tauri.conf.json entry needed.
 fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let version = app.package_info().version.clone();
+    let version_i = MenuItem::with_id(app, "version", format!("CostDog v{}", version), false, None::<&str>)?;
     let show_i = MenuItem::with_id(app, "show", "Show CostDog", true, None::<&str>)?;
     let update_i = MenuItem::with_id(app, "check-update", "Check for Updates…", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit CostDog", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_i, &update_i, &quit_i])?;
+    let menu = Menu::with_items(app, &[&version_i, &show_i, &update_i, &quit_i])?;
 
     TrayIconBuilder::with_id("main-tray")
-        .tooltip("CostDog")
+        .tooltip(format!("CostDog v{}", version))
         .icon(app.default_window_icon().expect("default window icon missing").clone())
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
