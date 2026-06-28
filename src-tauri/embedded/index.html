@@ -72,7 +72,7 @@ tr:hover{background:rgba(137,180,250,.03)}
   </div>
 </div>
 <div class="detail" id="detail">
-  <div class="dh"><span class="dt">CostDog — Cost Monitor</span><button class="xb" onclick="toggle()">&#x2715;</button></div>
+  <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><button class="xb" onclick="toggle()">&#x2715;</button></div>
   <div class="tabs">
     <div class="tab on" data-r="today">Today</div>
     <div class="tab" data-r="week">7D</div>
@@ -193,6 +193,10 @@ tauriListen('refresh-data',()=>{load();});
 // While an update is downloading/installing, turn the refresh button into a down-arrow.
 tauriListen('update-installing',()=>{const b=document.getElementById('sb');if(b)b.innerHTML='&#x2B07;&#xFE0E;';});
 
+// Surface the update process in the cost slot: checking / downloading X% / installing.
+tauriListen('update-status',function(s){var b=document.getElementById('bc');if(b){b.textContent=s;b.style.color='var(--accent)';}});
+tauriListen('update-progress',function(p){var b=document.getElementById('bc');if(b){b.textContent='⬇ '+p+'%';b.style.color='var(--accent)';}});
+
 // Drag the bar by calling the core start_dragging command directly — the same
 // __TAURI_INTERNALS__.invoke pattern the app already uses for resize/close.
 // data-tauri-drag-region's auto-handler was unreliable across WKWebView/WebView2,
@@ -205,6 +209,15 @@ tauriListen('update-installing',()=>{const b=document.getElementById('sb');if(b)
     if(e.target.closest('button'))return;
     window.__TAURI_INTERNALS__.invoke('plugin:window|start_dragging');
   });
+})();
+
+// Show the running app version in the detail-panel header.
+(function(){
+  if(!window.__TAURI_INTERNALS__)return;
+  window.__TAURI_INTERNALS__.invoke('plugin:app|version').then(function(v){
+    var t=document.getElementById('dtitle');
+    if(t&&v)t.textContent='CostDog '+v+' — Cost Monitor';
+  }).catch(function(){});
 })();
 
 

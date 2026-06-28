@@ -1065,6 +1065,7 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
     use tauri_plugin_updater::UpdaterExt;
 
+    let _ = app.emit("update-status", "checking");
     let update = app
         .updater()
         .map_err(|e| e.to_string())?
@@ -1072,6 +1073,7 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
         .await
         .map_err(|e| e.to_string())?;
     let Some(update) = update else {
+        let _ = app.emit("update-status", "latest");
         return Ok("up-to-date".to_string());
     };
 
@@ -1082,13 +1084,37 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
         .buttons(MessageDialogButtons::OkCancelCustom("Update".to_string(), "Later".to_string()))
         .blocking_show();
     if !install {
+        let _ = app.emit("update-status", "cancelled");
         return Ok(update.version);
     }
 
+    // Surface download/install progress in the bar so the user sees the update happening.
     let version = update.version.clone();
-    let _ = app.emit("update-installing", &version);
+    let _ = app.emit("update-status", format!("downloading {}", version));
+    let app_p = app.clone();
+    let app_f = app.clone();
+    let mut downloaded: u64 = 0;
+    let mut total: u64 = 0;
+    let mut last_pct: u32 = 0;
     update
-        .download_and_install(|_chunk, _total| {}, || {})
+        .download_and_install(
+            move |chunk_len, content_len| {
+                downloaded += chunk_len as u64;
+                if let Some(t) = content_len {
+                    total = t;
+                }
+                if total > 0 {
+                    let pct = (downloaded * 100 / total) as u32;
+                    if pct >= last_pct + 5 || pct >= 100 {
+                        last_pct = pct;
+                        let _ = app_p.emit("update-progress", pct);
+                    }
+                }
+            },
+            move || {
+                let _ = app_f.emit("update-status", "installing");
+            },
+        )
         .await
         .map_err(|e| e.to_string())?;
     app.request_restart();
