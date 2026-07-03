@@ -649,7 +649,7 @@ fn scan_zcode_sessions() -> Vec<SessionData> {
             return Vec::new();
         }
     };
-    let rows = stmt.query_map([], |row| {
+    let rows = match stmt.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,        // session_id
             row.get::<_, Option<String>>(1)?, // directory
@@ -661,11 +661,13 @@ fn scan_zcode_sessions() -> Vec<SessionData> {
             row.get::<_, i64>(7)?,           // cache_create
             row.get::<_, i64>(8)?,           // cache_read
         ))
-    });
-    if let Err(e) = rows {
-        eprintln!("[CostDog] ZCode query_map failed: {}", e);
-        return Vec::new();
-    }
+    }) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[CostDog] ZCode query_map failed: {}", e);
+            return Vec::new();
+        }
+    };
 
     for r in rows {
         let (sid, dir, started, model, input, output, reasoning, cc, cr) = match r {
@@ -767,7 +769,7 @@ fn scan_opencode_sessions() -> Vec<SessionData> {
             return Vec::new();
         }
     };
-    let rows = stmt.query_map([], |row| {
+    let rows = match stmt.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,                  // id
             row.get::<_, Option<String>>(1)?,          // directory
@@ -781,11 +783,13 @@ fn scan_opencode_sessions() -> Vec<SessionData> {
             row.get::<_, Option<i64>>(9)?,             // time_created
             row.get::<_, Option<i64>>(10)?,            // time_updated
         ))
-    });
-    if let Err(e) = rows {
-        eprintln!("[CostDog] OpenCode query_map failed: {}", e);
-        return Vec::new();
-    }
+    }) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[CostDog] OpenCode query_map failed: {}", e);
+            return Vec::new();
+        }
+    };
 
     let mut out = Vec::new();
     for r in rows {
@@ -796,14 +800,17 @@ fn scan_opencode_sessions() -> Vec<SessionData> {
         let started = tc.or(tu).unwrap_or(0);
         let date = local_date_from_ms(started);
         // Parse model id out of the JSON column (tolerate plain string / null).
-        let model = model_json
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| {
-                v.get("id").and_then(|x| x.as_str()).map(|s| s.to_string())
-                    .or_else(|| v.get("modelID").and_then(|x| x.as_str()).map(|s| s.to_string()))
-                    .or_else(|| if v.is_string() { v.as_str().map(|s| s.to_string()) } else { None })
-            })
-            .unwrap_or_default();
+        let model = match model_json {
+            Some(s) => match serde_json::from_str::<serde_json::Value>(&s) {
+                Ok(v) => v
+                    .get("id").and_then(|x| x.as_str()).map(|x| x.to_string())
+                    .or_else(|| v.get("modelID").and_then(|x| x.as_str()).map(|x| x.to_string()))
+                    .or_else(|| v.as_str().map(|x| x.to_string()))
+                    .unwrap_or_default(),
+                Err(_) => s,  // not JSON → treat the raw string as the model id
+            },
+            None => String::new(),
+        };
         let project = dir
             .as_deref()
             .unwrap_or("")
