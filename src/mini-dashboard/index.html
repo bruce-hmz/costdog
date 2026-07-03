@@ -49,7 +49,7 @@ th{text-align:left;padding:5px 6px;color:var(--dim);border-bottom:1px solid var(
 td{padding:4px 6px;border-bottom:1px solid rgba(42,42,58,.5)}
 tr:hover{background:rgba(137,180,250,.03)}
 .badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700}
-.bcc{background:rgba(137,180,250,.12);color:var(--accent)}.bcx{background:rgba(166,227,161,.12);color:var(--green)}
+.bcc{background:rgba(137,180,250,.12);color:var(--accent)}.bcx{background:rgba(166,227,161,.12);color:var(--green)}.bzc{background:rgba(200,160,255,.14);color:#b78cff}.boc{background:rgba(255,190,120,.14);color:#ffb878}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 </style>
 </head>
@@ -136,7 +136,7 @@ function render(){
   const ss=D.recentSessions||[];
   let th='';
   if(!ss.length) th='<tr><td colspan="6" style="color:var(--dim);text-align:center;padding:12px">No data</td></tr>';
-  else ss.slice(0,15).forEach(s=>{th+='<tr><td><span class="badge '+(s.source==='claude-code'?'bcc':'bcx')+'">'+(s.source==='claude-code'?'CC':'CX')+'</span></td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
+  else ss.slice(0,15).forEach(s=>{const bc={'claude-code':'bcc','codex':'bcx','zcode':'bzc','opencode':'boc'}[s.source]||'bcx',bl={'claude-code':'CC','codex':'CX','zcode':'ZC','opencode':'OC'}[s.source]||'CX';th+='<tr><td><span class="badge '+bc+'">'+bl+'</span></td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
   document.getElementById('dt').innerHTML=th;
 }
 async function load(){
