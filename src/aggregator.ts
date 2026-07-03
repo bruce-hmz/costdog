@@ -1,5 +1,7 @@
 import { scanClaudeSessions } from './parsers/claude-code';
 import { scanCodexSessions } from './parsers/codex';
+import { scanZcodeSessions } from './parsers/zcode';
+import { scanOpencodeSessions } from './parsers/opencode';
 import { loadPricing, calculateCost } from './utils/pricing';
 import { upsertSession, getAggregateStats, getTopModels, getRecentSessions, getAlerts, addAlert } from './db/schema';
 import { SessionSummary, DailySummary, DashboardData, Alert } from './types';
@@ -44,7 +46,9 @@ export async function fullScan(): Promise<{ newSessions: number; totalSessions: 
 
   const claudeSessions = scanClaudeSessions();
   const codexSessions = scanCodexSessions();
-  const allSessions = [...claudeSessions, ...codexSessions].filter(
+  const zcodeSessions = scanZcodeSessions();
+  const opencodeSessions = scanOpencodeSessions();
+  const allSessions = [...claudeSessions, ...codexSessions, ...zcodeSessions, ...opencodeSessions].filter(
     (s) =>
       s.tokenUsage.inputTokens +
         s.tokenUsage.outputTokens +
@@ -56,7 +60,9 @@ export async function fullScan(): Promise<{ newSessions: number; totalSessions: 
 
   let newCount = 0;
   for (const s of allSessions) {
-    const cost = calculateCost(
+    // OpenCode writes its own (provider-accurate) cost into the session row.
+    // Trust it when present; otherwise recompute from tokens + our pricing table.
+    const cost = s.cost > 0 ? s.cost : calculateCost(
       s.tokenUsage.inputTokens,
       s.tokenUsage.outputTokens,
       s.tokenUsage.cacheReadTokens,

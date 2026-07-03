@@ -107,6 +107,73 @@ fn get_codex_sessions_dir() -> PathBuf {
     PathBuf::from(codex_home).join("sessions")
 }
 
+// ZCode CLI stores its SQLite DB at ~/.zcode/cli/db/db.sqlite (ZCODE_HOME overrides ~/.zcode).
+fn get_zcode_db_path() -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let zcode_home = std::env::var("ZCODE_HOME")
+        .unwrap_or_else(|_| home.join(".zcode").to_string_lossy().to_string());
+    PathBuf::from(zcode_home).join("cli").join("db").join("db.sqlite")
+}
+
+// OpenCode stores its DB at ~/.local/share/opencode/opencode.db.
+// OPENCODE_DB may be an absolute path to the file; XDG_DATA_HOME overrides the base dir.
+fn get_opencode_db_path() -> PathBuf {
+    if let Ok(v) = std::env::var("OPENCODE_DB") {
+        let p = PathBuf::from(&v);
+        if p.is_absolute() {
+            return p;
+        }
+    }
+    let base = match std::env::var("XDG_DATA_HOME") {
+        Ok(xdg) if !xdg.is_empty() => PathBuf::from(xdg),
+        _ => {
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+            home.join(".local").join("share")
+        }
+    };
+    base.join("opencode").join("opencode.db")
+}
+
+/// Local YYYY-MM-DD of a millisecond epoch timestamp (so "today" matches the user's clock).
+fn local_date_from_ms(ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string())
+        .unwrap_or_default()
+}
+
+fn iso_from_ms(ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_default()
+}
+
+/// Open a SQLite DB read-only with a busy_timeout so a running app is never blocked.
+/// Returns None if the file is missing, can't be opened, or lacks `table`.
+fn open_readonly_db(path: &PathBuf, table: &str) -> Option<rusqlite::Connection> {
+    if !path.exists() {
+        return None;
+    }
+    use rusqlite::OpenFlags;
+    let conn = rusqlite::Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    conn.busy_timeout(std::time::Duration::from_millis(5000)).ok()?;
+    // Confirm the expected table exists — degrade to "no data" on older/other schemas.
+    let has_table: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+            rusqlite::params![table],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if has_table == 0 {
+        return None;
+    }
+    Some(conn)
+}
+
 fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
     let db_path = get_costdog_db_path();
     if let Some(parent) = db_path.parent() {
@@ -528,6 +595,244 @@ fn scan_codex_sessions() -> Vec<SessionData> {
     sessions
 }
 
+// ZCode CLI stores per-request model usage in ~/.zcode/cli/db/db.sqlite.
+//   session     -> id, directory (project cwd)
+//   model_usage -> one row per model request: session_id, started_at (ms epoch),
+//                  model_id, status, input_tokens (NON-cached, Anthropic-style),
+//                  output_tokens, reasoning_tokens, cache_creation_input_tokens,
+//                  cache_read_input_tokens
+// Aggregated by (session_id, LOCAL date of started_at) so a session spanning midnight
+// splits across days — same rule as the Claude Code parser. input_tokens excludes cache,
+// so calculate_cost (which bills cache read/creation separately) is correct as-is.
+fn scan_zcode_sessions() -> Vec<SessionData> {
+    let db_path = get_zcode_db_path();
+    let conn = match open_readonly_db(&db_path, "model_usage") {
+        Some(c) => c,
+        None => return Vec::new(),
+    };
+    // Also need the session table for project directories.
+    let has_session: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='session'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if has_session == 0 {
+        return Vec::new();
+    }
+
+    // Bucket key "session_id\u{0}date" -> (bucket). project dir tracked separately.
+    use std::collections::HashMap;
+    struct Bucket {
+        start_ms: i64,
+        end_ms: i64,
+        model: String,
+        input: u64,
+        output: u64,
+        reasoning: u64,
+        cache_create: u64,
+        cache_read: u64,
+    }
+    let mut buckets: HashMap<String, Bucket> = HashMap::new();
+    let mut projects: HashMap<String, String> = HashMap::new();
+
+    let sql = "SELECT m.session_id, s.directory, m.started_at, m.model_id, \
+               m.input_tokens, m.output_tokens, m.reasoning_tokens, \
+               m.cache_creation_input_tokens, m.cache_read_input_tokens \
+               FROM model_usage m JOIN session s ON s.id = m.session_id \
+               WHERE m.status IN ('completed','error','cancelled') AND m.started_at IS NOT NULL";
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[CostDog] ZCode query failed: {}", e);
+            return Vec::new();
+        }
+    };
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,        // session_id
+            row.get::<_, Option<String>>(1)?, // directory
+            row.get::<_, i64>(2)?,           // started_at
+            row.get::<_, Option<String>>(3)?, // model_id
+            row.get::<_, i64>(4)?,           // input
+            row.get::<_, i64>(5)?,           // output
+            row.get::<_, i64>(6)?,           // reasoning
+            row.get::<_, i64>(7)?,           // cache_create
+            row.get::<_, i64>(8)?,           // cache_read
+        ))
+    });
+    if let Err(e) = rows {
+        eprintln!("[CostDog] ZCode query_map failed: {}", e);
+        return Vec::new();
+    }
+
+    for r in rows {
+        let (sid, dir, started, model, input, output, reasoning, cc, cr) = match r {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let date = local_date_from_ms(started);
+        if date.is_empty() {
+            continue;
+        }
+        let key = format!("{}\u{0}{}", sid, date);
+        projects.entry(sid.clone()).or_insert_with(|| dir.unwrap_or_default());
+        let b = buckets.entry(key.clone()).or_insert(Bucket {
+            start_ms: started,
+            end_ms: started,
+            model: model.clone().unwrap_or_default(),
+            input: 0,
+            output: 0,
+            reasoning: 0,
+            cache_create: 0,
+            cache_read: 0,
+        });
+        if started < b.start_ms { b.start_ms = started; }
+        if started > b.end_ms { b.end_ms = started; }
+        if let Some(m) = &model {
+            if !m.is_empty() { b.model = m.clone(); }
+        }
+        b.input += input as u64;
+        b.output += output as u64;
+        b.reasoning += reasoning as u64;
+        b.cache_create += cc as u64;
+        b.cache_read += cr as u64;
+    }
+
+    let mut out = Vec::new();
+    for (key, b) in buckets {
+        let sid = key.split('\u{0}').next().unwrap_or("").to_string();
+        let dir = projects.get(&sid).cloned().unwrap_or_default();
+        let project = dir.rsplit(|c| c == '/' || c == '\\').next().unwrap_or("").to_string();
+        out.push(SessionData {
+            session_id: sid,
+            source: "zcode".to_string(),
+            date: key.split('\u{0}').nth(1).unwrap_or("").to_string(),
+            model: if b.model.is_empty() { "unknown".to_string() } else { b.model },
+            project,
+            start_time: iso_from_ms(b.start_ms),
+            end_time: iso_from_ms(b.end_ms),
+            input_tokens: b.input,
+            output_tokens: b.output,
+            cache_read_tokens: b.cache_read,
+            cache_creation_tokens: b.cache_create,
+            reasoning_tokens: b.reasoning,
+            disk_write_bytes: 0,
+            cost: 0.0,
+        });
+    }
+    eprintln!("[CostDog] ZCode scan: {} sessions", out.len());
+    out
+}
+
+// OpenCode (v1.14+) stores everything in ~/.local/share/opencode/opencode.db.
+// The session table carries pre-aggregated cost + token columns written by the app.
+// Older DBs may lack some columns — detected via PRAGMA table_info and defaulted to 0.
+fn scan_opencode_sessions() -> Vec<SessionData> {
+    let db_path = get_opencode_db_path();
+    let conn = match open_readonly_db(&db_path, "session") {
+        Some(c) => c,
+        None => return Vec::new(),
+    };
+
+    // Detect columns so older schemas degrade gracefully.
+    let col_names: Vec<String> = {
+        let mut stmt = match conn.prepare("PRAGMA table_info(session)") {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = match stmt.query_map([], |row| row.get::<_, String>(1)) {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    let has = |n: &str| col_names.iter().any(|c| c == n);
+    let cost_col = if has("cost") { "cost" } else { "0" };
+    let ti_col = if has("tokens_input") { "tokens_input" } else { "0" };
+    let to_col = if has("tokens_output") { "tokens_output" } else { "0" };
+    let tr_col = if has("tokens_reasoning") { "tokens_reasoning" } else { "0" };
+    let crr_col = if has("tokens_cache_read") { "tokens_cache_read" } else { "0" };
+    let cw_col = if has("tokens_cache_write") { "tokens_cache_write" } else { "0" };
+
+    let sql = format!(
+        "SELECT id, directory, model, {}, {}, {}, {}, {}, {}, time_created, time_updated FROM session",
+        cost_col, ti_col, to_col, tr_col, crr_col, cw_col
+    );
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[CostDog] OpenCode query failed: {}", e);
+            return Vec::new();
+        }
+    };
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,                  // id
+            row.get::<_, Option<String>>(1)?,          // directory
+            row.get::<_, Option<String>>(2)?,          // model (JSON)
+            row.get::<_, Option<f64>>(3)?,             // cost
+            row.get::<_, i64>(4)?,                     // tokens_input
+            row.get::<_, i64>(5)?,                     // tokens_output
+            row.get::<_, i64>(6)?,                     // tokens_reasoning
+            row.get::<_, i64>(7)?,                     // tokens_cache_read
+            row.get::<_, i64>(8)?,                     // tokens_cache_write
+            row.get::<_, Option<i64>>(9)?,             // time_created
+            row.get::<_, Option<i64>>(10)?,            // time_updated
+        ))
+    });
+    if let Err(e) = rows {
+        eprintln!("[CostDog] OpenCode query_map failed: {}", e);
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for r in rows {
+        let (id, dir, model_json, cost, ti, to, tr, crr, cw, tc, tu) = match r {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let started = tc.or(tu).unwrap_or(0);
+        let date = local_date_from_ms(started);
+        // Parse model id out of the JSON column (tolerate plain string / null).
+        let model = model_json
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| {
+                v.get("id").and_then(|x| x.as_str()).map(|s| s.to_string())
+                    .or_else(|| v.get("modelID").and_then(|x| x.as_str()).map(|s| s.to_string()))
+                    .or_else(|| if v.is_string() { v.as_str().map(|s| s.to_string()) } else { None })
+            })
+            .unwrap_or_default();
+        let project = dir
+            .as_deref()
+            .unwrap_or("")
+            .rsplit(|c| c == '/' || c == '\\')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        out.push(SessionData {
+            session_id: id,
+            source: "opencode".to_string(),
+            date,
+            model: if model.is_empty() { "unknown".to_string() } else { model },
+            project,
+            start_time: iso_from_ms(tc.or(tu).unwrap_or(0)),
+            end_time: iso_from_ms(tu.or(tc).unwrap_or(0)),
+            input_tokens: ti as u64,
+            output_tokens: to as u64,
+            cache_read_tokens: crr as u64,
+            cache_creation_tokens: cw as u64,
+            reasoning_tokens: tr as u64,
+            disk_write_bytes: 0,
+            // Prefer the app's own cost (provider-accurate); full_scan recomputes when 0.
+            cost: cost.unwrap_or(0.0),
+        });
+    }
+    eprintln!("[CostDog] OpenCode scan: {} sessions", out.len());
+    out
+}
+
 // ---- Pricing ----
 // Shares ~/.costdog/pricing-cache.json with the TS CLI/web so both sides agree.
 // Anthropic billing: input $X/M, output $Y/M, cache read 0.1x input,
@@ -808,13 +1113,17 @@ fn full_scan() -> Result<usize, String> {
 
     let claude_sessions = scan_claude_sessions();
     let codex_sessions = scan_codex_sessions();
-    let all_sessions = [claude_sessions, codex_sessions]
+    let zcode_sessions = scan_zcode_sessions();
+    let opencode_sessions = scan_opencode_sessions();
+    let all_sessions = [claude_sessions, codex_sessions, zcode_sessions, opencode_sessions]
         .concat()
         .into_iter()
         .filter(|s| {
+            // Keep rows with tokens OR a pre-computed cost (OpenCode writes its own cost).
             s.input_tokens + s.output_tokens + s.cache_read_tokens
                 + s.cache_creation_tokens + s.reasoning_tokens
                 > 0
+                || s.cost > 0.0
         })
         .collect::<Vec<_>>();
 
@@ -824,15 +1133,21 @@ fn full_scan() -> Result<usize, String> {
     let mut new_count = 0;
     for session in &all_sessions {
         let mut s = session.clone();
-        s.cost = calculate_cost(
-            s.input_tokens,
-            s.output_tokens,
-            s.cache_read_tokens,
-            s.cache_creation_tokens,
-            s.reasoning_tokens,
-            &s.model,
-            &prices,
-        );
+        // OpenCode writes its own (provider-accurate) cost into the session row.
+        // Trust it when present; otherwise recompute from tokens + our pricing table.
+        s.cost = if s.cost > 0.0 {
+            s.cost
+        } else {
+            calculate_cost(
+                s.input_tokens,
+                s.output_tokens,
+                s.cache_read_tokens,
+                s.cache_creation_tokens,
+                s.reasoning_tokens,
+                &s.model,
+                &prices,
+            )
+        };
         upsert_session(&conn, &s)?;
         new_count += 1;
     }

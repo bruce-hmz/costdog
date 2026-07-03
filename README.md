@@ -1,6 +1,6 @@
 # 🐕 CostDog
 
-**Claude Code & Codex CLI 的成本与资源监控工具**
+**Claude Code / Codex / ZCode / OpenCode 的成本与资源监控工具**
 
 本地运行，自动解析日志文件，实时统计 token 用量、费用和磁盘写入量。
 
@@ -51,13 +51,27 @@ costdog web
 - `token_count` 事件中的累计用量
 - rate_limits 数据
 
+### ZCode
+- `~/.zcode/cli/db/db.sqlite` — CLI 用量库
+- `model_usage` 表逐请求 token(input_tokens 不含 cache，Anthropic 口径)
+- `session` 表提供项目目录、时间
+- 跨午夜的会话按本地日期拆分(与 Claude Code 一致)
+
+### OpenCode
+- `~/.local/share/opencode/opencode.db` — 会话库(v1.14+)
+- `session` 表自带聚合列 `cost` / `tokens_*`(优先使用 app 自算成本)
+- 老版本库自动检测列缺失并兜底为 0
+
 ## 环境变量
 
 | 变量 | 说明 |
 |---|---|
 | `CODEX_HOME` | 覆盖 Codex 配置目录 |
+| `ZCODE_HOME` | 覆盖 ZCode 根目录(默认 `~/.zcode`) |
+| `OPENCODE_DB` | 覆盖 OpenCode DB 路径(绝对路径优先) |
+| `XDG_DATA_HOME` | 覆盖 OpenCode 数据基目录 |
 | `COSTDOG_DATA_DIR` | 覆盖 CostDog 数据目录 |
-| `COSTDOG_PORT` | Web 面板端口（默认 3456） |
+| `COSTDOG_PORT` | Web 面板端口(默认 3456) |
 
 ## 价格数据
 
@@ -78,7 +92,9 @@ costdog web
 src/
 ├── parsers/
 │   ├── claude-code.ts    # Claude Code 日志解析器
-│   └── codex.ts          # Codex 日志解析器
+│   ├── codex.ts          # Codex 日志解析器
+│   ├── zcode.ts          # ZCode 用量库解析器
+│   └── opencode.ts       # OpenCode 会话库解析器
 ├── utils/
 │   ├── paths.ts          # 跨平台路径检测
 │   └── pricing.ts        # OpenRouter 价格加载 + 成本计算

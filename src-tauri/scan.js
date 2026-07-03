@@ -12,6 +12,8 @@ const fs = require('fs');
 // Import the existing scanner modules
 const { scanClaudeSessions } = require('../src/parsers/claude-code');
 const { scanCodexSessions } = require('../src/parsers/codex');
+const { scanZcodeSessions } = require('../src/parsers/zcode');
+const { scanOpencodeSessions } = require('../src/parsers/opencode');
 const { loadPricing, calculateCost } = require('../src/utils/pricing');
 const { upsertSession, getAggregateStats, getTopModels, getRecentSessions, getAlerts, addAlert } = require('../src/db/schema');
 
@@ -23,11 +25,14 @@ async function main() {
 
         const claudeSessions = scanClaudeSessions();
         const codexSessions = scanCodexSessions();
-        const allSessions = [...claudeSessions, ...codexSessions];
+        const zcodeSessions = scanZcodeSessions();
+        const opencodeSessions = scanOpencodeSessions();
+        const allSessions = [...claudeSessions, ...codexSessions, ...zcodeSessions, ...opencodeSessions];
 
         let newCount = 0;
         for (const s of allSessions) {
-            const cost = calculateCost(
+            // OpenCode writes its own (provider-accurate) cost; trust it when present.
+            const cost = s.cost > 0 ? s.cost : calculateCost(
                 s.tokenUsage.inputTokens,
                 s.tokenUsage.outputTokens,
                 s.tokenUsage.cacheReadTokens,
