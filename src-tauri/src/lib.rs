@@ -1282,7 +1282,7 @@ fn get_data() -> Result<String, String> {
 
     // Get alerts
     let mut stmt = conn.prepare(
-        "SELECT level, message FROM alerts WHERE dismissed = 0 ORDER BY timestamp DESC LIMIT 10"
+        "SELECT level, message FROM alerts WHERE dismissed = 0 AND date(timestamp) = date('now','localtime') ORDER BY timestamp DESC LIMIT 10"
     ).map_err(|e| e.to_string())?;
 
     let alerts: Vec<Alert> = stmt.query_map([], |row| {

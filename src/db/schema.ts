@@ -234,7 +234,7 @@ export function addAlert(key: string, level: string, message: string) {
 export function getAlerts(limit = 10) {
   const db = getDb();
   return db.prepare(`
-    SELECT * FROM alerts WHERE dismissed = 0
+    SELECT * FROM alerts WHERE dismissed = 0 AND date(timestamp) = date('now','localtime')
     ORDER BY timestamp DESC LIMIT ?
   `).all(limit);
 }
