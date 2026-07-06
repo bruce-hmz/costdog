@@ -1511,6 +1511,51 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+/// 规范化 git 分支名:trim → lowercase → 去 refs/heads/ / origin/ 前缀 → 取首个 "/" 段。
+fn normalize_branch(raw: &str) -> String {
+    let s = raw.trim().to_lowercase();
+    let s = s.strip_prefix("refs/heads/").unwrap_or(&s);
+    let s = s.strip_prefix("origin/").unwrap_or(s);
+    s.split('/').next().unwrap_or(s).to_string()
+}
+
+/// 判定一个 session 的活动类型。规则链首个命中即返回(spec §5)。
+fn classify(tool_calls: &HashMap<String, u64>, git_branch: Option<&str>, source: &str) -> &'static str {
+    let has_tool_detail = matches!(source, "claude-code" | "codex");
+
+    // ① gitBranch 首段精确匹配(最可信)
+    if let Some(raw) = git_branch {
+        let head = normalize_branch(raw);
+        match head.as_str() {
+            "fix" | "bugfix" | "hotfix" | "patch" => return "bugfix",
+            "docs"                                 => return "docs",
+            "refactor"                             => return "refactor",
+            "feat" | "feature"                     => return "feature",
+            _ => {}
+        }
+    }
+
+    let total: u64 = tool_calls.values().sum();
+    let ratio = |name: &str| -> f64 {
+        if total == 0 { 0.0 } else { *tool_calls.get(name).unwrap_or(&0) as f64 / total as f64 }
+    };
+
+    // ② 工具占比主导
+    if !has_tool_detail { return "other"; }
+    if total == 0 { return "research"; }
+    if ratio("Task") + ratio("Agent") > 0.40 { return "agent"; }
+    if ratio("WebSearch") + ratio("WebFetch") > 0.40 { return "research"; }
+    if ratio("Bash") > 0.50 { return "debug"; }
+    let write_edit = ratio("Write") + ratio("Edit");
+    if (ratio("Read") + ratio("Grep") + ratio("Glob") > 0.60) && write_edit <= 0.20 { return "explore"; }
+    let (we, ed) = (*tool_calls.get("Write").unwrap_or(&0), *tool_calls.get("Edit").unwrap_or(&0));
+    if ratio("Edit") > 0.40 && ed > we { return "bugfix"; }
+    if ratio("Write") > 0.30 { return "feature"; }
+
+    // ③ 兜底
+    "other"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1557,5 +1602,53 @@ mod tests {
         assert!(json.contains("\"topModels\""), "Expected 'topModels' but got: {}", json);
         assert!(json.contains("\"allTime\""), "Expected 'allTime' but got: {}", json);
         assert!(json.contains("\"recentSessions\""), "Expected 'recentSessions' but got: {}", json);
+    }
+
+    fn tc(pairs: &[(&str, u64)]) -> HashMap<String, u64> {
+        pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    }
+
+    #[test]
+    fn classify_branch_signals() {
+        // gitBranch 首段精确匹配,优先于工具占比
+        assert_eq!(classify(&tc(&[("Write", 10)]), Some("origin/Fix/login"), "claude-code"), "bugfix");
+        assert_eq!(classify(&tc(&[("Write", 10)]), Some("refs/heads/docs/readme"), "claude-code"), "docs");
+        assert_eq!(classify(&tc(&[("Edit", 10)]), Some("refactor/api"), "claude-code"), "refactor");
+        assert_eq!(classify(&tc(&[("Bash", 10)]), Some("feature/donut"), "claude-code"), "feature");
+        // 无斜杠 / 不在集合 → 不命中分支规则
+        assert_eq!(classify(&tc(&[("Bash", 6)]), Some("feat-category"), "claude-code"), "debug"); // 落到工具占比
+        assert_eq!(classify(&tc(&[("Write", 10)]), Some("main"), "claude-code"), "feature");
+    }
+
+    #[test]
+    fn classify_source_other_for_no_detail() {
+        // opencode/zcode 无工具细节 → other(即使 tool_calls 为空也不算 research)
+        assert_eq!(classify(&HashMap::new(), None, "opencode"), "other");
+        assert_eq!(classify(&HashMap::new(), None, "zcode"), "other");
+        // claude/codex 空工具 → research(纯对话)
+        assert_eq!(classify(&HashMap::new(), None, "claude-code"), "research");
+        assert_eq!(classify(&HashMap::new(), None, "codex"), "research");
+    }
+
+    #[test]
+    fn classify_tool_ratios() {
+        assert_eq!(classify(&tc(&[("Task", 5), ("Read", 5)]), None, "claude-code"), "agent");
+        assert_eq!(classify(&tc(&[("WebSearch", 5), ("Read", 5)]), None, "claude-code"), "research");
+        assert_eq!(classify(&tc(&[("Bash", 6), ("Read", 4)]), None, "claude-code"), "debug");
+        assert_eq!(classify(&tc(&[("Read", 7), ("Grep", 1), ("Write", 1)]), None, "claude-code"), "explore");
+        // Edit 提前 + Edit>Write → bugfix(不是 feature)
+        assert_eq!(classify(&tc(&[("Edit", 6), ("Write", 4)]), None, "claude-code"), "bugfix");
+        assert_eq!(classify(&tc(&[("Write", 4), ("Read", 6)]), None, "claude-code"), "feature");
+    }
+
+    #[test]
+    fn classify_boundaries_and_fallback() {
+        // 严格 >:恰好 0.40/0.50 不命中
+        assert_eq!(classify(&tc(&[("Task", 4), ("Read", 6)]), None, "claude-code"), "other"); // 0.40 不 >0.40
+        assert_eq!(classify(&tc(&[("Bash", 5), ("Read", 5)]), None, "claude-code"), "other"); // 0.50 不 >0.50
+        // explore 要求 写≤0.20;Write 3/10=0.30 >0.20 → 不命中 explore
+        assert_eq!(classify(&tc(&[("Read", 7), ("Write", 3)]), None, "claude-code"), "other");
+        // 全是未列名工具 → 兜底 other
+        assert_eq!(classify(&tc(&[("TodoWrite", 2), ("Skill", 2)]), None, "claude-code"), "other");
     }
 }
