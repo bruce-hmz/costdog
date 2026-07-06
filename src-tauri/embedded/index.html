@@ -137,7 +137,7 @@ function renderCat(list,totalCost){
   if(!list||!list.length){seg.innerHTML='';rows.innerHTML='<div style="color:var(--dim);font-size:10px">No data</div>';return;}
   const top=list.slice(0,5);
   const rest=list.slice(5).reduce((a,b)=>a+b.cost,0);
-  let merged=top;
+  let merged=top.map(c=>({...c}));
   if(rest>0){
     const existing=merged.find(c=>c.key==='other');
     if(existing){existing.cost+=rest;}
