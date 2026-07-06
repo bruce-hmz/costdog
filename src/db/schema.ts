@@ -102,7 +102,11 @@ export function getDb(): Database.Database {
     'ALTER TABLE sessions ADD COLUMN git_branch TEXT',
   ]) {
     if (needCol(ddl.split(' ').slice(-2)[0])) {
-      db.exec(ddl);
+      try {
+        db.exec(ddl);
+      } catch (e) {
+        if (!String(e).includes('duplicate column')) throw e;
+      }
     }
   }
 

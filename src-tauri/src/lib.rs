@@ -315,7 +315,15 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
         ("git_branch",        "ALTER TABLE sessions ADD COLUMN git_branch TEXT"),
     ] {
         if need(&conn, col) {
-            conn.execute(ddl, []).map_err(|e| e.to_string())?;
+            match conn.execute(ddl, []) {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg = e.to_string();
+                    if !msg.contains("duplicate column") {
+                        return Err(msg);
+                    }
+                }
+            }
         }
     }
 
