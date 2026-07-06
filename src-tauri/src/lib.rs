@@ -183,6 +183,8 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
     let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
     conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| e.to_string())?;
     conn.pragma_update(None, "synchronous", "NORMAL").map_err(|e| e.to_string())?;
+    // busy_timeout: Rust 与 TS 并发写同一 DB 时,ALTER 撞 SQLITE_BUSY 时等待重试
+    conn.pragma_update(None, "busy_timeout", "5000").ok();
 
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS sessions (
@@ -283,6 +285,24 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
     // (the initial execute_batch can't reference `date` on a pre-migration DB).
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date)", [])
         .map_err(|e| e.to_string())?;
+
+    // Activity category 迁移: 3 个新增列,各幂等
+    let need = |conn: &rusqlite::Connection, col: &str| -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?1",
+            rusqlite::params![col],
+            |row| row.get::<_, i64>(0),
+        ).unwrap_or(0) == 0
+    };
+    for (col, ddl) in [
+        ("activity_category", "ALTER TABLE sessions ADD COLUMN activity_category TEXT"),
+        ("tool_calls",        "ALTER TABLE sessions ADD COLUMN tool_calls TEXT"),
+        ("git_branch",        "ALTER TABLE sessions ADD COLUMN git_branch TEXT"),
+    ] {
+        if need(&conn, col) {
+            conn.execute(ddl, []).map_err(|e| e.to_string())?;
+        }
+    }
 
     Ok(conn)
 }
@@ -1639,6 +1659,19 @@ mod tests {
         // Edit 提前 + Edit>Write → bugfix(不是 feature)
         assert_eq!(classify(&tc(&[("Edit", 6), ("Write", 4)]), None, "claude-code"), "bugfix");
         assert_eq!(classify(&tc(&[("Write", 4), ("Read", 6)]), None, "claude-code"), "feature");
+    }
+
+    #[test]
+    fn test_ensure_db_migration_adds_activity_columns() {
+        let conn = ensure_db_exists().expect("ensure_db_exists should succeed");
+        for col in ["activity_category", "tool_calls", "git_branch"] {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?1",
+                rusqlite::params![col],
+                |row| row.get(0),
+            ).unwrap();
+            assert_eq!(count, 1, "column {} should exist after migration", col);
+        }
     }
 
     #[test]
