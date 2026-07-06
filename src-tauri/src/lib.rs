@@ -25,6 +25,14 @@ struct TopModel {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct CategoryBreakdown {
+    key: String,
+    cost: f64,
+    tokens: u64,
+    sessions: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct DailySummary {
     date: String,
     sessions: u64,
@@ -35,6 +43,8 @@ struct DailySummary {
     disk_write_bytes: u64,
     #[serde(rename = "topModels")]
     top_models: Vec<TopModel>,
+    #[serde(rename = "byCategory")]
+    by_category: Vec<CategoryBreakdown>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,6 +60,8 @@ struct RecentSession {
     cache_read_tokens: u64,
     cost: f64,
     disk_write_bytes: u64,
+    #[serde(rename = "activityCategory")]
+    activity_category: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1290,7 +1302,7 @@ fn get_top_models(conn: &rusqlite::Connection, start: &str, end: &str) -> Result
             COUNT(*) as calls,
             SUM(cost) as cost
         FROM sessions
-        WHERE date(start_time) >= ? AND date(start_time) <= ?
+        WHERE date >= ? AND date <= ?
         GROUP BY model
         ORDER BY cost DESC
         LIMIT 5"
@@ -1307,6 +1319,28 @@ fn get_top_models(conn: &rusqlite::Connection, start: &str, end: &str) -> Result
     .collect();
 
     Ok(models)
+}
+
+fn get_cost_by_category(conn: &rusqlite::Connection, start: &str, end: &str) -> Result<Vec<CategoryBreakdown>, String> {
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(NULLIF(activity_category,''),'other') AS key,
+                COUNT(*) AS sessions,
+                COALESCE(SUM(cost), 0) AS cost,
+                COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens), 0) AS tokens
+         FROM sessions
+         WHERE date >= ? AND date <= ?
+         GROUP BY COALESCE(NULLIF(activity_category,''),'other')
+         ORDER BY cost DESC"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(rusqlite::params![start, end], |row| {
+        Ok(CategoryBreakdown {
+            key: row.get::<_, String>(0)?,
+            sessions: row.get::<_, u64>(1)?,
+            cost: row.get::<_, f64>(2)?,
+            tokens: row.get::<_, u64>(3)?,
+        })
+    }).map_err(|e| e.to_string())?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
 fn date_range(days: i64) -> (String, String) {
@@ -1347,10 +1381,16 @@ fn get_data() -> Result<String, String> {
     let month_models = get_top_models(&conn, &month_start, &month_end)?;
     let all_models = get_top_models(&conn, &all_start, &all_end)?;
 
+    let today_categories = get_cost_by_category(&conn, &today_start, &today_end)?;
+    let week_categories = get_cost_by_category(&conn, &week_start, &week_end)?;
+    let month_categories = get_cost_by_category(&conn, &month_start, &month_end)?;
+    let all_categories = get_cost_by_category(&conn, &all_start, &all_end)?;
+
     // Get recent sessions
     let mut stmt = conn.prepare(
         "SELECT session_id, source, model, project, start_time, end_time,
-                input_tokens, output_tokens, cache_read_tokens, cost, disk_write_bytes
+                input_tokens, output_tokens, cache_read_tokens, cost, disk_write_bytes,
+                activity_category
         FROM sessions ORDER BY date DESC, start_time DESC LIMIT 20"
     ).map_err(|e| e.to_string())?;
 
@@ -1367,6 +1407,7 @@ fn get_data() -> Result<String, String> {
             cache_read_tokens: row.get(8)?,
             cost: row.get(9)?,
             disk_write_bytes: row.get(10)?,
+            activity_category: row.get::<_, Option<String>>(11)?,
         })
     }).map_err(|e| e.to_string())?
     .filter_map(|r| r.ok())
@@ -1386,7 +1427,7 @@ fn get_data() -> Result<String, String> {
     .filter_map(|r| r.ok())
     .collect();
 
-    let to_daily_summary = |stats: &serde_json::Value, models: Vec<TopModel>| -> DailySummary {
+    let to_daily_summary = |stats: &serde_json::Value, models: Vec<TopModel>, by_category: Vec<CategoryBreakdown>| -> DailySummary {
         DailySummary {
             date: String::new(),
             sessions: stats["sessions"].as_u64().unwrap_or(0),
@@ -1398,14 +1439,15 @@ fn get_data() -> Result<String, String> {
             cost: stats["cost"].as_f64().unwrap_or(0.0),
             disk_write_bytes: stats["disk_write_bytes"].as_u64().unwrap_or(0),
             top_models: models,
+            by_category,
         }
     };
 
     let data = DashboardData {
-        today: to_daily_summary(&today_stats, today_models),
-        week: to_daily_summary(&week_stats, week_models),
-        month: to_daily_summary(&month_stats, month_models),
-        all_time: to_daily_summary(&all_stats, all_models),
+        today: to_daily_summary(&today_stats, today_models, today_categories),
+        week: to_daily_summary(&week_stats, week_models, week_categories),
+        month: to_daily_summary(&month_stats, month_models, month_categories),
+        all_time: to_daily_summary(&all_stats, all_models, all_categories),
         recent_sessions: recent_sessions,
         alerts: alerts,
     };
@@ -1662,21 +1704,25 @@ mod tests {
                 cost: 1.23,
                 disk_write_bytes: 1024,
                 top_models: vec![TopModel { model: "test".to_string(), calls: 3, cost: 0.5 }],
+                by_category: vec![],
             },
             week: DailySummary {
                 date: String::new(), sessions: 0,
                 token_usage: TokenUsage { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 },
                 cost: 0.0, disk_write_bytes: 0, top_models: vec![],
+                by_category: vec![],
             },
             month: DailySummary {
                 date: String::new(), sessions: 0,
                 token_usage: TokenUsage { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 },
                 cost: 0.0, disk_write_bytes: 0, top_models: vec![],
+                by_category: vec![],
             },
             all_time: DailySummary {
                 date: String::new(), sessions: 0,
                 token_usage: TokenUsage { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 },
                 cost: 0.0, disk_write_bytes: 0, top_models: vec![],
+                by_category: vec![],
             },
             recent_sessions: vec![],
             alerts: vec![],
@@ -1694,6 +1740,27 @@ mod tests {
         assert!(json.contains("\"topModels\""), "Expected 'topModels' but got: {}", json);
         assert!(json.contains("\"allTime\""), "Expected 'allTime' but got: {}", json);
         assert!(json.contains("\"recentSessions\""), "Expected 'recentSessions' but got: {}", json);
+        assert!(json.contains("\"byCategory\""), "Expected 'byCategory' but got: {}", json);
+    }
+
+    #[test]
+    fn test_recent_session_activity_category_serialization() {
+        let session = RecentSession {
+            session_id: "abc".to_string(),
+            source: "claude-code".to_string(),
+            model: Some("claude-4-sonnet".to_string()),
+            project: Some("myproj".to_string()),
+            start_time: Some("2026-07-06T10:00:00".to_string()),
+            end_time: Some("2026-07-06T10:05:00".to_string()),
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_tokens: 0,
+            cost: 0.05,
+            disk_write_bytes: 0,
+            activity_category: Some("feature".to_string()),
+        };
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(json.contains("\"activityCategory\":\"feature\""), "Expected activityCategory in JSON but got: {}", json);
     }
 
     fn tc(pairs: &[(&str, u64)]) -> HashMap<String, u64> {
