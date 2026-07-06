@@ -51,6 +51,12 @@ tr:hover{background:rgba(137,180,250,.03)}
 .badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700}
 .bcc{background:rgba(137,180,250,.12);color:var(--accent)}.bcx{background:rgba(166,227,161,.12);color:var(--green)}.bzc{background:rgba(200,160,255,.14);color:#b78cff}.boc{background:rgba(255,190,120,.14);color:#ffb878}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.cat{display:flex;gap:10px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px}
+.cr{display:flex;align-items:center;gap:5px;font-size:10px;padding:2px 0;white-space:nowrap}
+.ce{font-size:11px;width:14px}
+.cn{flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis}
+.cv{color:var(--dim);font-size:9px}
+.cb{height:4px;border-radius:2px;min-width:2px;margin-left:4px}
 </style>
 </head>
 <body>
@@ -88,10 +94,20 @@ tr:hover{background:rgba(137,180,250,.03)}
     <div class="sc s5"><div class="sl">Output</div><div class="sv to" id="do">0</div></div>
     <div class="sc s6"><div class="sl">Cache</div><div class="sv" id="dk" style="color:var(--dim)">0</div></div>
   </div>
+  <div class="st">消费类型</div>
+  <div class="cat">
+    <svg id="catdonut" viewBox="0 0 42 42" width="120" height="120" style="flex-shrink:0">
+      <circle cx="21" cy="21" r="15.915" fill="none" stroke="var(--card)" stroke-width="6"></circle>
+      <g id="catsegs"></g>
+      <text x="21" y="20" text-anchor="middle" font-size="6" fill="var(--dim)" id="catl">TOTAL</text>
+      <text x="21" y="28" text-anchor="middle" font-size="7" font-weight="700" fill="var(--text)" id="catv">$0</text>
+    </svg>
+    <div id="catrows" style="flex:1;min-width:0"></div>
+  </div>
   <div class="st">Top Models</div>
   <div id="dm"></div>
   <div class="st">Recent Sessions</div>
-  <table><thead><tr><th>Src</th><th>Model</th><th>Proj</th><th>In</th><th>Out</th><th>$</th></tr></thead><tbody id="dt"></tbody></table>
+  <table><thead><tr><th>Src</th><th></th><th>Model</th><th>Proj</th><th>In</th><th>Out</th><th>$</th></tr></thead><tbody id="dt"></tbody></table>
 </div>
 <script>
 let D=null,R='today',open=false;
@@ -113,6 +129,26 @@ function closeWindow(){
     window.__TAURI_INTERNALS__.invoke('close_window');
   }
 }
+const CATS={feature:['✨','#89b4fa'],bugfix:['🐛','#f38ba8'],refactor:['♻️','#f9e2af'],docs:['📚','#a6e3a1'],research:['🔍','#cba6f7'],debug:['🧪','#fab387'],agent:['🤖','#94e2d5'],explore:['📖','#74c7ec'],other:['⚪','#6c7086']};
+const CATNAMES={feature:'编码',bugfix:'Bug',refactor:'重构',docs:'文档',research:'调研',debug:'调试',agent:'编排',explore:'阅读',other:'其他'};
+function renderCat(list,totalCost){
+  const seg=document.getElementById('catsegs'),rows=document.getElementById('catrows');
+  document.getElementById('catv').textContent=fC(totalCost);
+  if(!list||!list.length){seg.innerHTML='';rows.innerHTML='<div style="color:var(--dim);font-size:10px">No data</div>';return;}
+  const top=list.slice(0,5);
+  const rest=list.slice(5).reduce((a,b)=>a+b.cost,0);
+  let merged=top;
+  if(rest>0){
+    const existing=merged.find(c=>c.key==='other');
+    if(existing){existing.cost+=rest;}
+    else{merged=[...merged,{key:'other',cost:rest,sessions:0,tokens:0}];}
+  }
+  let off=25,sh='';const tot=merged.reduce((a,b)=>a+b.cost,0)||1;
+  merged.forEach(c=>{const pct=c.cost/tot*100;if(pct<0.5)return;const col=(CATS[c.key]||CATS.other)[1];sh+=`<circle cx="21" cy="21" r="15.915" fill="none" stroke="${col}" stroke-width="6" stroke-dasharray="${pct} ${100-pct}" stroke-dashoffset="${off}"></circle>`;off-=pct;});
+  seg.innerHTML=sh;
+  let rh='';merged.forEach(c=>{const[em,col]=CATS[c.key]||CATS.other;const pct=c.cost/tot*100;rh+=`<div class="cr"><span class="ce">${em}</span><span class="cn">${CATNAMES[c.key]||c.key}</span><span class="cb" style="background:${col};width:${Math.max(8,pct*0.4)}px"></span><span class="cv">${fC(c.cost)} ${pct.toFixed(0)}%</span></div>`;});
+  rows.innerHTML=rh;
+}
 function render(){
   if(!D)return;
   // Bar shows current tab's data
@@ -131,6 +167,7 @@ function render(){
   document.getElementById('do').textContent=fT(d.tokenUsage.outputTokens);
   document.getElementById('dk').textContent=fT(d.tokenUsage.cacheReadTokens);
   document.getElementById('dd').textContent=fB(d.diskWriteBytes);
+  renderCat(d.byCategory||[], d.cost||0);
   const ms=d.topModels||[];
   let mh='';
   if(!ms.length) mh='<div style="color:var(--dim);font-size:11px;padding:4px 8px">No data</div>';
@@ -140,8 +177,8 @@ function render(){
   document.getElementById('alerts').innerHTML=ah;
   const ss=D.recentSessions||[];
   let th='';
-  if(!ss.length) th='<tr><td colspan="6" style="color:var(--dim);text-align:center;padding:12px">No data</td></tr>';
-  else ss.slice(0,15).forEach(s=>{const bc={'claude-code':'bcc','codex':'bcx','zcode':'bzc','opencode':'boc'}[s.source]||'bcx',bl={'claude-code':'CC','codex':'CX','zcode':'ZC','opencode':'OC'}[s.source]||'CX';th+='<tr><td><span class="badge '+bc+'">'+bl+'</span></td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
+  if(!ss.length) th='<tr><td colspan="7" style="color:var(--dim);text-align:center;padding:12px">No data</td></tr>';
+  else ss.slice(0,15).forEach(s=>{const bc={'claude-code':'bcc','codex':'bcx','zcode':'bzc','opencode':'boc'}[s.source]||'bcx',bl={'claude-code':'CC','codex':'CX','zcode':'ZC','opencode':'OC'}[s.source]||'CX',catEm=(CATS[s.activityCategory]||CATS.other)[0];th+='<tr><td><span class="badge '+bc+'">'+bl+'</span></td><td>'+catEm+'</td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
   document.getElementById('dt').innerHTML=th;
 }
 async function load(){
