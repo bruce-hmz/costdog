@@ -1127,11 +1127,16 @@ fn calculate_cost(
 }
 
 fn upsert_session(conn: &rusqlite::Connection, session: &SessionData) -> Result<(), String> {
+    // tool_calls: opencode/zcode have no tool detail → NULL; others → JSON
+    let tool_calls_json: Option<String> = match session.source.as_str() {
+        "opencode" | "zcode" => None,
+        _ => Some(serde_json::to_string(&session.tool_calls).unwrap_or_else(|_| "{}".to_string())),
+    };
     conn.execute(
         "INSERT INTO sessions (session_id, source, date, model, project, start_time, end_time,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-            reasoning_output_tokens, disk_write_bytes, cost)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reasoning_output_tokens, disk_write_bytes, cost, activity_category, tool_calls, git_branch)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_id, source, date) DO UPDATE SET
             model = excluded.model,
             end_time = excluded.end_time,
@@ -1142,13 +1147,19 @@ fn upsert_session(conn: &rusqlite::Connection, session: &SessionData) -> Result<
             reasoning_output_tokens = excluded.reasoning_output_tokens,
             disk_write_bytes = excluded.disk_write_bytes,
             cost = excluded.cost,
+            activity_category = excluded.activity_category,
+            tool_calls = excluded.tool_calls,
+            git_branch = excluded.git_branch,
             scanned_at = datetime('now')",
         rusqlite::params![
             session.session_id, session.source, session.date, session.model, session.project,
             session.start_time, session.end_time, session.input_tokens,
             session.output_tokens, session.cache_read_tokens,
             session.cache_creation_tokens, session.reasoning_tokens,
-            session.disk_write_bytes, session.cost
+            session.disk_write_bytes, session.cost,
+            session.activity_category,
+            tool_calls_json,
+            session.git_branch,
         ],
     ).map_err(|e| e.to_string())?;
 
@@ -1220,6 +1231,7 @@ fn full_scan() -> Result<usize, String> {
     let mut new_count = 0;
     for session in &all_sessions {
         let mut s = session.clone();
+        s.activity_category = classify(&s.tool_calls, s.git_branch.as_deref(), &s.source).to_string();
         // OpenCode writes its own (provider-accurate) cost into the session row.
         // Trust it when present; otherwise recompute from tokens + our pricing table.
         s.cost = if s.cost > 0.0 {
