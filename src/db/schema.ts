@@ -13,6 +13,7 @@ export function getDb(): Database.Database {
   _db = new Database(dbPath);
   _db.pragma('journal_mode = WAL');
   _db.pragma('synchronous = NORMAL');
+  _db.pragma('busy_timeout = 5000');
 
   // Create tables
   _db.exec(`
@@ -90,6 +91,24 @@ export function getDb(): Database.Database {
   // Date index — created after the per-day migration so the column exists
   // (the initial exec can't reference `date` on a pre-migration DB).
   _db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date)');
+
+  // Activity category 迁移: 3 个新增列,各幂等
+  const db = _db!;
+  const needCol = (col: string) =>
+    !(db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[]).some(c => c.name === col);
+  for (const ddl of [
+    'ALTER TABLE sessions ADD COLUMN activity_category TEXT',
+    'ALTER TABLE sessions ADD COLUMN tool_calls TEXT',
+    'ALTER TABLE sessions ADD COLUMN git_branch TEXT',
+  ]) {
+    if (needCol(ddl.split(' ').slice(-2)[0])) {
+      try {
+        db.exec(ddl);
+      } catch (e) {
+        if (!String(e).includes('duplicate column')) throw e;
+      }
+    }
+  }
 
   // Drop sessions that logged no token usage — 0-cost noise. Also enforced at scan time.
   _db.exec('DELETE FROM sessions WHERE input_tokens=0 AND output_tokens=0 AND cache_read_tokens=0 AND cache_creation_tokens=0 AND reasoning_output_tokens=0');

@@ -25,6 +25,14 @@ struct TopModel {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct CategoryBreakdown {
+    key: String,
+    cost: f64,
+    tokens: u64,
+    sessions: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct DailySummary {
     date: String,
     sessions: u64,
@@ -35,6 +43,8 @@ struct DailySummary {
     disk_write_bytes: u64,
     #[serde(rename = "topModels")]
     top_models: Vec<TopModel>,
+    #[serde(rename = "byCategory")]
+    by_category: Vec<CategoryBreakdown>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,6 +60,8 @@ struct RecentSession {
     cache_read_tokens: u64,
     cost: f64,
     disk_write_bytes: u64,
+    #[serde(rename = "activityCategory")]
+    activity_category: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -86,6 +98,9 @@ struct SessionData {
     reasoning_tokens: u64,
     disk_write_bytes: u64,
     cost: f64,
+    tool_calls: HashMap<String, u64>,
+    git_branch: Option<String>,
+    activity_category: String,
 }
 
 fn get_costdog_db_path() -> PathBuf {
@@ -183,6 +198,8 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
     let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
     conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| e.to_string())?;
     conn.pragma_update(None, "synchronous", "NORMAL").map_err(|e| e.to_string())?;
+    // busy_timeout: Rust 与 TS 并发写同一 DB 时,ALTER 撞 SQLITE_BUSY 时等待重试
+    conn.pragma_update(None, "busy_timeout", "5000").ok();
 
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS sessions (
@@ -284,6 +301,32 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date)", [])
         .map_err(|e| e.to_string())?;
 
+    // Activity category 迁移: 3 个新增列,各幂等
+    let need = |conn: &rusqlite::Connection, col: &str| -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?1",
+            rusqlite::params![col],
+            |row| row.get::<_, i64>(0),
+        ).unwrap_or(0) == 0
+    };
+    for (col, ddl) in [
+        ("activity_category", "ALTER TABLE sessions ADD COLUMN activity_category TEXT"),
+        ("tool_calls",        "ALTER TABLE sessions ADD COLUMN tool_calls TEXT"),
+        ("git_branch",        "ALTER TABLE sessions ADD COLUMN git_branch TEXT"),
+    ] {
+        if need(&conn, col) {
+            match conn.execute(ddl, []) {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg = e.to_string();
+                    if !msg.contains("duplicate column") {
+                        return Err(msg);
+                    }
+                }
+            }
+        }
+    }
+
     Ok(conn)
 }
 
@@ -324,6 +367,144 @@ fn local_date(ts: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Parse a single Claude Code JSONL session file into per-(session_id, date) SessionData buckets.
+/// `project_display` is the human-readable project path derived from the parent directory name.
+fn parse_claude_jsonl(file_path: &std::path::Path, project_display: &str) -> Vec<SessionData> {
+    let file = match fs::File::open(file_path) {
+        Ok(f) => f,
+        Err(_) => return Vec::new(),
+    };
+    let reader = BufReader::new(file);
+
+    let mut session_map: HashMap<(String, String), SessionData> = HashMap::new();
+
+    for line_result in reader.lines() {
+        let line = match line_result {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        let line = line.trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+
+        let data: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        let record_type = data["type"].as_str().unwrap_or("");
+        let session_id = data["sessionId"].as_str().unwrap_or("").to_string();
+        if session_id.is_empty() {
+            continue;
+        }
+
+        let timestamp = data["timestamp"].as_str().unwrap_or("").to_string();
+        let date = local_date(&timestamp);
+        let key = (session_id.clone(), date.clone());
+
+        // Initialize (session, day) bucket if not exists
+        if !session_map.contains_key(&key) {
+            let cwd = data["cwd"].as_str().unwrap_or("");
+            let project = if !cwd.is_empty() {
+                cwd.to_string()
+            } else {
+                project_display.to_string()
+            };
+
+            session_map.insert(key.clone(), SessionData {
+                session_id: session_id.clone(),
+                source: "claude-code".to_string(),
+                date: date.clone(),
+                model: "unknown".to_string(),
+                project,
+                start_time: timestamp.clone(),
+                end_time: timestamp.clone(),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
+                reasoning_tokens: 0,
+                disk_write_bytes: 0,
+                cost: 0.0,
+                tool_calls: HashMap::new(),
+                git_branch: None,
+                activity_category: String::new(),
+            });
+        }
+
+        // Update timestamps
+        if let Some(entry) = session_map.get_mut(&key) {
+            if !timestamp.is_empty() {
+                if entry.start_time.is_empty() || timestamp < entry.start_time {
+                    entry.start_time = timestamp.clone();
+                }
+                if timestamp > entry.end_time {
+                    entry.end_time = timestamp.clone();
+                }
+            }
+            // gitBranch: take first non-empty value
+            if entry.git_branch.is_none() {
+                if let Some(b) = data["gitBranch"].as_str() {
+                    if !b.is_empty() {
+                        entry.git_branch = Some(b.to_string());
+                    }
+                }
+            }
+        }
+
+        // Process assistant messages with token usage + tool collection
+        if record_type == "assistant" {
+            let usage = &data["message"]["usage"];
+            let input_tokens = usage["input_tokens"].as_u64().unwrap_or(0);
+            let output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
+            let cache_read = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+            let cache_creation = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+
+            if input_tokens > 0 || output_tokens > 0 || cache_creation > 0 {
+                if let Some(entry) = session_map.get_mut(&key) {
+                    // Update model from the latest assistant message
+                    if let Some(model) = data["message"]["model"].as_str() {
+                        if model != "unknown" {
+                            entry.model = model.to_string();
+                        }
+                    }
+
+                    entry.input_tokens += input_tokens;
+                    entry.output_tokens += output_tokens;
+                    entry.cache_read_tokens += cache_read;
+                    entry.cache_creation_tokens += cache_creation;
+                }
+            }
+
+            // Collect tool_use from content blocks
+            if let Some(blocks) = data["message"]["content"].as_array() {
+                for b in blocks {
+                    if b["type"].as_str() == Some("tool_use") {
+                        if let Some(name) = b["name"].as_str() {
+                            *session_map.get_mut(&key).unwrap()
+                                .tool_calls.entry(name.to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+
+            // Collect server_tool_use counts (web_search → WebSearch, web_fetch → WebFetch)
+            if let Some(entry) = session_map.get_mut(&key) {
+                let stu = &usage["server_tool_use"];
+                if let Some(ws) = stu["web_search_requests"].as_u64() {
+                    *entry.tool_calls.entry("WebSearch".to_string()).or_insert(0) += ws;
+                }
+                if let Some(wf) = stu["web_fetch_requests"].as_u64() {
+                    *entry.tool_calls.entry("WebFetch".to_string()).or_insert(0) += wf;
+                }
+            }
+        }
+    }
+
+    session_map.into_values().collect()
+}
+
 fn scan_claude_sessions() -> Vec<SessionData> {
     let projects_dir = get_claude_sessions_dir();
     if !projects_dir.exists() {
@@ -331,10 +512,8 @@ fn scan_claude_sessions() -> Vec<SessionData> {
         return Vec::new();
     }
 
-    // Aggregate per (session_id, local date) so a session spanning midnight splits across days.
-    let mut session_map: HashMap<(String, String), SessionData> = HashMap::new();
+    let mut sessions: Vec<SessionData> = Vec::new();
     let mut file_count = 0;
-    let mut line_count = 0;
 
     if let Ok(projects) = fs::read_dir(&projects_dir) {
         for project_entry in projects.flatten() {
@@ -365,108 +544,14 @@ fn scan_claude_sessions() -> Vec<SessionData> {
 
                     file_count += 1;
 
-                    // Parse the JSONL file line by line
-                    if let Ok(file) = fs::File::open(&file_path) {
-                        let reader = BufReader::new(file);
-                        for line_result in reader.lines() {
-                            let line = match line_result {
-                                Ok(l) => l,
-                                Err(_) => continue,
-                            };
-                            let line = line.trim().to_string();
-                            if line.is_empty() {
-                                continue;
-                            }
-
-                            let data: serde_json::Value = match serde_json::from_str(&line) {
-                                Ok(d) => d,
-                                Err(_) => continue,
-                            };
-
-                            line_count += 1;
-                            let record_type = data["type"].as_str().unwrap_or("");
-                            let session_id = data["sessionId"].as_str().unwrap_or("").to_string();
-                            if session_id.is_empty() {
-                                continue;
-                            }
-
-                            let timestamp = data["timestamp"].as_str().unwrap_or("").to_string();
-                            let date = local_date(&timestamp);
-                            let key = (session_id.clone(), date.clone());
-
-                            // Initialize (session, day) bucket if not exists
-                            if !session_map.contains_key(&key) {
-                                let cwd = data["cwd"].as_str().unwrap_or("");
-                                let project = if !cwd.is_empty() {
-                                    // Use cwd as project name if available
-                                    cwd.to_string()
-                                } else {
-                                    project_display.clone()
-                                };
-
-                                session_map.insert(key.clone(), SessionData {
-                                    session_id: session_id.clone(),
-                                    source: "claude-code".to_string(),
-                                    date: date.clone(),
-                                    model: "unknown".to_string(),
-                                    project,
-                                    start_time: timestamp.clone(),
-                                    end_time: timestamp.clone(),
-                                    input_tokens: 0,
-                                    output_tokens: 0,
-                                    cache_read_tokens: 0,
-                                    cache_creation_tokens: 0,
-                                    reasoning_tokens: 0,
-                                    disk_write_bytes: 0,
-                                    cost: 0.0,
-                                });
-                            }
-
-                            // Update timestamps
-                            if let Some(entry) = session_map.get_mut(&key) {
-                                if !timestamp.is_empty() {
-                                    if entry.start_time.is_empty() || timestamp < entry.start_time {
-                                        entry.start_time = timestamp.clone();
-                                    }
-                                    if timestamp > entry.end_time {
-                                        entry.end_time = timestamp.clone();
-                                    }
-                                }
-                            }
-
-                            // Process assistant messages with token usage
-                            if record_type == "assistant" {
-                                let usage = &data["message"]["usage"];
-                                let input_tokens = usage["input_tokens"].as_u64().unwrap_or(0);
-                                let output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
-                                let cache_read = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
-                                let cache_creation = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-
-                                if input_tokens > 0 || output_tokens > 0 || cache_creation > 0 {
-                                    if let Some(entry) = session_map.get_mut(&key) {
-                                        // Update model from the latest assistant message
-                                        if let Some(model) = data["message"]["model"].as_str() {
-                                            if model != "unknown" {
-                                                entry.model = model.to_string();
-                                            }
-                                        }
-
-                                        entry.input_tokens += input_tokens;
-                                        entry.output_tokens += output_tokens;
-                                        entry.cache_read_tokens += cache_read;
-                                        entry.cache_creation_tokens += cache_creation;
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    let file_sessions = parse_claude_jsonl(&file_path, &project_display);
+                    sessions.extend(file_sessions);
                 }
             }
         }
     }
 
-    let sessions: Vec<SessionData> = session_map.into_values().collect();
-    eprintln!("[CostDog] Claude scan: {} files, {} lines, {} sessions", file_count, line_count, sessions.len());
+    eprintln!("[CostDog] Claude scan: {} files, {} sessions", file_count, sessions.len());
     sessions
 }
 
@@ -494,6 +579,7 @@ fn parse_codex_rollout(path: &PathBuf) -> Option<SessionData> {
     let mut output = 0u64;
     let mut cached = 0u64;
     let mut reasoning = 0u64;
+    let mut tool_calls: HashMap<String, u64> = HashMap::new();
 
     for line in reader.lines() {
         let line = match line { Ok(l) => l, Err(_) => continue };
@@ -534,6 +620,11 @@ fn parse_codex_rollout(path: &PathBuf) -> Option<SessionData> {
                     cached = total["cached_input_tokens"].as_u64().unwrap_or(0);
                     reasoning = total["reasoning_output_tokens"].as_u64().unwrap_or(0);
                 }
+            } else if payload["type"].as_str() == Some("function_call")
+                   || payload["type"].as_str() == Some("tool_call") {
+                if let Some(name) = payload["name"].as_str() {
+                    *tool_calls.entry(name.to_string()).or_insert(0) += 1;
+                }
             }
         }
     }
@@ -561,6 +652,9 @@ fn parse_codex_rollout(path: &PathBuf) -> Option<SessionData> {
         reasoning_tokens: reasoning,
         disk_write_bytes: 0,
         cost: 0.0,
+        tool_calls,
+        git_branch: None,
+        activity_category: String::new(),
     })
 }
 
@@ -722,6 +816,9 @@ fn scan_zcode_sessions() -> Vec<SessionData> {
             reasoning_tokens: b.reasoning,
             disk_write_bytes: 0,
             cost: 0.0,
+            tool_calls: HashMap::new(),
+            git_branch: None,
+            activity_category: String::new(),
         });
     }
     eprintln!("[CostDog] ZCode scan: {} sessions", out.len());
@@ -834,6 +931,9 @@ fn scan_opencode_sessions() -> Vec<SessionData> {
             disk_write_bytes: 0,
             // Prefer the app's own cost (provider-accurate); full_scan recomputes when 0.
             cost: cost.unwrap_or(0.0),
+            tool_calls: HashMap::new(),
+            git_branch: None,
+            activity_category: String::new(),
         });
     }
     eprintln!("[CostDog] OpenCode scan: {} sessions", out.len());
@@ -1047,11 +1147,16 @@ fn calculate_cost(
 }
 
 fn upsert_session(conn: &rusqlite::Connection, session: &SessionData) -> Result<(), String> {
+    // tool_calls: opencode/zcode have no tool detail → NULL; others → JSON
+    let tool_calls_json: Option<String> = match session.source.as_str() {
+        "opencode" | "zcode" => None,
+        _ => Some(serde_json::to_string(&session.tool_calls).unwrap_or_else(|_| "{}".to_string())),
+    };
     conn.execute(
         "INSERT INTO sessions (session_id, source, date, model, project, start_time, end_time,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-            reasoning_output_tokens, disk_write_bytes, cost)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reasoning_output_tokens, disk_write_bytes, cost, activity_category, tool_calls, git_branch)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_id, source, date) DO UPDATE SET
             model = excluded.model,
             end_time = excluded.end_time,
@@ -1062,13 +1167,19 @@ fn upsert_session(conn: &rusqlite::Connection, session: &SessionData) -> Result<
             reasoning_output_tokens = excluded.reasoning_output_tokens,
             disk_write_bytes = excluded.disk_write_bytes,
             cost = excluded.cost,
+            activity_category = excluded.activity_category,
+            tool_calls = excluded.tool_calls,
+            git_branch = excluded.git_branch,
             scanned_at = datetime('now')",
         rusqlite::params![
             session.session_id, session.source, session.date, session.model, session.project,
             session.start_time, session.end_time, session.input_tokens,
             session.output_tokens, session.cache_read_tokens,
             session.cache_creation_tokens, session.reasoning_tokens,
-            session.disk_write_bytes, session.cost
+            session.disk_write_bytes, session.cost,
+            session.activity_category,
+            tool_calls_json,
+            session.git_branch,
         ],
     ).map_err(|e| e.to_string())?;
 
@@ -1140,6 +1251,7 @@ fn full_scan() -> Result<usize, String> {
     let mut new_count = 0;
     for session in &all_sessions {
         let mut s = session.clone();
+        s.activity_category = classify(&s.tool_calls, s.git_branch.as_deref(), &s.source).to_string();
         // OpenCode writes its own (provider-accurate) cost into the session row.
         // Trust it when present; otherwise recompute from tokens + our pricing table.
         s.cost = if s.cost > 0.0 {
@@ -1198,7 +1310,7 @@ fn get_top_models(conn: &rusqlite::Connection, start: &str, end: &str) -> Result
             COUNT(*) as calls,
             SUM(cost) as cost
         FROM sessions
-        WHERE date(start_time) >= ? AND date(start_time) <= ?
+        WHERE date >= ? AND date <= ?
         GROUP BY model
         ORDER BY cost DESC
         LIMIT 5"
@@ -1215,6 +1327,28 @@ fn get_top_models(conn: &rusqlite::Connection, start: &str, end: &str) -> Result
     .collect();
 
     Ok(models)
+}
+
+fn get_cost_by_category(conn: &rusqlite::Connection, start: &str, end: &str) -> Result<Vec<CategoryBreakdown>, String> {
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(NULLIF(activity_category,''),'other') AS key,
+                COUNT(*) AS sessions,
+                COALESCE(SUM(cost), 0) AS cost,
+                COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens), 0) AS tokens
+         FROM sessions
+         WHERE date >= ? AND date <= ?
+         GROUP BY COALESCE(NULLIF(activity_category,''),'other')
+         ORDER BY cost DESC"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(rusqlite::params![start, end], |row| {
+        Ok(CategoryBreakdown {
+            key: row.get::<_, String>(0)?,
+            sessions: row.get::<_, u64>(1)?,
+            cost: row.get::<_, f64>(2)?,
+            tokens: row.get::<_, u64>(3)?,
+        })
+    }).map_err(|e| e.to_string())?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
 fn date_range(days: i64) -> (String, String) {
@@ -1255,10 +1389,16 @@ fn get_data() -> Result<String, String> {
     let month_models = get_top_models(&conn, &month_start, &month_end)?;
     let all_models = get_top_models(&conn, &all_start, &all_end)?;
 
+    let today_categories = get_cost_by_category(&conn, &today_start, &today_end)?;
+    let week_categories = get_cost_by_category(&conn, &week_start, &week_end)?;
+    let month_categories = get_cost_by_category(&conn, &month_start, &month_end)?;
+    let all_categories = get_cost_by_category(&conn, &all_start, &all_end)?;
+
     // Get recent sessions
     let mut stmt = conn.prepare(
         "SELECT session_id, source, model, project, start_time, end_time,
-                input_tokens, output_tokens, cache_read_tokens, cost, disk_write_bytes
+                input_tokens, output_tokens, cache_read_tokens, cost, disk_write_bytes,
+                activity_category
         FROM sessions ORDER BY date DESC, start_time DESC LIMIT 20"
     ).map_err(|e| e.to_string())?;
 
@@ -1275,6 +1415,7 @@ fn get_data() -> Result<String, String> {
             cache_read_tokens: row.get(8)?,
             cost: row.get(9)?,
             disk_write_bytes: row.get(10)?,
+            activity_category: row.get::<_, Option<String>>(11)?,
         })
     }).map_err(|e| e.to_string())?
     .filter_map(|r| r.ok())
@@ -1294,7 +1435,7 @@ fn get_data() -> Result<String, String> {
     .filter_map(|r| r.ok())
     .collect();
 
-    let to_daily_summary = |stats: &serde_json::Value, models: Vec<TopModel>| -> DailySummary {
+    let to_daily_summary = |stats: &serde_json::Value, models: Vec<TopModel>, by_category: Vec<CategoryBreakdown>| -> DailySummary {
         DailySummary {
             date: String::new(),
             sessions: stats["sessions"].as_u64().unwrap_or(0),
@@ -1306,14 +1447,15 @@ fn get_data() -> Result<String, String> {
             cost: stats["cost"].as_f64().unwrap_or(0.0),
             disk_write_bytes: stats["disk_write_bytes"].as_u64().unwrap_or(0),
             top_models: models,
+            by_category,
         }
     };
 
     let data = DashboardData {
-        today: to_daily_summary(&today_stats, today_models),
-        week: to_daily_summary(&week_stats, week_models),
-        month: to_daily_summary(&month_stats, month_models),
-        all_time: to_daily_summary(&all_stats, all_models),
+        today: to_daily_summary(&today_stats, today_models, today_categories),
+        week: to_daily_summary(&week_stats, week_models, week_categories),
+        month: to_daily_summary(&month_stats, month_models, month_categories),
+        all_time: to_daily_summary(&all_stats, all_models, all_categories),
         recent_sessions: recent_sessions,
         alerts: alerts,
     };
@@ -1511,6 +1653,51 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+/// 规范化 git 分支名:trim → lowercase → 去 refs/heads/ / origin/ 前缀 → 取首个 "/" 段。
+fn normalize_branch(raw: &str) -> String {
+    let s = raw.trim().to_lowercase();
+    let s = s.strip_prefix("refs/heads/").unwrap_or(&s);
+    let s = s.strip_prefix("origin/").unwrap_or(s);
+    s.split('/').next().unwrap_or(s).to_string()
+}
+
+/// 判定一个 session 的活动类型。规则链首个命中即返回(spec §5)。
+fn classify(tool_calls: &HashMap<String, u64>, git_branch: Option<&str>, source: &str) -> &'static str {
+    let has_tool_detail = matches!(source, "claude-code" | "codex");
+
+    // ① gitBranch 首段精确匹配(最可信)
+    if let Some(raw) = git_branch {
+        let head = normalize_branch(raw);
+        match head.as_str() {
+            "fix" | "bugfix" | "hotfix" | "patch" => return "bugfix",
+            "docs"                                 => return "docs",
+            "refactor"                             => return "refactor",
+            "feat" | "feature"                     => return "feature",
+            _ => {}
+        }
+    }
+
+    let total: u64 = tool_calls.values().sum();
+    let ratio = |name: &str| -> f64 {
+        if total == 0 { 0.0 } else { *tool_calls.get(name).unwrap_or(&0) as f64 / total as f64 }
+    };
+
+    // ② 工具占比主导
+    if !has_tool_detail { return "other"; }
+    if total == 0 { return "research"; }
+    if ratio("Task") + ratio("Agent") > 0.40 { return "agent"; }
+    if ratio("WebSearch") + ratio("WebFetch") > 0.40 { return "research"; }
+    if ratio("Bash") > 0.50 { return "debug"; }
+    let write_edit = ratio("Write") + ratio("Edit");
+    if (ratio("Read") + ratio("Grep") + ratio("Glob") > 0.60) && write_edit <= 0.20 { return "explore"; }
+    let (we, ed) = (*tool_calls.get("Write").unwrap_or(&0), *tool_calls.get("Edit").unwrap_or(&0));
+    if ratio("Edit") > 0.40 && ed > we { return "bugfix"; }
+    if ratio("Write") > 0.30 { return "feature"; }
+
+    // ③ 兜底
+    "other"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1525,21 +1712,25 @@ mod tests {
                 cost: 1.23,
                 disk_write_bytes: 1024,
                 top_models: vec![TopModel { model: "test".to_string(), calls: 3, cost: 0.5 }],
+                by_category: vec![],
             },
             week: DailySummary {
                 date: String::new(), sessions: 0,
                 token_usage: TokenUsage { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 },
                 cost: 0.0, disk_write_bytes: 0, top_models: vec![],
+                by_category: vec![],
             },
             month: DailySummary {
                 date: String::new(), sessions: 0,
                 token_usage: TokenUsage { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 },
                 cost: 0.0, disk_write_bytes: 0, top_models: vec![],
+                by_category: vec![],
             },
             all_time: DailySummary {
                 date: String::new(), sessions: 0,
                 token_usage: TokenUsage { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 },
                 cost: 0.0, disk_write_bytes: 0, top_models: vec![],
+                by_category: vec![],
             },
             recent_sessions: vec![],
             alerts: vec![],
@@ -1557,5 +1748,127 @@ mod tests {
         assert!(json.contains("\"topModels\""), "Expected 'topModels' but got: {}", json);
         assert!(json.contains("\"allTime\""), "Expected 'allTime' but got: {}", json);
         assert!(json.contains("\"recentSessions\""), "Expected 'recentSessions' but got: {}", json);
+        assert!(json.contains("\"byCategory\""), "Expected 'byCategory' but got: {}", json);
+    }
+
+    #[test]
+    fn test_recent_session_activity_category_serialization() {
+        let session = RecentSession {
+            session_id: "abc".to_string(),
+            source: "claude-code".to_string(),
+            model: Some("claude-4-sonnet".to_string()),
+            project: Some("myproj".to_string()),
+            start_time: Some("2026-07-06T10:00:00".to_string()),
+            end_time: Some("2026-07-06T10:05:00".to_string()),
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_tokens: 0,
+            cost: 0.05,
+            disk_write_bytes: 0,
+            activity_category: Some("feature".to_string()),
+        };
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(json.contains("\"activityCategory\":\"feature\""), "Expected activityCategory in JSON but got: {}", json);
+    }
+
+    fn tc(pairs: &[(&str, u64)]) -> HashMap<String, u64> {
+        pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    }
+
+    #[test]
+    fn classify_branch_signals() {
+        // gitBranch 首段精确匹配,优先于工具占比
+        assert_eq!(classify(&tc(&[("Write", 10)]), Some("origin/Fix/login"), "claude-code"), "bugfix");
+        assert_eq!(classify(&tc(&[("Write", 10)]), Some("refs/heads/docs/readme"), "claude-code"), "docs");
+        assert_eq!(classify(&tc(&[("Edit", 10)]), Some("refactor/api"), "claude-code"), "refactor");
+        assert_eq!(classify(&tc(&[("Bash", 10)]), Some("feature/donut"), "claude-code"), "feature");
+        // 无斜杠 / 不在集合 → 不命中分支规则
+        assert_eq!(classify(&tc(&[("Bash", 6)]), Some("feat-category"), "claude-code"), "debug"); // 落到工具占比
+        assert_eq!(classify(&tc(&[("Write", 10)]), Some("main"), "claude-code"), "feature");
+    }
+
+    #[test]
+    fn classify_source_other_for_no_detail() {
+        // opencode/zcode 无工具细节 → other(即使 tool_calls 为空也不算 research)
+        assert_eq!(classify(&HashMap::new(), None, "opencode"), "other");
+        assert_eq!(classify(&HashMap::new(), None, "zcode"), "other");
+        // claude/codex 空工具 → research(纯对话)
+        assert_eq!(classify(&HashMap::new(), None, "claude-code"), "research");
+        assert_eq!(classify(&HashMap::new(), None, "codex"), "research");
+    }
+
+    #[test]
+    fn classify_tool_ratios() {
+        assert_eq!(classify(&tc(&[("Task", 5), ("Read", 5)]), None, "claude-code"), "agent");
+        assert_eq!(classify(&tc(&[("WebSearch", 5), ("Read", 5)]), None, "claude-code"), "research");
+        assert_eq!(classify(&tc(&[("Bash", 6), ("Read", 4)]), None, "claude-code"), "debug");
+        assert_eq!(classify(&tc(&[("Read", 7), ("Grep", 1), ("Write", 1)]), None, "claude-code"), "explore");
+        // Edit 提前 + Edit>Write → bugfix(不是 feature)
+        assert_eq!(classify(&tc(&[("Edit", 6), ("Write", 4)]), None, "claude-code"), "bugfix");
+        assert_eq!(classify(&tc(&[("Write", 4), ("Read", 6)]), None, "claude-code"), "feature");
+    }
+
+    #[test]
+    fn test_ensure_db_migration_adds_activity_columns() {
+        let conn = ensure_db_exists().expect("ensure_db_exists should succeed");
+        for col in ["activity_category", "tool_calls", "git_branch"] {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?1",
+                rusqlite::params![col],
+                |row| row.get(0),
+            ).unwrap();
+            assert_eq!(count, 1, "column {} should exist after migration", col);
+        }
+    }
+
+    #[test]
+    fn scan_claude_collects_tools_and_branch() {
+        use std::io::Write;
+        // 2-line jsonl: user with gitBranch + assistant with tool_use + server_tool_use
+        let line1 = serde_json::json!({
+            "type":"user","sessionId":"s1","timestamp":"2026-07-06T10:00:00Z",
+            "cwd":"/tmp/proj","gitBranch":"feature/x"
+        }).to_string();
+        let line2 = serde_json::json!({
+            "type":"assistant","sessionId":"s1","timestamp":"2026-07-06T10:01:00Z",
+            "message":{
+                "model":"claude-sonnet-4","usage":{
+                    "input_tokens":100,"output_tokens":50,"cache_read_input_tokens":10,
+                    "server_tool_use":{"web_search_requests":3}
+                },
+                "content":[
+                    {"type":"tool_use","name":"Write","input":{"content":"x"}},
+                    {"type":"tool_use","name":"Read","input":{}}
+                ]
+            }
+        }).to_string();
+        let dir = std::env::temp_dir().join("costdog_test_scan");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("session.jsonl");
+        let mut fh = std::fs::File::create(&f).unwrap();
+        writeln!(fh, "{}", line1).unwrap();
+        writeln!(fh, "{}", line2).unwrap();
+
+        let got = parse_claude_jsonl(&f, "test-project");
+        assert_eq!(got.len(), 1);
+        let s = &got[0];
+        assert_eq!(s.git_branch.as_deref(), Some("feature/x"));
+        assert_eq!(*s.tool_calls.get("Write").unwrap_or(&0), 1);
+        assert_eq!(*s.tool_calls.get("Read").unwrap_or(&0), 1);
+        assert_eq!(*s.tool_calls.get("WebSearch").unwrap_or(&0), 3);
+
+        // cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn classify_boundaries_and_fallback() {
+        // 严格 >:恰好 0.40/0.50 不命中
+        assert_eq!(classify(&tc(&[("Task", 4), ("Read", 6)]), None, "claude-code"), "other"); // 0.40 不 >0.40
+        assert_eq!(classify(&tc(&[("Bash", 5), ("Read", 5)]), None, "claude-code"), "other"); // 0.50 不 >0.50
+        // explore 要求 写≤0.20;Write 3/10=0.30 >0.20 → 不命中 explore
+        assert_eq!(classify(&tc(&[("Read", 7), ("Write", 3)]), None, "claude-code"), "other");
+        // 全是未列名工具 → 兜底 other
+        assert_eq!(classify(&tc(&[("TodoWrite", 2), ("Skill", 2)]), None, "claude-code"), "other");
     }
 }
