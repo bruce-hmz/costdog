@@ -1,6 +1,6 @@
 {
   "name": "costdog",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "🐕 Cost & resource monitor for Claude Code and Codex CLI",
   "main": "dist/cli/index.js",
   "bin": {
