@@ -8,3 +8,4 @@ src-tauri/gen/
 *.exe
 .DS_Store
 Thumbs.db
+.omx/

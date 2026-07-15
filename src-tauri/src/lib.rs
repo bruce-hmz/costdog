@@ -101,6 +101,9 @@ struct SessionData {
     tool_calls: HashMap<String, u64>,
     git_branch: Option<String>,
     activity_category: String,
+    /// First real user request, used only during the in-memory scan. Never persisted.
+    #[serde(skip)]
+    user_intent: String,
 }
 
 fn get_costdog_db_path() -> PathBuf {
@@ -367,6 +370,35 @@ fn local_date(ts: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Extract a real user-authored text message. Tool results and Codex's injected
+/// workspace envelope are deliberately ignored so they cannot pollute classification.
+fn user_message_text(content: &serde_json::Value) -> Option<String> {
+    let text = if let Some(text) = content.as_str() {
+        text.trim().to_string()
+    } else {
+        content.as_array()?
+            .iter()
+            .filter_map(|block| match block["type"].as_str() {
+                Some("text") | Some("input_text") => block["text"].as_str(),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string()
+    };
+
+    if text.is_empty()
+        || text.contains("<environment_context>")
+        || text.contains("<recommended_plugins>")
+        || text.contains("# AGENTS.md instructions")
+    {
+        None
+    } else {
+        Some(text)
+    }
+}
+
 /// Parse a single Claude Code JSONL session file into per-(session_id, date) SessionData buckets.
 /// `project_display` is the human-readable project path derived from the parent directory name.
 fn parse_claude_jsonl(file_path: &std::path::Path, project_display: &str) -> Vec<SessionData> {
@@ -430,6 +462,7 @@ fn parse_claude_jsonl(file_path: &std::path::Path, project_display: &str) -> Vec
                 tool_calls: HashMap::new(),
                 git_branch: None,
                 activity_category: String::new(),
+                user_intent: String::new(),
             });
         }
 
@@ -449,6 +482,12 @@ fn parse_claude_jsonl(file_path: &std::path::Path, project_display: &str) -> Vec
                     if !b.is_empty() {
                         entry.git_branch = Some(b.to_string());
                     }
+                }
+            }
+
+            if record_type == "user" && entry.user_intent.is_empty() {
+                if let Some(text) = user_message_text(&data["message"]["content"]) {
+                    entry.user_intent = text;
                 }
             }
         }
@@ -580,6 +619,7 @@ fn parse_codex_rollout(path: &PathBuf) -> Option<SessionData> {
     let mut cached = 0u64;
     let mut reasoning = 0u64;
     let mut tool_calls: HashMap<String, u64> = HashMap::new();
+    let mut user_intent = String::new();
 
     for line in reader.lines() {
         let line = match line { Ok(l) => l, Err(_) => continue };
@@ -620,11 +660,36 @@ fn parse_codex_rollout(path: &PathBuf) -> Option<SessionData> {
                     cached = total["cached_input_tokens"].as_u64().unwrap_or(0);
                     reasoning = total["reasoning_output_tokens"].as_u64().unwrap_or(0);
                 }
-            } else if payload["type"].as_str() == Some("function_call")
-                   || payload["type"].as_str() == Some("tool_call") {
-                if let Some(name) = payload["name"].as_str() {
+            } else if matches!(payload["type"].as_str(), Some("function_call") | Some("tool_call")) {
+                let input = payload["input"].as_str()
+                    .or_else(|| payload["arguments"].as_str())
+                    .unwrap_or("");
+                if let Some(name) = payload["name"].as_str()
+                    .and_then(|name| normalize_codex_tool(name, input))
+                {
                     *tool_calls.entry(name.to_string()).or_insert(0) += 1;
                 }
+            }
+        } else if rtype == "response_item" {
+            match payload["type"].as_str() {
+                Some("message") if payload["role"].as_str() == Some("user") => {
+                    if user_intent.is_empty() {
+                        if let Some(text) = user_message_text(&payload["content"]) {
+                            user_intent = text;
+                        }
+                    }
+                }
+                Some("custom_tool_call") | Some("function_call") | Some("tool_call") => {
+                    let input = payload["input"].as_str()
+                        .or_else(|| payload["arguments"].as_str())
+                        .unwrap_or("");
+                    if let Some(name) = payload["name"].as_str()
+                        .and_then(|name| normalize_codex_tool(name, input))
+                    {
+                        *tool_calls.entry(name.to_string()).or_insert(0) += 1;
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -655,7 +720,41 @@ fn parse_codex_rollout(path: &PathBuf) -> Option<SessionData> {
         tool_calls,
         git_branch: None,
         activity_category: String::new(),
+        user_intent,
     })
+}
+
+fn normalize_codex_tool(name: &str, input: &str) -> Option<&'static str> {
+    let lower = name.to_ascii_lowercase();
+    // Codex App wraps real tools in a generic `exec` call. Only inspect the
+    // potentially large serialized input for that wrapper.
+    let wrapper_input = if lower == "exec" { input } else { "" };
+    if lower == "write_stdin" {
+        Some("Bash")
+    } else if lower.contains("apply_patch") || lower.contains("edit") || lower.contains("write")
+        || wrapper_input.contains("tools.apply_patch")
+    {
+        Some("Edit")
+    } else if lower.contains("search") || lower.contains("web") || lower.contains("browser")
+        || wrapper_input.contains("tools.web__run")
+    {
+        Some("WebSearch")
+    } else if lower.contains("agent") || lower.contains("spawn") || lower.contains("collaboration")
+        || wrapper_input.contains("spawn_agent")
+    {
+        Some("Agent")
+    } else if lower.contains("read") || lower == "open" || lower == "find"
+        || wrapper_input.contains("tools.view_image")
+        || wrapper_input.contains("tools.read_mcp_resource")
+    {
+        Some("Read")
+    } else if lower == "exec" || lower.contains("exec_command") || lower.contains("shell")
+        || wrapper_input.contains("tools.exec_command")
+    {
+        Some("Bash")
+    } else {
+        None
+    }
 }
 
 fn walk_rollout_files<F: FnMut(&PathBuf)>(dir: &PathBuf, cb: &mut F) {
@@ -819,6 +918,7 @@ fn scan_zcode_sessions() -> Vec<SessionData> {
             tool_calls: HashMap::new(),
             git_branch: None,
             activity_category: String::new(),
+            user_intent: String::new(),
         });
     }
     eprintln!("[CostDog] ZCode scan: {} sessions", out.len());
@@ -934,6 +1034,7 @@ fn scan_opencode_sessions() -> Vec<SessionData> {
             tool_calls: HashMap::new(),
             git_branch: None,
             activity_category: String::new(),
+            user_intent: String::new(),
         });
     }
     eprintln!("[CostDog] OpenCode scan: {} sessions", out.len());
@@ -1251,7 +1352,12 @@ fn full_scan() -> Result<usize, String> {
     let mut new_count = 0;
     for session in &all_sessions {
         let mut s = session.clone();
-        s.activity_category = classify(&s.tool_calls, s.git_branch.as_deref(), &s.source).to_string();
+        s.activity_category = classify_with_intent(
+            &s.tool_calls,
+            s.git_branch.as_deref(),
+            &s.source,
+            &s.user_intent,
+        ).to_string();
         // OpenCode writes its own (provider-accurate) cost into the session row.
         // Trust it when present; otherwise recompute from tokens + our pricing table.
         s.cost = if s.cost > 0.0 {
@@ -1661,11 +1767,80 @@ fn normalize_branch(raw: &str) -> String {
     s.split('/').next().unwrap_or(s).to_string()
 }
 
+fn contains_intent_keyword(text: &str, keyword: &str) -> bool {
+    if !keyword.is_ascii() {
+        return text.contains(keyword);
+    }
+
+    let mut start = 0;
+    while let Some(offset) = text[start..].find(keyword) {
+        let index = start + offset;
+        let before_is_word = text[..index]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+        let after = index + keyword.len();
+        let after_is_word = text[after..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !before_is_word && !after_is_word {
+            return true;
+        }
+        start = index + keyword.len();
+    }
+    false
+}
+
+fn intent_category(user_intent: &str) -> Option<&'static str> {
+    let text = user_intent.to_lowercase();
+    let has_any = |keywords: &[&str]| keywords.iter().any(|word| contains_intent_keyword(&text, word));
+    let fix_is_negated = has_any(&["不要修复", "无需修复", "不用修复", "do not fix", "don't fix"]);
+    let support_is_question = has_any(&["支持什么", "是否支持", "能否支持", "支不支持", "what does", "does it support"]);
+
+    // The requested outcome is more reliable than incidental tools used to achieve it.
+    if has_any(&["重构", "整理代码", "清理代码", "refactor", "cleanup"]) {
+        Some("refactor")
+    } else if has_any(&["文档", "说明书", "readme", "documentation", "docs"]) {
+        Some("docs")
+    } else if !fix_is_negated && has_any(&["修复", "修一下", "不准确", "不正确", "不准", "有问题", "不能用", "fix bug", "fix the bug", "fix", "broken", "regression"]) {
+        Some("bugfix")
+    } else if has_any(&["排查", "定位原因", "调试", "报错", "崩溃", "根因", "debug", "investigate", "root cause"]) {
+        Some("debug")
+    } else if has_any(&["子代理", "多代理", "并行代理", "subagent", "sub-agent", "multi-agent"]) {
+        Some("agent")
+    } else if has_any(&["阅读代码", "审查代码", "解释代码", "代码分析", "code review", "explain the code", "read the code"]) {
+        Some("explore")
+    } else if has_any(&["调研", "研究如何", "查找资料", "推荐", "对比", "分析", "research", "look up", "compare"]) {
+        Some("research")
+    } else if has_any(&["添加", "新增", "实现", "开发", "创建", "接入", "add", "implement", "create", "build"])
+        || (!support_is_question && has_any(&["支持", "support"]))
+    {
+        Some("feature")
+    } else if has_any(&["研究", "搜索", "search"]) {
+        Some("research")
+    } else {
+        None
+    }
+}
+
+fn classify_with_intent(
+    tool_calls: &HashMap<String, u64>,
+    git_branch: Option<&str>,
+    source: &str,
+    user_intent: &str,
+) -> &'static str {
+    if let Some(category) = intent_category(user_intent) {
+        return category;
+    }
+    classify(tool_calls, git_branch, source)
+}
+
 /// 判定一个 session 的活动类型。规则链首个命中即返回(spec §5)。
 fn classify(tool_calls: &HashMap<String, u64>, git_branch: Option<&str>, source: &str) -> &'static str {
     let has_tool_detail = matches!(source, "claude-code" | "codex");
 
-    // ① gitBranch 首段精确匹配(最可信)
+    // ① 无用户意图时，gitBranch 首段精确匹配是最可信的兜底信号。
     if let Some(raw) = git_branch {
         let head = normalize_branch(raw);
         match head.as_str() {
@@ -1684,15 +1859,11 @@ fn classify(tool_calls: &HashMap<String, u64>, git_branch: Option<&str>, source:
 
     // ② 工具占比主导
     if !has_tool_detail { return "other"; }
-    if total == 0 { return "research"; }
+    if total == 0 { return "other"; }
     if ratio("Task") + ratio("Agent") > 0.40 { return "agent"; }
     if ratio("WebSearch") + ratio("WebFetch") > 0.40 { return "research"; }
-    if ratio("Bash") > 0.50 { return "debug"; }
     let write_edit = ratio("Write") + ratio("Edit");
     if (ratio("Read") + ratio("Grep") + ratio("Glob") > 0.60) && write_edit <= 0.20 { return "explore"; }
-    let (we, ed) = (*tool_calls.get("Write").unwrap_or(&0), *tool_calls.get("Edit").unwrap_or(&0));
-    if ratio("Edit") > 0.40 && ed > we { return "bugfix"; }
-    if ratio("Write") > 0.30 { return "feature"; }
 
     // ③ 兜底
     "other"
@@ -1776,6 +1947,79 @@ mod tests {
     }
 
     #[test]
+    fn extracts_only_real_user_message_text() {
+        let cases = [
+            (serde_json::json!("  plain request  "), Some("plain request")),
+            (
+                serde_json::json!([
+                    {"type":"input_text","text":"first"},
+                    {"type":"tool_result","text":"ignored"},
+                    {"type":"text","text":"second"}
+                ]),
+                Some("first\nsecond"),
+            ),
+            (serde_json::json!({"text":"not an array"}), None),
+            (serde_json::json!("   "), None),
+            (serde_json::json!("<environment_context>injected"), None),
+            (serde_json::json!("<recommended_plugins>injected"), None),
+            (serde_json::json!("# AGENTS.md instructions for /tmp"), None),
+        ];
+
+        for (content, expected) in cases {
+            assert_eq!(user_message_text(&content).as_deref(), expected);
+        }
+    }
+
+    #[test]
+    fn intent_categories_and_ascii_word_boundaries() {
+        let cases = [
+            ("please fix this", Some("bugfix")),
+            ("refactor this module", Some("refactor")),
+            ("update the docs", Some("docs")),
+            ("debug the failure", Some("debug")),
+            ("use a multi-agent workflow", Some("agent")),
+            ("perform a code review", Some("explore")),
+            ("implement support for csv", Some("feature")),
+            ("research and compare options", Some("research")),
+            ("分析 bug 根因", Some("debug")),
+            ("perform a code review for bugs", Some("explore")),
+            ("不要修复，只分析为什么不准确", Some("research")),
+            ("研究如何实现导出功能", Some("research")),
+            ("这个平台支持什么？", None),
+            ("修复 README 中的错字", Some("docs")),
+            ("ordinary conversation", None),
+            ("prefixfixsuffix", None),
+            ("prefixfixsuffix then fix it", Some("bugfix")),
+        ];
+
+        for (intent, expected) in cases {
+            assert_eq!(intent_category(intent), expected, "intent: {intent}");
+        }
+    }
+
+    #[test]
+    fn normalizes_codex_tool_names_and_embedded_calls() {
+        let cases = [
+            ("apply_patch", "", Some("Edit")),
+            ("web_search", "", Some("WebSearch")),
+            ("spawn_agent", "", Some("Agent")),
+            ("read_mcp_resource", "", Some("Read")),
+            ("exec_command", "", Some("Bash")),
+            ("exec", "await tools.apply_patch(...) ", Some("Edit")),
+            ("exec", "await tools.web__run(...) ", Some("WebSearch")),
+            ("exec", "await spawn_agent(...) ", Some("Agent")),
+            ("exec", "await tools.view_image(...) ", Some("Read")),
+            ("exec", "await tools.exec_command(...) ", Some("Bash")),
+            ("write_stdin", "", Some("Bash")),
+            ("unrelated_tool", "{}", None),
+        ];
+
+        for (name, input, expected) in cases {
+            assert_eq!(normalize_codex_tool(name, input), expected, "tool: {name}");
+        }
+    }
+
+    #[test]
     fn classify_branch_signals() {
         // gitBranch 首段精确匹配,优先于工具占比
         assert_eq!(classify(&tc(&[("Write", 10)]), Some("origin/Fix/login"), "claude-code"), "bugfix");
@@ -1783,8 +2027,8 @@ mod tests {
         assert_eq!(classify(&tc(&[("Edit", 10)]), Some("refactor/api"), "claude-code"), "refactor");
         assert_eq!(classify(&tc(&[("Bash", 10)]), Some("feature/donut"), "claude-code"), "feature");
         // 无斜杠 / 不在集合 → 不命中分支规则
-        assert_eq!(classify(&tc(&[("Bash", 6)]), Some("feat-category"), "claude-code"), "debug"); // 落到工具占比
-        assert_eq!(classify(&tc(&[("Write", 10)]), Some("main"), "claude-code"), "feature");
+        assert_eq!(classify(&tc(&[("Bash", 6)]), Some("feat-category"), "claude-code"), "other");
+        assert_eq!(classify(&tc(&[("Write", 10)]), Some("main"), "claude-code"), "other");
     }
 
     #[test]
@@ -1792,20 +2036,102 @@ mod tests {
         // opencode/zcode 无工具细节 → other(即使 tool_calls 为空也不算 research)
         assert_eq!(classify(&HashMap::new(), None, "opencode"), "other");
         assert_eq!(classify(&HashMap::new(), None, "zcode"), "other");
-        // claude/codex 空工具 → research(纯对话)
-        assert_eq!(classify(&HashMap::new(), None, "claude-code"), "research");
-        assert_eq!(classify(&HashMap::new(), None, "codex"), "research");
+        // 没有工具信号不代表做了调研，普通问答也可能完全不调用工具。
+        assert_eq!(classify(&HashMap::new(), None, "claude-code"), "other");
+        assert_eq!(classify(&HashMap::new(), None, "codex"), "other");
+    }
+
+    #[test]
+    fn classify_prefers_explicit_user_intent() {
+        assert_eq!(
+            classify_with_intent(
+                &tc(&[("Bash", 8), ("Read", 2)]),
+                None,
+                "codex",
+                "之前加了统计功能，实际使用发现分类并不准，请修复",
+            ),
+            "bugfix",
+        );
+        assert_eq!(
+            classify_with_intent(
+                &tc(&[("Bash", 8), ("Read", 2)]),
+                None,
+                "claude-code",
+                "实现一个自动扫描 OpenCode 日志的新功能",
+            ),
+            "feature",
+        );
+        assert_eq!(
+            classify_with_intent(
+                &HashMap::new(),
+                Some("docs/readme"),
+                "claude-code",
+                "修复登录失败的问题",
+            ),
+            "bugfix",
+        );
+    }
+
+    #[test]
+    fn parse_codex_collects_response_item_tools_and_user_intent() {
+        use std::io::Write;
+
+        let records = [
+            serde_json::json!({
+                "timestamp":"2026-07-15T08:00:00Z","type":"session_meta",
+                "payload":{"id":"cx1","cwd":"/tmp/costdog","timestamp":"2026-07-15T08:00:00Z"}
+            }),
+            serde_json::json!({
+                "timestamp":"2026-07-15T08:00:01Z","type":"response_item",
+                "payload":{"type":"message","role":"user","content":[
+                    {"type":"input_text","text":"修复分类不准确的问题"}
+                ]}
+            }),
+            serde_json::json!({
+                "timestamp":"2026-07-15T08:00:02Z","type":"response_item",
+                "payload":{"type":"custom_tool_call","name":"exec","input":"..."}
+            }),
+            serde_json::json!({
+                "timestamp":"2026-07-15T08:00:03Z","type":"response_item",
+                "payload":{"type":"function_call","name":"apply_patch","arguments":"..."}
+            }),
+            serde_json::json!({
+                "timestamp":"2026-07-15T08:00:03Z","type":"event_msg",
+                "payload":{"type":"tool_call","name":"web_search","arguments":"{}"}
+            }),
+            serde_json::json!({
+                "timestamp":"2026-07-15T08:00:04Z","type":"event_msg",
+                "payload":{"type":"token_count","info":{"total_token_usage":{
+                    "input_tokens":100,"output_tokens":20,"cached_input_tokens":10,
+                    "reasoning_output_tokens":5
+                }}}
+            }),
+        ];
+        let dir = std::env::temp_dir().join("costdog_test_codex_classification");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rollout-test.jsonl");
+        let mut file = std::fs::File::create(&path).unwrap();
+        for record in records {
+            writeln!(file, "{}", record).unwrap();
+        }
+
+        let session = parse_codex_rollout(&path).unwrap();
+        assert_eq!(*session.tool_calls.get("Bash").unwrap_or(&0), 1);
+        assert_eq!(*session.tool_calls.get("Edit").unwrap_or(&0), 1);
+        assert_eq!(*session.tool_calls.get("WebSearch").unwrap_or(&0), 1);
+        assert_eq!(session.user_intent, "修复分类不准确的问题");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn classify_tool_ratios() {
         assert_eq!(classify(&tc(&[("Task", 5), ("Read", 5)]), None, "claude-code"), "agent");
         assert_eq!(classify(&tc(&[("WebSearch", 5), ("Read", 5)]), None, "claude-code"), "research");
-        assert_eq!(classify(&tc(&[("Bash", 6), ("Read", 4)]), None, "claude-code"), "debug");
+        assert_eq!(classify(&tc(&[("Bash", 6), ("Read", 4)]), None, "claude-code"), "other");
         assert_eq!(classify(&tc(&[("Read", 7), ("Grep", 1), ("Write", 1)]), None, "claude-code"), "explore");
-        // Edit 提前 + Edit>Write → bugfix(不是 feature)
-        assert_eq!(classify(&tc(&[("Edit", 6), ("Write", 4)]), None, "claude-code"), "bugfix");
-        assert_eq!(classify(&tc(&[("Write", 4), ("Read", 6)]), None, "claude-code"), "feature");
+        // 写入工具本身无法区分修 Bug、做功能或改文档。
+        assert_eq!(classify(&tc(&[("Edit", 6), ("Write", 4)]), None, "claude-code"), "other");
+        assert_eq!(classify(&tc(&[("Write", 4), ("Read", 6)]), None, "claude-code"), "other");
     }
 
     #[test]
@@ -1862,6 +2188,66 @@ mod tests {
     }
 
     #[test]
+    fn scan_claude_captures_first_real_user_intent() {
+        use std::io::Write;
+
+        let records = [
+            serde_json::json!({
+                "type":"user","sessionId":"intent-s1","timestamp":"2026-07-06T10:00:00Z",
+                "message":{"content":"<environment_context>injected"}
+            }),
+            serde_json::json!({
+                "type":"user","sessionId":"intent-s1","timestamp":"2026-07-06T10:00:01Z",
+                "message":{"content":[{"type":"text","text":"first real request"}]}
+            }),
+            serde_json::json!({
+                "type":"user","sessionId":"intent-s1","timestamp":"2026-07-06T10:00:02Z",
+                "message":{"content":"later request must not replace it"}
+            }),
+        ];
+        let dir = std::env::temp_dir().join("costdog_test_claude_intent");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("session.jsonl");
+        let mut file = std::fs::File::create(&path).unwrap();
+        for record in records {
+            writeln!(file, "{}", record).unwrap();
+        }
+
+        let sessions = parse_claude_jsonl(&path, "test-project");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].user_intent, "first real request");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn session_data_serde_skips_user_intent() {
+        let session = SessionData {
+            session_id: "s1".to_string(),
+            source: "codex".to_string(),
+            date: "2026-07-15".to_string(),
+            model: "test".to_string(),
+            project: "costdog".to_string(),
+            start_time: String::new(),
+            end_time: String::new(),
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
+            disk_write_bytes: 0,
+            cost: 0.0,
+            tool_calls: HashMap::new(),
+            git_branch: None,
+            activity_category: "other".to_string(),
+            user_intent: "must stay in memory".to_string(),
+        };
+
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(!json.contains("user_intent"));
+        assert!(!json.contains("must stay in memory"));
+    }
+
+    #[test]
     fn classify_boundaries_and_fallback() {
         // 严格 >:恰好 0.40/0.50 不命中
         assert_eq!(classify(&tc(&[("Task", 4), ("Read", 6)]), None, "claude-code"), "other"); // 0.40 不 >0.40
@@ -1871,4 +2257,5 @@ mod tests {
         // 全是未列名工具 → 兜底 other
         assert_eq!(classify(&tc(&[("TodoWrite", 2), ("Skill", 2)]), None, "claude-code"), "other");
     }
+
 }
