@@ -51,6 +51,7 @@ struct DailySummary {
 struct RecentSession {
     session_id: String,
     source: String,
+    date: String,
     model: Option<String>,
     project: Option<String>,
     start_time: Option<String>,
@@ -62,6 +63,10 @@ struct RecentSession {
     disk_write_bytes: u64,
     #[serde(rename = "activityCategory")]
     activity_category: Option<String>,
+    #[serde(rename = "automaticActivityCategory")]
+    automatic_activity_category: Option<String>,
+    #[serde(rename = "activityCategoryOverride")]
+    activity_category_override: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -304,7 +309,7 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date)", [])
         .map_err(|e| e.to_string())?;
 
-    // Activity category 迁移: 3 个新增列,各幂等
+    // Activity category migrations: each column is added idempotently.
     let need = |conn: &rusqlite::Connection, col: &str| -> bool {
         conn.query_row(
             "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?1",
@@ -314,6 +319,7 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
     };
     for (col, ddl) in [
         ("activity_category", "ALTER TABLE sessions ADD COLUMN activity_category TEXT"),
+        ("activity_category_override", "ALTER TABLE sessions ADD COLUMN activity_category_override TEXT"),
         ("tool_calls",        "ALTER TABLE sessions ADD COLUMN tool_calls TEXT"),
         ("git_branch",        "ALTER TABLE sessions ADD COLUMN git_branch TEXT"),
     ] {
@@ -1437,13 +1443,13 @@ fn get_top_models(conn: &rusqlite::Connection, start: &str, end: &str) -> Result
 
 fn get_cost_by_category(conn: &rusqlite::Connection, start: &str, end: &str) -> Result<Vec<CategoryBreakdown>, String> {
     let mut stmt = conn.prepare(
-        "SELECT COALESCE(NULLIF(activity_category,''),'other') AS key,
+        "SELECT COALESCE(NULLIF(activity_category_override,''), NULLIF(activity_category,''), 'other') AS key,
                 COUNT(*) AS sessions,
                 COALESCE(SUM(cost), 0) AS cost,
                 COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens), 0) AS tokens
          FROM sessions
          WHERE date >= ? AND date <= ?
-         GROUP BY COALESCE(NULLIF(activity_category,''),'other')
+         GROUP BY COALESCE(NULLIF(activity_category_override,''), NULLIF(activity_category,''), 'other')
          ORDER BY cost DESC"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map(rusqlite::params![start, end], |row| {
@@ -1466,6 +1472,55 @@ fn date_range(days: i64) -> (String, String) {
         (now - chrono::Duration::days(days)).format("%Y-%m-%d").to_string()
     };
     (start, end)
+}
+
+const ACTIVITY_CATEGORIES: [&str; 9] = [
+    "feature", "bugfix", "refactor", "docs", "research", "debug", "agent", "explore", "other",
+];
+
+fn set_activity_category_override_in_connection(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    source: &str,
+    date: &str,
+    category: Option<&str>,
+) -> Result<(), String> {
+    let category = category.map(str::trim).filter(|value| !value.is_empty());
+    if let Some(value) = category {
+        if !ACTIVITY_CATEGORIES.contains(&value) {
+            return Err(format!(
+                "Invalid activity category '{value}'. Expected one of: {}",
+                ACTIVITY_CATEGORIES.join(", ")
+            ));
+        }
+    }
+
+    let changed = conn.execute(
+        "UPDATE sessions SET activity_category_override = ?1
+         WHERE session_id = ?2 AND source = ?3 AND date = ?4",
+        rusqlite::params![category, session_id, source, date],
+    ).map_err(|e| format!("Failed to update activity category: {e}"))?;
+
+    if changed == 0 {
+        return Err(format!(
+            "Session not found for session_id='{session_id}', source='{source}', date='{date}'"
+        ));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn set_activity_category_override(
+    session_id: String,
+    source: String,
+    date: String,
+    category: Option<String>,
+) -> Result<(), String> {
+    let conn = get_db_connection()?;
+    set_activity_category_override_in_connection(
+        &conn, &session_id, &source, &date, category.as_deref(),
+    )
 }
 
 #[tauri::command]
@@ -1502,9 +1557,11 @@ fn get_data() -> Result<String, String> {
 
     // Get recent sessions
     let mut stmt = conn.prepare(
-        "SELECT session_id, source, model, project, start_time, end_time,
+        "SELECT session_id, source, date, model, project, start_time, end_time,
                 input_tokens, output_tokens, cache_read_tokens, cost, disk_write_bytes,
-                activity_category
+                COALESCE(NULLIF(activity_category_override,''), NULLIF(activity_category,''), 'other'),
+                COALESCE(NULLIF(activity_category,''), 'other'),
+                NULLIF(activity_category_override,'')
         FROM sessions ORDER BY date DESC, start_time DESC LIMIT 20"
     ).map_err(|e| e.to_string())?;
 
@@ -1512,16 +1569,19 @@ fn get_data() -> Result<String, String> {
         Ok(RecentSession {
             session_id: row.get(0)?,
             source: row.get(1)?,
-            model: row.get(2)?,
-            project: row.get(3)?,
-            start_time: row.get(4)?,
-            end_time: row.get(5)?,
-            input_tokens: row.get(6)?,
-            output_tokens: row.get(7)?,
-            cache_read_tokens: row.get(8)?,
-            cost: row.get(9)?,
-            disk_write_bytes: row.get(10)?,
-            activity_category: row.get::<_, Option<String>>(11)?,
+            date: row.get(2)?,
+            model: row.get(3)?,
+            project: row.get(4)?,
+            start_time: row.get(5)?,
+            end_time: row.get(6)?,
+            input_tokens: row.get(7)?,
+            output_tokens: row.get(8)?,
+            cache_read_tokens: row.get(9)?,
+            cost: row.get(10)?,
+            disk_write_bytes: row.get(11)?,
+            activity_category: row.get::<_, Option<String>>(12)?,
+            automatic_activity_category: row.get::<_, Option<String>>(13)?,
+            activity_category_override: row.get::<_, Option<String>>(14)?,
         })
     }).map_err(|e| e.to_string())?
     .filter_map(|r| r.ok())
@@ -1711,7 +1771,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![resize_window, get_data, scan, close_window, check_for_updates])
+        .invoke_handler(tauri::generate_handler![resize_window, get_data, set_activity_category_override, scan, close_window, check_for_updates])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
             window.set_always_on_top(true).ok();
@@ -1927,6 +1987,7 @@ mod tests {
         let session = RecentSession {
             session_id: "abc".to_string(),
             source: "claude-code".to_string(),
+            date: "2026-07-06".to_string(),
             model: Some("claude-4-sonnet".to_string()),
             project: Some("myproj".to_string()),
             start_time: Some("2026-07-06T10:00:00".to_string()),
@@ -1937,6 +1998,8 @@ mod tests {
             cost: 0.05,
             disk_write_bytes: 0,
             activity_category: Some("feature".to_string()),
+            automatic_activity_category: Some("feature".to_string()),
+            activity_category_override: None,
         };
         let json = serde_json::to_string(&session).unwrap();
         assert!(json.contains("\"activityCategory\":\"feature\""), "Expected activityCategory in JSON but got: {}", json);
@@ -2137,7 +2200,7 @@ mod tests {
     #[test]
     fn test_ensure_db_migration_adds_activity_columns() {
         let conn = ensure_db_exists().expect("ensure_db_exists should succeed");
-        for col in ["activity_category", "tool_calls", "git_branch"] {
+        for col in ["activity_category", "activity_category_override", "tool_calls", "git_branch"] {
             let count: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?1",
                 rusqlite::params![col],
@@ -2145,6 +2208,98 @@ mod tests {
             ).unwrap();
             assert_eq!(count, 1, "column {} should exist after migration", col);
         }
+    }
+
+    fn override_test_connection() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions (
+                session_id TEXT NOT NULL, source TEXT NOT NULL, date TEXT NOT NULL,
+                model TEXT, project TEXT, start_time TEXT, end_time TEXT,
+                input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
+                cache_read_tokens INTEGER DEFAULT 0, cache_creation_tokens INTEGER DEFAULT 0,
+                reasoning_output_tokens INTEGER DEFAULT 0, disk_write_bytes INTEGER DEFAULT 0,
+                cost REAL DEFAULT 0, scanned_at TEXT, activity_category TEXT,
+                activity_category_override TEXT, tool_calls TEXT, git_branch TEXT,
+                PRIMARY KEY (session_id, source, date)
+            );"
+        ).unwrap();
+        conn
+    }
+
+    fn override_test_session(category: &str) -> SessionData {
+        SessionData {
+            session_id: "session-1".to_string(), source: "codex".to_string(),
+            date: "2026-07-16".to_string(), model: "gpt-test".to_string(),
+            project: "costdog".to_string(), start_time: "2026-07-16T08:00:00".to_string(),
+            end_time: "2026-07-16T08:05:00".to_string(), input_tokens: 100,
+            output_tokens: 20, cache_read_tokens: 5, cache_creation_tokens: 0,
+            reasoning_tokens: 0, disk_write_bytes: 0, cost: 1.5,
+            tool_calls: HashMap::new(), git_branch: None,
+            activity_category: category.to_string(), user_intent: String::new(),
+        }
+    }
+
+    #[test]
+    fn activity_override_survives_session_rescan_and_can_be_cleared() {
+        let conn = override_test_connection();
+        upsert_session(&conn, &override_test_session("feature")).unwrap();
+        set_activity_category_override_in_connection(
+            &conn, "session-1", "codex", "2026-07-16", Some("docs"),
+        ).unwrap();
+
+        upsert_session(&conn, &override_test_session("bugfix")).unwrap();
+        let (automatic, manual, effective): (String, Option<String>, String) = conn.query_row(
+            "SELECT activity_category, activity_category_override,
+                    COALESCE(activity_category_override, activity_category, 'other')
+             FROM sessions WHERE session_id='session-1' AND source='codex' AND date='2026-07-16'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(automatic, "bugfix");
+        assert_eq!(manual.as_deref(), Some("docs"));
+        assert_eq!(effective, "docs");
+
+        set_activity_category_override_in_connection(
+            &conn, "session-1", "codex", "2026-07-16", None,
+        ).unwrap();
+        let manual: Option<String> = conn.query_row(
+            "SELECT activity_category_override FROM sessions WHERE session_id='session-1'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(manual, None);
+    }
+
+    #[test]
+    fn activity_override_validates_category_and_full_session_key() {
+        let conn = override_test_connection();
+        upsert_session(&conn, &override_test_session("feature")).unwrap();
+
+        let invalid = set_activity_category_override_in_connection(
+            &conn, "session-1", "codex", "2026-07-16", Some("custom"),
+        ).unwrap_err();
+        assert!(invalid.contains("Invalid activity category"));
+
+        let missing = set_activity_category_override_in_connection(
+            &conn, "session-1", "codex", "2026-07-17", Some("docs"),
+        ).unwrap_err();
+        assert!(missing.contains("Session not found"));
+    }
+
+    #[test]
+    fn category_breakdown_uses_manual_override() {
+        let conn = override_test_connection();
+        upsert_session(&conn, &override_test_session("feature")).unwrap();
+        set_activity_category_override_in_connection(
+            &conn, "session-1", "codex", "2026-07-16", Some("docs"),
+        ).unwrap();
+
+        let categories = get_cost_by_category(&conn, "2026-07-16", "2026-07-16").unwrap();
+        assert_eq!(categories.len(), 1);
+        assert_eq!(categories[0].key, "docs");
+        assert_eq!(categories[0].sessions, 1);
+        assert!((categories[0].cost - 1.5).abs() < f64::EPSILON);
     }
 
     #[test]

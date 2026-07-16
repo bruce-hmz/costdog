@@ -50,6 +50,12 @@ td{padding:4px 6px;border-bottom:1px solid rgba(42,42,58,.5)}
 tr:hover{background:rgba(137,180,250,.03)}
 .badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700}
 .bcc{background:rgba(137,180,250,.12);color:var(--accent)}.bcx{background:rgba(166,227,161,.12);color:var(--green)}.bzc{background:rgba(200,160,255,.14);color:#b78cff}.boc{background:rgba(255,190,120,.14);color:#ffb878}
+.catpick{width:34px;height:22px;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text);font-family:inherit;font-size:11px;cursor:pointer;-webkit-app-region:no-drag}
+.catpick:hover,.catpick:focus{background:var(--card);border-color:var(--border);outline:none}
+.catpick.manual{border-color:var(--accent);background:rgba(137,180,250,.08)}
+.catpick:disabled{cursor:wait;opacity:.55}
+.edit-status{min-width:0;flex:1;margin-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;font-size:9px;color:var(--green)}
+.edit-status.error{color:var(--red)}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 .cat{display:flex;gap:10px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px}
 .cr{display:flex;align-items:center;gap:5px;font-size:10px;padding:2px 0;white-space:nowrap}
@@ -78,7 +84,7 @@ tr:hover{background:rgba(137,180,250,.03)}
   </div>
 </div>
 <div class="detail" id="detail">
-  <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><button class="xb" onclick="toggle()">&#x2715;</button></div>
+  <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><span class="edit-status" id="editstatus"></span><button class="xb" onclick="toggle()">&#x2715;</button></div>
   <div class="tabs">
     <div class="tab on" data-r="today">Today</div>
     <div class="tab" data-r="week">7D</div>
@@ -116,6 +122,8 @@ const LABELS={today:'TODAY',week:'7D',month:'30D',all:'ALL'};
 function fT(n){if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n}
 function fC(n){if(n>=100)return'$'+n.toFixed(0);if(n>=1)return'$'+n.toFixed(2);return'$'+n.toFixed(4)}
 function fB(n){if(n>=1073741824)return(n/1073741824).toFixed(1)+'GB';if(n>=1048576)return(n/1048576).toFixed(1)+'MB';if(n>=1024)return(n/1024).toFixed(1)+'KB';return n+'B'}
+let statusTimer=null;
+function editStatus(message,isError){const e=document.getElementById('editstatus');e.textContent=message||'';e.classList.toggle('error',!!isError);clearTimeout(statusTimer);if(message)statusTimer=setTimeout(()=>{e.textContent='';e.classList.remove('error')},3000)}
 function toggle(){
   open=!open;
   document.getElementById('detail').classList.toggle('show',open);
@@ -178,8 +186,22 @@ function render(){
   const ss=D.recentSessions||[];
   let th='';
   if(!ss.length) th='<tr><td colspan="7" style="color:var(--dim);text-align:center;padding:12px">No data</td></tr>';
-  else ss.slice(0,15).forEach(s=>{const bc={'claude-code':'bcc','codex':'bcx','zcode':'bzc','opencode':'boc'}[s.source]||'bcx',bl={'claude-code':'CC','codex':'CX','zcode':'ZC','opencode':'OC'}[s.source]||'CX',catEm=(CATS[s.activityCategory]||CATS.other)[0];th+='<tr><td><span class="badge '+bc+'">'+bl+'</span></td><td>'+catEm+'</td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
+  else ss.slice(0,15).forEach((s,i)=>{const bc={'claude-code':'bcc','codex':'bcx','zcode':'bzc','opencode':'boc'}[s.source]||'bcx',bl={'claude-code':'CC','codex':'CX','zcode':'ZC','opencode':'OC'}[s.source]||'CX',auto=s.automaticActivityCategory||'other',manual=s.activityCategoryOverride||'',catEm=(CATS[s.activityCategory]||CATS.other)[0];let opts='<option value=""'+(!manual?' selected':'')+'>↺ 自动 · '+(CATNAMES[auto]||'其他')+'</option>';Object.keys(CATS).forEach(k=>{opts+='<option value="'+k+'"'+(manual===k?' selected':'')+'>'+CATS[k][0]+' '+CATNAMES[k]+'</option>'});th+='<tr><td><span class="badge '+bc+'">'+bl+'</span></td><td><select class="catpick'+(manual?' manual':'')+'" data-session-index="'+i+'" title="用途：'+(CATNAMES[s.activityCategory]||'其他')+(manual?'（人工）':'（自动）')+'" aria-label="修改 Session 用途">'+opts+'</select></td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
   document.getElementById('dt').innerHTML=th;
+}
+async function changeActivityCategory(select){
+  const index=Number(select.dataset.sessionIndex),s=(D&&D.recentSessions||[])[index];
+  if(!s){editStatus('找不到 Session',true);render();return;}
+  if(!window.__TAURI_INTERNALS__){editStatus('请在桌面应用中修改',true);render();return;}
+  select.disabled=true;
+  try{
+    await window.__TAURI_INTERNALS__.invoke('set_activity_category_override',{sessionId:s.session_id,source:s.source,date:s.date,category:select.value||null});
+    await load();
+    editStatus(select.value?'分类已保存':'已恢复自动分类',false);
+  }catch(e){
+    editStatus(String(e||'保存失败'),true);
+    render();
+  }
 }
 async function load(){
   try{
@@ -260,6 +282,7 @@ tauriListen('update-progress',function(e){var p=(e&&e.payload!=null)?e.payload:e
 
 
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');R=t.dataset.r;render()}));
+document.getElementById('dt').addEventListener('change',e=>{const select=e.target.closest('.catpick');if(select)changeActivityCategory(select)});
 load();
 </script>
 </body>
