@@ -1,25 +1,43 @@
 <!DOCTYPE html>
-<html data-skin="night">
+<html data-skin="classic" data-theme-mode="system" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <title>CostDog</title>
 <script>
 try{
   const savedSkin=localStorage.getItem('costdog.barSkin');
-  if(['night','lcd','receipt','race'].includes(savedSkin))document.documentElement.dataset.skin=savedSkin;
-}catch(error){console.warn('Unable to restore the saved bar skin:',error)}
+  const savedTheme=localStorage.getItem('costdog.themeMode');
+  const savedAccent=localStorage.getItem('costdog.accent');
+  if(['classic','night','lcd','receipt','race'].includes(savedSkin))document.documentElement.dataset.skin=savedSkin;
+  if(['system','dark','light'].includes(savedTheme))document.documentElement.dataset.themeMode=savedTheme;
+  const themeMode=document.documentElement.dataset.themeMode;
+  document.documentElement.dataset.theme=themeMode==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):themeMode;
+  if(/^#[0-9a-f]{6}$/i.test(savedAccent||''))document.documentElement.style.setProperty('--accent',savedAccent);
+}catch(error){console.warn('Unable to restore appearance settings:',error)}
 </script>
 <style>
-:root{--bg:#0f0f17;--bar:#16161e;--card:#1e1e2e;--border:#2a2a3a;--text:#cdd6f4;--dim:#6c7086;--accent:#89b4fa;--green:#a6e3a1;--red:#f38ba8;--yellow:#f9e2af;--purple:#cba6f7;--skin-text:#cdd6f4;--skin-dim:#6c7086;--skin-border:#2a2a3a;--skin-cost:#f38ba8;--skin-token:#f9e2af;--skin-session:#89b4fa}
+:root{color-scheme:dark;--bg:#0f0f17;--bar:#16161e;--card:#1e1e2e;--panel:#13131d;--choice:#191925;--choice-on:#202034;--border:#2a2a3a;--text:#cdd6f4;--dim:#7f849c;--accent:#89b4fa;--accent-soft:color-mix(in srgb,var(--accent) 12%,transparent);--green:#a6e3a1;--red:#f38ba8;--yellow:#f9e2af;--purple:#cba6f7;--skin-text:#cdd6f4;--skin-dim:#6c7086;--skin-border:#2a2a3a;--skin-cost:#f38ba8;--skin-token:#f9e2af;--skin-session:#89b4fa}
+:root[data-theme="light"]{color-scheme:light;--bg:#f5f7fb;--bar:#ffffff;--card:#ffffff;--panel:#eef1f7;--choice:#ffffff;--choice-on:color-mix(in srgb,var(--accent) 10%,#fff);--border:#d9deea;--text:#202533;--dim:#687083;--green:#26845b;--red:#c63c55;--yellow:#9a6a00;--purple:#7856ad}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color:var(--text);overflow:hidden;user-select:none}
-.bar{position:relative;overflow:hidden;width:410px;height:36px;background:#071019;-webkit-app-region:no-drag}
+.bar{position:relative;overflow:hidden;width:410px;height:36px;background:var(--bar);-webkit-app-region:no-drag}
 .bar-face{display:none;align-items:center;width:100%;height:36px;overflow:hidden}
-:root[data-skin="night"] .face-night,:root[data-skin="lcd"] .face-lcd,:root[data-skin="receipt"] .face-receipt,:root[data-skin="race"] .face-race{display:flex}
+:root[data-skin="classic"] .face-classic,:root[data-skin="night"] .face-night,:root[data-skin="lcd"] .face-lcd,:root[data-skin="receipt"] .face-receipt,:root[data-skin="race"] .face-race{display:flex}
 .face-actions{display:flex;align-items:center;margin-left:auto;flex:0 0 auto}
 .bbtn{display:flex;align-items:center;justify-content:center;width:23px;height:23px;border:1px solid transparent;background:none;color:inherit;font-family:inherit;font-size:12px;cursor:pointer;-webkit-app-region:no-drag}
 .bbtn:focus-visible{outline:1px solid currentColor;outline-offset:1px}
 .dog-art{display:block;overflow:visible;fill:currentColor}
+
+/* Classic: the original CostDog bar, preserved as the calm default. */
+.face-classic{justify-content:space-between;padding:0 7px 0 10px;color:var(--text);background:linear-gradient(180deg,var(--bar),var(--bg));border-bottom:1px solid var(--border);font-family:'Cascadia Code','Consolas',monospace}
+.classic-left{display:flex;align-items:center;gap:9px;min-width:0}
+.classic-logo{position:relative;width:40px;height:24px;overflow:hidden;flex:0 0 auto;color:var(--accent)}
+.classic-dog{position:absolute;bottom:0;font-size:18px;animation:classic-walk 3s linear infinite}
+.classic-sep{width:1px;height:14px;background:var(--border);flex:0 0 auto}
+.classic-stat{display:flex;align-items:baseline;gap:4px;white-space:nowrap}.classic-stat span{color:var(--dim);font-size:9px;letter-spacing:.5px}.classic-stat strong{font-size:12px}
+.classic-cost{color:var(--red)}.classic-token{color:var(--yellow)}.classic-session{color:var(--accent)}
+.face-classic .face-actions{gap:2px}.face-classic .bbtn{width:24px;height:24px;color:var(--dim);border-radius:4px}.face-classic .bbtn:hover{color:var(--text);background:var(--card);border-color:var(--border)}
+@keyframes classic-walk{0%{left:40px}100%{left:-10px}}
 
 /* Night patrol: cost is the moon, secondary readings are radio chatter. */
 .face-night{position:relative;padding:0 7px 0 8px;color:#d7eaff;background:radial-gradient(circle at 43px 17px,rgba(151,211,255,.22) 0 12px,transparent 13px),linear-gradient(90deg,#06111b,#0b1c29 52%,#071019);border-bottom:1px solid #28465b;font-family:'Avenir Next Condensed','Arial Narrow',sans-serif}
@@ -77,7 +95,7 @@ body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color
 .face-race .bbtn:hover{color:#101315;background:#ffca3a;border-color:#ffca3a}
 @keyframes race-surge{0%,100%{transform:translateX(0) rotate(-2deg)}50%{transform:translateX(7px) rotate(2deg)}}
 
-@media(prefers-reduced-motion:reduce){.dog-art{animation:none!important}}
+@media(prefers-reduced-motion:reduce){.dog-art,.classic-dog{animation:none!important}.classic-dog{left:10px}}
 .detail{display:none;padding:12px;overflow-y:auto;height:calc(100vh - 36px)}
 .detail.show{display:block}
 .dh{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
@@ -86,18 +104,22 @@ body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color
 .xb:hover{color:var(--red)}
 .skin-trigger{width:25px;height:23px;margin-left:5px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--dim);font-size:12px;cursor:pointer;flex:0 0 auto}
 .skin-trigger:hover,.skin-trigger:focus-visible,.skin-trigger[aria-expanded="true"]{color:var(--accent);border-color:var(--accent);outline:none}
-.skin-panel{display:none;margin:-2px 0 10px;padding:7px;background:#13131d;border:1px solid var(--border);border-radius:7px}
+.skin-panel{display:none;margin:-2px 0 10px;padding:7px;background:var(--panel);border:1px solid var(--border);border-radius:7px}
 .skin-panel.show{display:block}
 .skin-panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;color:var(--dim);font-size:8px;letter-spacing:1px;text-transform:uppercase}
 .skin-panel-head strong{color:var(--text);font-size:10px;letter-spacing:0;text-transform:none}
-.skin-rail{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
-.skin-choice{min-width:0;height:52px;padding:5px 3px 4px;border:1px solid var(--border);border-radius:3px;background:#191925;color:var(--dim);font-family:inherit;cursor:pointer;text-align:center}
+.skin-rail{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
+.skin-choice{min-width:0;height:52px;padding:5px 3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--choice);color:var(--dim);font-family:inherit;cursor:pointer;text-align:center}
 .skin-choice:hover,.skin-choice:focus-visible{color:var(--text);border-color:var(--dim);outline:none;transform:translateY(-1px)}
-.skin-choice[aria-pressed="true"]{color:var(--accent);border-color:var(--accent);background:#202034;box-shadow:inset 0 -2px var(--accent)}
+.skin-choice[aria-pressed="true"]{color:var(--accent);border-color:var(--accent);background:var(--choice-on);box-shadow:inset 0 -2px var(--accent)}
 .skin-symbol{display:flex;align-items:center;justify-content:center;height:25px;margin-bottom:3px;font-size:12px;font-weight:800}
 .skin-symbol svg{width:32px;height:18px;fill:currentColor}
-.skin-symbol.night{color:#9fd8ff;background:#07131e}.skin-symbol.lcd{color:#26321f;background:#adbb72;border:1px solid #4b5838;font:700 10px 'Courier New',monospace}.skin-symbol.receipt{color:#bd382d;background:#f4ecd9;border-bottom:1px dotted #8d7f6d;font:700 9px 'Courier New',monospace}.skin-symbol.race{color:#ffca3a;background:#111518;border-bottom:2px solid #ffca3a;font:900 italic 10px 'Arial Narrow',sans-serif}
+.skin-symbol.classic{gap:3px;color:var(--accent);background:linear-gradient(180deg,var(--bar),var(--bg));border:1px solid var(--border);font-size:11px}.skin-symbol.classic::after{content:'$12';color:var(--red);font-size:8px}.skin-symbol.night{color:#9fd8ff;background:#07131e}.skin-symbol.lcd{color:#26321f;background:#adbb72;border:1px solid #4b5838;font:700 10px 'Courier New',monospace}.skin-symbol.receipt{color:#bd382d;background:#f4ecd9;border-bottom:1px dotted #8d7f6d;font:700 9px 'Courier New',monospace}.skin-symbol.race{color:#ffca3a;background:#111518;border-bottom:2px solid #ffca3a;font:900 italic 10px 'Arial Narrow',sans-serif}
 .skin-choice-name{font-size:8px;white-space:nowrap}
+.theme-controls{display:flex;align-items:center;gap:6px;margin-top:7px;padding-top:7px;border-top:1px solid var(--border)}
+.theme-label{color:var(--dim);font-size:8px;letter-spacing:.7px;text-transform:uppercase}
+.theme-modes{display:flex;gap:2px}.theme-mode{height:24px;padding:0 7px;border:1px solid var(--border);border-radius:3px;background:var(--choice);color:var(--dim);font:inherit;font-size:9px;cursor:pointer}.theme-mode:hover,.theme-mode:focus-visible{color:var(--text);outline:none}.theme-mode[aria-pressed="true"]{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
+.accent-control{display:flex;align-items:center;gap:4px;margin-left:auto;color:var(--dim);font-size:8px}.accent-picker{width:27px;height:24px;padding:2px;border:1px solid var(--border);border-radius:4px;background:var(--choice);cursor:pointer}.accent-picker::-webkit-color-swatch-wrapper{padding:0}.accent-picker::-webkit-color-swatch{border:0;border-radius:2px}.accent-reset{height:24px;padding:0 6px;border:1px solid var(--border);border-radius:3px;background:transparent;color:var(--dim);font:inherit;font-size:9px;cursor:pointer}.accent-reset:hover,.accent-reset:focus-visible{color:var(--accent);border-color:var(--accent);outline:none}
 .tabs{display:flex;gap:2px;margin-bottom:10px}
 .tab{padding:4px 10px;background:transparent;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--dim);font-size:10px;font-family:inherit}
 .tab.on{background:var(--card);color:var(--accent);border-color:var(--accent)}
@@ -118,13 +140,13 @@ body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color
 .mc{font-weight:700}.ml{color:var(--dim);font-size:10px;margin-left:6px}
 table{width:100%;border-collapse:collapse;font-size:10px}
 th{text-align:left;padding:5px 6px;color:var(--dim);border-bottom:1px solid var(--border);font-size:9px;text-transform:uppercase;letter-spacing:.5px}
-td{padding:4px 6px;border-bottom:1px solid rgba(42,42,58,.5)}
-tr:hover{background:rgba(137,180,250,.03)}
+td{padding:4px 6px;border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent)}
+tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
 .badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700}
 .bcc{background:rgba(137,180,250,.12);color:var(--accent)}.bcx{background:rgba(166,227,161,.12);color:var(--green)}.bzc{background:rgba(200,160,255,.14);color:#b78cff}.boc{background:rgba(255,190,120,.14);color:#ffb878}
 .catpick{width:34px;height:22px;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text);font-family:inherit;font-size:11px;cursor:pointer;-webkit-app-region:no-drag}
 .catpick:hover,.catpick:focus{background:var(--card);border-color:var(--border);outline:none}
-.catpick.manual{border-color:var(--accent);background:rgba(137,180,250,.08)}
+.catpick.manual{border-color:var(--accent);background:var(--accent-soft)}
 .catpick:disabled{cursor:wait;opacity:.55}
 .edit-status{min-width:0;flex:1;margin-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;font-size:9px;color:var(--green)}
 .edit-status.error{color:var(--red)}
@@ -139,6 +161,15 @@ tr:hover{background:rgba(137,180,250,.03)}
 </head>
 <body>
 <div class="bar">
+  <div class="bar-face face-classic">
+    <div class="classic-left">
+      <span class="classic-logo"><span class="classic-dog">🐕</span></span><span class="classic-sep"></span>
+      <span class="classic-stat"><span data-bar-range>TODAY</span><strong class="classic-cost" data-bar-cost>$0</strong></span><span class="classic-sep"></span>
+      <span class="classic-stat"><span>TOK</span><strong class="classic-token" data-bar-tokens>0</strong></span><span class="classic-sep"></span>
+      <span class="classic-stat"><span>SESS</span><strong class="classic-session" data-bar-sessions>0</strong></span><span class="classic-sep"></span>
+    </div>
+    <div class="face-actions"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">↻</button><button class="bbtn" onclick="toggle()" title="Details">▼</button><button class="bbtn" onclick="closeWindow()" title="Close">×</button></div>
+  </div>
   <div class="bar-face face-night">
     <div class="night-mark"><svg class="dog-art" viewBox="0 0 64 32" aria-hidden="true"><ellipse cx="28" cy="14" rx="14" ry="6"/><circle cx="45" cy="11" r="5"/><path d="M44 7l2-6 5 7 8 3-6 5-4-1-5 4-5-1 6-7zM15 13L5 7l7 1 5 3zM20 18l-5 12h5l6-11zM35 18l4 12h5l-3-13z"/></svg></div>
     <div class="night-primary"><span data-bar-range>TODAY</span><strong data-bar-cost>$0</strong></div>
@@ -162,13 +193,14 @@ tr:hover{background:rgba(137,180,250,.03)}
   </div>
 </div>
 <div class="detail" id="detail">
-  <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><span class="edit-status" id="editstatus"></span><button class="skin-trigger" id="skinbtn" onclick="toggleSkinPanel()" aria-expanded="false" aria-controls="skinpanel" title="选择 Bar 皮肤">◈</button><button class="xb" onclick="toggle()">&#x2715;</button></div>
-  <div class="skin-panel" id="skinpanel" aria-label="Bar 皮肤"><div class="skin-panel-head"><span>Bar wardrobe / 04</span><strong id="skinname">夜巡霓虹</strong></div><div class="skin-rail">
+  <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><span class="edit-status" id="editstatus"></span><button class="skin-trigger" id="skinbtn" onclick="toggleSkinPanel()" aria-expanded="false" aria-controls="skinpanel" title="选择外观">◈</button><button class="xb" onclick="toggle()">&#x2715;</button></div>
+  <div class="skin-panel" id="skinpanel" aria-label="外观设置"><div class="skin-panel-head"><span>Bar wardrobe / 05</span><strong id="skinname">经典原版</strong></div><div class="skin-rail">
+    <button class="skin-choice" data-skin-choice="classic" onclick="selectSkin('classic')" aria-label="经典原版" aria-pressed="false"><span class="skin-symbol classic">🐕</span><span class="skin-choice-name">经典</span></button>
     <button class="skin-choice" data-skin-choice="night" onclick="selectSkin('night')" aria-label="夜巡霓虹" aria-pressed="false"><span class="skin-symbol night"><svg viewBox="0 0 64 32" aria-hidden="true"><ellipse cx="28" cy="14" rx="14" ry="6"/><circle cx="45" cy="11" r="5"/><path d="M44 7l2-6 5 7 8 3-6 5-4-1-5 4-5-1 6-7zM15 13L5 7l7 1 5 3zM20 18l-5 12h5l6-11zM35 18l4 12h5l-3-13z"/></svg></span><span class="skin-choice-name">夜巡</span></button>
     <button class="skin-choice" data-skin-choice="lcd" onclick="selectSkin('lcd')" aria-label="电子宠物" aria-pressed="false"><span class="skin-symbol lcd">▦ 12.48</span><span class="skin-choice-name">电子宠物</span></button>
     <button class="skin-choice" data-skin-choice="receipt" onclick="selectSkin('receipt')" aria-label="CostDog 小票" aria-pressed="false"><span class="skin-symbol receipt">PAID $12</span><span class="skin-choice-name">小票</span></button>
     <button class="skin-choice" data-skin-choice="race" onclick="selectSkin('race')" aria-label="赛犬遥测" aria-pressed="false"><span class="skin-symbol race">#09 / LAP</span><span class="skin-choice-name">赛犬</span></button>
-  </div></div>
+  </div><div class="theme-controls"><span class="theme-label">界面</span><div class="theme-modes" role="group" aria-label="界面明暗模式"><button class="theme-mode" data-theme-mode="system" onclick="selectThemeMode('system')" aria-pressed="false">跟随系统</button><button class="theme-mode" data-theme-mode="dark" onclick="selectThemeMode('dark')" aria-pressed="false">暗黑</button><button class="theme-mode" data-theme-mode="light" onclick="selectThemeMode('light')" aria-pressed="false">明亮</button></div><label class="accent-control" for="accentpicker">主题色<input class="accent-picker" id="accentpicker" type="color" value="#89b4fa" oninput="selectAccent(this.value,true)" aria-label="选择主题强调色"></label><button class="accent-reset" onclick="resetAccent()" title="恢复默认主题色">重置</button></div></div>
   <div class="tabs">
     <div class="tab on" data-r="today">Today</div>
     <div class="tab" data-r="week">7D</div>
@@ -208,15 +240,41 @@ function fC(n){if(n>=100)return'$'+n.toFixed(0);if(n>=1)return'$'+n.toFixed(2);r
 function fB(n){if(n>=1073741824)return(n/1073741824).toFixed(1)+'GB';if(n>=1048576)return(n/1048576).toFixed(1)+'MB';if(n>=1024)return(n/1024).toFixed(1)+'KB';return n+'B'}
 let statusTimer=null;
 function editStatus(message,isError){const e=document.getElementById('editstatus');e.textContent=message||'';e.classList.toggle('error',!!isError);clearTimeout(statusTimer);if(message)statusTimer=setTimeout(()=>{e.textContent='';e.classList.remove('error')},3000)}
-const SKIN_NAMES={night:'夜巡霓虹',lcd:'电子宠物',receipt:'CostDog 小票',race:'赛犬遥测'};
+const SKIN_NAMES={classic:'经典原版',night:'夜巡霓虹',lcd:'电子宠物',receipt:'CostDog 小票',race:'赛犬遥测'};
+const DEFAULT_ACCENT='#89b4fa';
+const systemTheme=matchMedia('(prefers-color-scheme: light)');
 function applySkin(skin,persist){
-  if(!Object.prototype.hasOwnProperty.call(SKIN_NAMES,skin))skin='night';
+  if(!Object.prototype.hasOwnProperty.call(SKIN_NAMES,skin))skin='classic';
   document.documentElement.dataset.skin=skin;
   document.querySelectorAll('[data-skin-choice]').forEach(choice=>choice.setAttribute('aria-pressed',String(choice.dataset.skinChoice===skin)));
   const skinName=document.getElementById('skinname');if(skinName)skinName.textContent=SKIN_NAMES[skin];
   if(persist){
     try{localStorage.setItem('costdog.barSkin',skin)}catch(error){console.error('Unable to save the bar skin:',error);editStatus('皮肤已切换，但无法保存',true)}
   }
+}
+function resolvedTheme(mode){return mode==='system'?(systemTheme.matches?'light':'dark'):mode}
+function applyThemeMode(mode,persist){
+  if(!['system','dark','light'].includes(mode))mode='system';
+  document.documentElement.dataset.themeMode=mode;
+  document.documentElement.dataset.theme=resolvedTheme(mode);
+  document.querySelectorAll('[data-theme-mode]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.themeMode===mode)));
+  if(persist){
+    try{localStorage.setItem('costdog.themeMode',mode)}catch(error){console.error('Unable to save the theme mode:',error);editStatus('主题已切换，但无法保存',true)}
+  }
+}
+function selectThemeMode(mode){applyThemeMode(mode,true);editStatus('界面模式：'+({system:'跟随系统',dark:'暗黑',light:'明亮'}[mode]||mode),false)}
+function selectAccent(color,persist){
+  if(!/^#[0-9a-f]{6}$/i.test(color||''))return;
+  document.documentElement.style.setProperty('--accent',color);
+  const picker=document.getElementById('accentpicker');if(picker&&picker.value.toLowerCase()!==color.toLowerCase())picker.value=color;
+  if(persist){
+    try{localStorage.setItem('costdog.accent',color)}catch(error){console.error('Unable to save the accent color:',error);editStatus('主题色已应用，但无法保存',true)}
+  }
+}
+function resetAccent(){
+  document.documentElement.style.setProperty('--accent',DEFAULT_ACCENT);
+  const picker=document.getElementById('accentpicker');if(picker)picker.value=DEFAULT_ACCENT;
+  try{localStorage.removeItem('costdog.accent');editStatus('主题色已恢复默认',false)}catch(error){console.error('Unable to reset the accent color:',error);editStatus('主题色已恢复，但无法保存',true)}
 }
 function toggleSkinPanel(force){
   const panel=document.getElementById('skinpanel'),button=document.getElementById('skinbtn');
@@ -384,6 +442,10 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{doc
 document.getElementById('dt').addEventListener('change',e=>{const select=e.target.closest('.catpick');if(select)changeActivityCategory(select)});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')toggleSkinPanel(false)});
 applySkin(document.documentElement.dataset.skin,false);
+applyThemeMode(document.documentElement.dataset.themeMode,false);
+selectAccent(document.documentElement.style.getPropertyValue('--accent').trim()||DEFAULT_ACCENT,false);
+const syncSystemTheme=()=>{if(document.documentElement.dataset.themeMode==='system')applyThemeMode('system',false)};
+if(systemTheme.addEventListener)systemTheme.addEventListener('change',syncSystemTheme);else systemTheme.addListener(syncSystemTheme);
 load();
 </script>
 </body>
