@@ -1,31 +1,112 @@
 <!DOCTYPE html>
-<html>
+<html data-skin="night">
 <head>
 <meta charset="UTF-8">
 <title>CostDog</title>
+<script>
+try{
+  const savedSkin=localStorage.getItem('costdog.barSkin');
+  if(['night','lcd','receipt','race'].includes(savedSkin))document.documentElement.dataset.skin=savedSkin;
+}catch(error){console.warn('Unable to restore the saved bar skin:',error)}
+</script>
 <style>
-:root{--bg:#0f0f17;--bar:#16161e;--card:#1e1e2e;--border:#2a2a3a;--text:#cdd6f4;--dim:#6c7086;--accent:#89b4fa;--green:#a6e3a1;--red:#f38ba8;--yellow:#f9e2af;--purple:#cba6f7}
+:root{--bg:#0f0f17;--bar:#16161e;--card:#1e1e2e;--border:#2a2a3a;--text:#cdd6f4;--dim:#6c7086;--accent:#89b4fa;--green:#a6e3a1;--red:#f38ba8;--yellow:#f9e2af;--purple:#cba6f7;--skin-text:#cdd6f4;--skin-dim:#6c7086;--skin-border:#2a2a3a;--skin-cost:#f38ba8;--skin-token:#f9e2af;--skin-session:#89b4fa}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color:var(--text);overflow:hidden;user-select:none}
-.bar{display:flex;align-items:center;justify-content:space-between;padding:0 10px;height:36px;background:linear-gradient(180deg,var(--bar),var(--bg));border-bottom:1px solid var(--border)}
-.bar-left{display:flex;align-items:center;gap:10px}
-.bar-logo{font-size:12px;color:var(--accent);font-weight:700;overflow:hidden;width:40px;height:24px;position:relative}
-.dog{position:absolute;bottom:0;font-size:18px;animation:walk 3s linear infinite}
+.bar{position:relative;isolation:isolate;overflow:hidden;display:flex;align-items:center;justify-content:space-between;padding:0 10px;height:36px;color:var(--skin-text);background:linear-gradient(180deg,var(--bar),var(--bg));border-bottom:1px solid var(--skin-border);transition:background .18s ease,color .18s ease,border-color .18s ease}
+.bar>*{position:relative;z-index:1}
+.bar-left{display:flex;align-items:center;gap:10px;min-width:0}
+.bar-logo{font-size:12px;color:var(--accent);font-weight:700;overflow:hidden;width:40px;height:24px;position:relative;flex:0 0 auto}
+.dog{position:absolute;bottom:0;font-size:18px}
+.pixel-dog,.brand-mark{display:none}
 @keyframes walk{0%{left:40px}100%{left:-10px}}
-.bar-sep{width:1px;height:14px;background:var(--border)}
+.bar-sep{width:1px;height:14px;background:var(--skin-border);flex:0 0 auto}
 .bar-stat{display:flex;align-items:baseline;gap:4px}
-.bar-lbl{font-size:9px;color:var(--dim);letter-spacing:.5px}
+.bar-lbl{font-size:9px;color:var(--skin-dim);letter-spacing:.5px}
 .bar-val{font-size:12px;font-weight:700}
-.vc{color:var(--red)}.vt{color:var(--yellow)}.vs{color:var(--accent)}
+.vc{color:var(--skin-cost)}.vt{color:var(--skin-token)}.vs{color:var(--skin-session)}
 .bar-right{display:flex;align-items:center;gap:2px}
-.bbtn{background:none;border:1px solid transparent;color:var(--dim);width:24px;height:24px;border-radius:4px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;-webkit-app-region:no-drag}
-.bbtn:hover{color:var(--text);background:var(--card);border-color:var(--border)}
+.bbtn{background:none;border:1px solid transparent;color:var(--skin-dim);width:24px;height:24px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:13px;display:flex;align-items:center;justify-content:center;-webkit-app-region:no-drag}
+.bbtn:hover,.bbtn:focus-visible{color:var(--skin-text);background:rgba(255,255,255,.07);border-color:var(--skin-border);outline:none}
+
+/* Night patrol — deep city light, moving dog and quiet neon statistics. */
+:root[data-skin="night"] .bar{background:radial-gradient(circle at 22% -40%,rgba(137,180,250,.25),transparent 42%),radial-gradient(circle at 76% 140%,rgba(203,166,247,.12),transparent 42%),linear-gradient(180deg,#191928,#0f0f17)}
+:root[data-skin="night"] .bar::before{content:'';position:absolute;inset:0;z-index:0;opacity:.32;background-image:radial-gradient(circle,#cdd6f4 0 1px,transparent 1.2px);background-size:73px 31px;background-position:11px 5px;pointer-events:none}
+:root[data-skin="night"] .dog{animation:walk 3s linear infinite;filter:drop-shadow(0 0 5px rgba(137,180,250,.5))}
+
+/* Pocket LCD — monochrome segmented cells and a true pixel dog. */
+:root[data-skin="lcd"]{--skin-text:#202a19;--skin-dim:#4b5a37;--skin-border:#435032;--skin-cost:#202a19;--skin-token:#202a19;--skin-session:#202a19}
+:root[data-skin="lcd"] .bar{padding:0 7px;font-family:'Courier New',monospace;background:#aebc72;border:2px solid #27311f;box-shadow:inset 0 0 0 2px #d1da98,inset 0 0 14px rgba(45,57,32,.14)}
+:root[data-skin="lcd"] .bar::before{content:'';position:absolute;inset:4px;z-index:0;opacity:.1;background:repeating-linear-gradient(90deg,#26321f 0 1px,transparent 1px 4px),repeating-linear-gradient(0deg,#26321f 0 1px,transparent 1px 4px);pointer-events:none}
+:root[data-skin="lcd"] .bar-left{gap:5px}
+:root[data-skin="lcd"] .bar-logo{width:34px;height:22px;color:#26321f}
+:root[data-skin="lcd"] .dog{display:none}
+:root[data-skin="lcd"] .pixel-dog{display:block;width:32px;height:20px;animation:lcd-pulse 1.3s steps(1,end) infinite}
+:root[data-skin="lcd"] .bar-sep{display:none}
+:root[data-skin="lcd"] .bar-stat{height:24px;align-items:center;gap:3px;padding:1px 5px;border:1px solid #4b5939;background:rgba(224,232,170,.22);box-shadow:inset 1px 1px rgba(236,242,194,.45)}
+:root[data-skin="lcd"] .bar-lbl{font-size:7px;font-weight:700;letter-spacing:0;text-transform:uppercase}
+:root[data-skin="lcd"] .bar-val{font-size:11px;letter-spacing:-.6px;text-shadow:1px 0 rgba(38,50,31,.12)}
+:root[data-skin="lcd"] .bar-right{gap:1px}
+:root[data-skin="lcd"] .bbtn{width:23px;height:23px;color:#26321f;border:1px solid #596741;border-radius:1px;background:rgba(219,229,157,.25);font-weight:700}
+:root[data-skin="lcd"] .bbtn:hover,:root[data-skin="lcd"] .bbtn:focus-visible{background:#26321f;color:#b9c77c;border-color:#26321f}
+@keyframes lcd-pulse{0%,74%{opacity:1;transform:translateY(0)}75%,100%{opacity:.42;transform:translateY(1px)}}
+
+/* Receipt roll — warm thermal paper, ink stamps and perforated edge. */
+:root[data-skin="receipt"]{--skin-text:#211d18;--skin-dim:#71685c;--skin-border:#948776;--skin-cost:#c43d2f;--skin-token:#211d18;--skin-session:#211d18}
+:root[data-skin="receipt"] .bar{padding:0 8px;font-family:'Courier New',monospace;background:repeating-linear-gradient(0deg,rgba(68,58,46,.025) 0 1px,transparent 1px 3px),#f4ecd9;border-bottom:2px dotted #8d7f6d;box-shadow:inset 0 3px #fffaf0}
+:root[data-skin="receipt"] .bar::before{content:'PAID';position:absolute;left:77px;top:7px;z-index:0;color:rgba(196,61,47,.08);font:bold 20px Georgia,serif;letter-spacing:2px;transform:rotate(-7deg);pointer-events:none}
+:root[data-skin="receipt"] .bar-left{gap:7px}
+:root[data-skin="receipt"] .bar-logo{width:50px;height:27px;color:#211d18;overflow:visible}
+:root[data-skin="receipt"] .dog,:root[data-skin="receipt"] .pixel-dog{display:none}
+:root[data-skin="receipt"] .brand-mark{display:flex;flex-direction:column;justify-content:center;height:27px;font-style:normal;line-height:9px;letter-spacing:-.5px}
+:root[data-skin="receipt"] .brand-mark b{font-size:10px}
+:root[data-skin="receipt"] .brand-mark i{font:700 7px 'Courier New',monospace;letter-spacing:2.3px}
+:root[data-skin="receipt"] .bar-sep{height:23px;border-left:1px dashed #948776;background:transparent}
+:root[data-skin="receipt"] .bar-stat{display:grid;grid-template-columns:auto;gap:0;line-height:10px}
+:root[data-skin="receipt"] .bar-lbl{font-size:7px;letter-spacing:0;text-transform:uppercase}
+:root[data-skin="receipt"] .bar-val{font-size:11px;letter-spacing:-.45px}
+:root[data-skin="receipt"] .vc{font-size:13px}
+:root[data-skin="receipt"] .bbtn{width:22px;height:22px;color:#71685c;border-radius:0;border-left:1px dashed #948776}
+:root[data-skin="receipt"] .bbtn:hover,:root[data-skin="receipt"] .bbtn:focus-visible{color:#f4ecd9;background:#211d18;border-color:#211d18}
+
+/* Race telemetry — track markings, aggressive slants and sprinting mascot. */
+:root[data-skin="race"]{--skin-text:#f7f5ef;--skin-dim:#9fa5a9;--skin-border:#ffca3a;--skin-cost:#ff5f56;--skin-token:#ffca3a;--skin-session:#72e6d1}
+:root[data-skin="race"] .bar{padding:0 8px;font-family:'Arial Narrow','Roboto Condensed',sans-serif;font-stretch:condensed;background:linear-gradient(104deg,#111417 0 48%,#181d21 48% 100%);border-bottom:3px solid #ffca3a;box-shadow:inset 0 1px rgba(255,255,255,.07)}
+:root[data-skin="race"] .bar::before{content:'';position:absolute;left:0;right:0;bottom:2px;height:3px;z-index:0;background:repeating-linear-gradient(90deg,rgba(255,255,255,.45) 0 12px,transparent 12px 24px);opacity:.34;pointer-events:none}
+:root[data-skin="race"] .bar-left{gap:7px}
+:root[data-skin="race"] .bar-logo{width:48px;height:25px;color:#ffca3a}
+:root[data-skin="race"] .dog{bottom:2px;animation:race-run 1.8s cubic-bezier(.45,0,.55,1) infinite;filter:grayscale(.25) saturate(1.3)}
+:root[data-skin="race"] .bar-sep{width:3px;height:20px;background:#ffca3a;transform:skewX(-15deg)}
+:root[data-skin="race"] .bar-stat{display:grid;gap:0;line-height:10px;transform:skewX(-5deg)}
+:root[data-skin="race"] .bar-lbl{font-size:7px;font-weight:800;letter-spacing:.8px}
+:root[data-skin="race"] .bar-val{font-size:12px;font-style:italic;letter-spacing:.2px}
+:root[data-skin="race"] .bar-right{gap:2px}
+:root[data-skin="race"] .bbtn{width:22px;height:22px;color:#ffca3a;border:1px solid #343b40;border-radius:0;background:#171b1e;font-weight:800}
+:root[data-skin="race"] .bbtn:hover,:root[data-skin="race"] .bbtn:focus-visible{color:#111417;background:#ffca3a;border-color:#ffca3a}
+@keyframes race-run{0%{left:-12px;transform:rotate(-2deg)}50%{transform:rotate(2deg)}100%{left:48px;transform:rotate(-2deg)}}
+
+@media(prefers-reduced-motion:reduce){.dog,.pixel-dog{animation:none!important}.dog{left:8px!important}.bar{transition:none}}
 .detail{display:none;padding:12px;overflow-y:auto;height:calc(100vh - 36px)}
 .detail.show{display:block}
 .dh{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .dt{font-size:12px;color:var(--dim);font-weight:600}
 .xb{background:none;border:none;color:var(--dim);font-size:16px;cursor:pointer;padding:2px 6px;border-radius:3px}
 .xb:hover{color:var(--red)}
+.skin-trigger{width:25px;height:23px;margin-left:5px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--dim);font-size:12px;cursor:pointer;flex:0 0 auto}
+.skin-trigger:hover,.skin-trigger:focus-visible,.skin-trigger[aria-expanded="true"]{color:var(--accent);border-color:var(--accent);outline:none}
+.skin-panel{display:none;grid-template-columns:1fr 1fr;gap:6px;margin:-2px 0 10px;padding:7px;background:#13131d;border:1px solid var(--border);border-radius:7px}
+.skin-panel.show{display:grid}
+.skin-choice{min-width:0;padding:5px;border:1px solid var(--border);border-radius:5px;background:var(--card);color:var(--text);font-family:inherit;cursor:pointer;text-align:left}
+.skin-choice:hover,.skin-choice:focus-visible{border-color:var(--dim);outline:none;transform:translateY(-1px)}
+.skin-choice[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 1px rgba(137,180,250,.22)}
+.skin-preview{display:flex;align-items:center;justify-content:space-between;height:27px;margin-bottom:4px;padding:0 6px;overflow:hidden;font-size:8px;white-space:nowrap}
+.skin-choice-name{display:flex;align-items:center;justify-content:space-between;font-size:9px;color:var(--dim)}
+.skin-choice[aria-pressed="true"] .skin-choice-name{color:var(--accent)}
+.skin-preview.night{color:#f6d8e5;background:radial-gradient(circle at 25% 0,rgba(137,180,250,.45),transparent 42%),linear-gradient(180deg,#24243a,#101018);border-bottom:1px solid #89b4fa}
+.skin-preview.lcd{color:#26321f;background:#aebc72;border:2px solid #303b26;box-shadow:inset 0 0 0 1px #d1da98;font-family:'Courier New',monospace}
+.skin-preview.receipt{color:#211d18;background:repeating-linear-gradient(0deg,rgba(68,58,46,.04) 0 1px,transparent 1px 3px),#f4ecd9;border-bottom:2px dotted #948776;font-family:'Courier New',monospace}
+.skin-preview.receipt strong{color:#c43d2f}
+.skin-preview.race{color:#ffca3a;background:linear-gradient(105deg,#111417 0 55%,#242a2f 55%);border-bottom:3px solid #ffca3a;font-family:'Arial Narrow',sans-serif;font-style:italic;font-weight:800}
 .tabs{display:flex;gap:2px;margin-bottom:10px}
 .tab{padding:4px 10px;background:transparent;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--dim);font-size:10px;font-family:inherit}
 .tab.on{background:var(--card);color:var(--accent);border-color:var(--accent)}
@@ -68,7 +149,14 @@ tr:hover{background:rgba(137,180,250,.03)}
 <body>
 <div class="bar">
   <div class="bar-left">
-    <span class="bar-logo"><span class="dog">🐕</span></span>
+    <span class="bar-logo">
+      <span class="dog" aria-hidden="true">🐕</span>
+      <svg class="pixel-dog" viewBox="0 0 32 20" aria-hidden="true">
+        <path fill="currentColor" d="M3 5h5v3h3v2H8V8H3zM8 8h14v8H8zM21 5h7v8h-7zM23 3h4v3h-4zM10 15h4v5h-4zM19 15h4v5h-4z"/>
+        <rect x="25" y="7" width="2" height="2" fill="#aebc72"/>
+      </svg>
+      <span class="brand-mark"><b>COST</b><i>DOG</i></span>
+    </span>
     <div class="bar-sep"></div>
     <div class="bar-stat"><span class="bar-lbl" id="bl">TODAY</span><span class="bar-val vc" id="bc">$0</span></div>
     <div class="bar-sep"></div>
@@ -84,7 +172,13 @@ tr:hover{background:rgba(137,180,250,.03)}
   </div>
 </div>
 <div class="detail" id="detail">
-  <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><span class="edit-status" id="editstatus"></span><button class="xb" onclick="toggle()">&#x2715;</button></div>
+  <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><span class="edit-status" id="editstatus"></span><button class="skin-trigger" id="skinbtn" onclick="toggleSkinPanel()" aria-expanded="false" aria-controls="skinpanel" title="选择 Bar 皮肤">◈</button><button class="xb" onclick="toggle()">&#x2715;</button></div>
+  <div class="skin-panel" id="skinpanel" aria-label="Bar 皮肤">
+    <button class="skin-choice" data-skin-choice="night" onclick="selectSkin('night')" aria-pressed="false"><span class="skin-preview night"><span>🐕 ···</span><strong>$12.48</strong><span>182K</span></span><span class="skin-choice-name"><span>夜巡霓虹</span><span>巡逻</span></span></button>
+    <button class="skin-choice" data-skin-choice="lcd" onclick="selectSkin('lcd')" aria-pressed="false"><span class="skin-preview lcd"><span>▦ DOG</span><strong>[12.48]</strong><span>09</span></span><span class="skin-choice-name"><span>电子宠物</span><span>LCD</span></span></button>
+    <button class="skin-choice" data-skin-choice="receipt" onclick="selectSkin('receipt')" aria-pressed="false"><span class="skin-preview receipt"><span>CD#0717</span><strong>$12.48</strong><span>PAID</span></span><span class="skin-choice-name"><span>CostDog 小票</span><span>纸张</span></span></button>
+    <button class="skin-choice" data-skin-choice="race" onclick="selectSkin('race')" aria-pressed="false"><span class="skin-preview race"><span>🐕━━</span><strong>12.48</strong><span>RUN 09</span></span><span class="skin-choice-name"><span>赛犬遥测</span><span>赛道</span></span></button>
+  </div>
   <div class="tabs">
     <div class="tab on" data-r="today">Today</div>
     <div class="tab" data-r="week">7D</div>
@@ -124,6 +218,21 @@ function fC(n){if(n>=100)return'$'+n.toFixed(0);if(n>=1)return'$'+n.toFixed(2);r
 function fB(n){if(n>=1073741824)return(n/1073741824).toFixed(1)+'GB';if(n>=1048576)return(n/1048576).toFixed(1)+'MB';if(n>=1024)return(n/1024).toFixed(1)+'KB';return n+'B'}
 let statusTimer=null;
 function editStatus(message,isError){const e=document.getElementById('editstatus');e.textContent=message||'';e.classList.toggle('error',!!isError);clearTimeout(statusTimer);if(message)statusTimer=setTimeout(()=>{e.textContent='';e.classList.remove('error')},3000)}
+const SKIN_NAMES={night:'夜巡霓虹',lcd:'电子宠物',receipt:'CostDog 小票',race:'赛犬遥测'};
+function applySkin(skin,persist){
+  if(!Object.prototype.hasOwnProperty.call(SKIN_NAMES,skin))skin='night';
+  document.documentElement.dataset.skin=skin;
+  document.querySelectorAll('[data-skin-choice]').forEach(choice=>choice.setAttribute('aria-pressed',String(choice.dataset.skinChoice===skin)));
+  if(persist){
+    try{localStorage.setItem('costdog.barSkin',skin)}catch(error){console.error('Unable to save the bar skin:',error);editStatus('皮肤已切换，但无法保存',true)}
+  }
+}
+function toggleSkinPanel(force){
+  const panel=document.getElementById('skinpanel'),button=document.getElementById('skinbtn');
+  const show=typeof force==='boolean'?force:!panel.classList.contains('show');
+  panel.classList.toggle('show',show);button.setAttribute('aria-expanded',String(show));
+}
+function selectSkin(skin){applySkin(skin,true);toggleSkinPanel(false);editStatus('已切换：'+SKIN_NAMES[skin],false)}
 function toggle(){
   open=!open;
   document.getElementById('detail').classList.toggle('show',open);
@@ -283,6 +392,8 @@ tauriListen('update-progress',function(e){var p=(e&&e.payload!=null)?e.payload:e
 
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');R=t.dataset.r;render()}));
 document.getElementById('dt').addEventListener('change',e=>{const select=e.target.closest('.catpick');if(select)changeActivityCategory(select)});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')toggleSkinPanel(false)});
+applySkin(document.documentElement.dataset.skin,false);
 load();
 </script>
 </body>
