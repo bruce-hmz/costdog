@@ -1,37 +1,139 @@
 <!DOCTYPE html>
-<html>
+<html data-skin="classic" data-theme-mode="system" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <title>CostDog</title>
+<script>
+try{
+  const savedSkin=localStorage.getItem('costdog.barSkin');
+  const savedTheme=localStorage.getItem('costdog.themeMode');
+  const savedAccent=localStorage.getItem('costdog.accent');
+  if(['classic','night','lcd','receipt','race'].includes(savedSkin))document.documentElement.dataset.skin=savedSkin;
+  if(['system','dark','light'].includes(savedTheme))document.documentElement.dataset.themeMode=savedTheme;
+  const themeMode=document.documentElement.dataset.themeMode;
+  document.documentElement.dataset.theme=themeMode==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):themeMode;
+  if(/^#[0-9a-f]{6}$/i.test(savedAccent||''))document.documentElement.style.setProperty('--accent',savedAccent);
+}catch(error){console.warn('Unable to restore appearance settings:',error)}
+</script>
 <style>
-:root{--bg:#0f0f17;--bar:#16161e;--card:#1e1e2e;--border:#2a2a3a;--text:#cdd6f4;--dim:#6c7086;--accent:#89b4fa;--green:#a6e3a1;--red:#f38ba8;--yellow:#f9e2af;--purple:#cba6f7}
+:root{color-scheme:dark;--bg:#0f0f17;--bar:#16161e;--card:#1e1e2e;--panel:#13131d;--choice:#191925;--choice-on:#202034;--border:#2a2a3a;--text:#cdd6f4;--dim:#7f849c;--accent:#89b4fa;--accent-soft:color-mix(in srgb,var(--accent) 12%,transparent);--green:#a6e3a1;--red:#f38ba8;--yellow:#f9e2af;--purple:#cba6f7;--skin-text:#cdd6f4;--skin-dim:#6c7086;--skin-border:#2a2a3a;--skin-cost:#f38ba8;--skin-token:#f9e2af;--skin-session:#89b4fa}
+:root[data-theme="light"]{color-scheme:light;--bg:#f5f7fb;--bar:#ffffff;--card:#ffffff;--panel:#eef1f7;--choice:#ffffff;--choice-on:color-mix(in srgb,var(--accent) 10%,#fff);--border:#d9deea;--text:#202533;--dim:#687083;--green:#26845b;--red:#c63c55;--yellow:#9a6a00;--purple:#7856ad}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color:var(--text);overflow:hidden;user-select:none}
-.bar{display:flex;align-items:center;justify-content:space-between;padding:0 10px;height:36px;background:linear-gradient(180deg,var(--bar),var(--bg));border-bottom:1px solid var(--border)}
-.bar-left{display:flex;align-items:center;gap:10px}
-.bar-logo{font-size:12px;color:var(--accent);font-weight:700;overflow:hidden;width:40px;height:24px;position:relative}
-.dog{position:absolute;bottom:0;font-size:18px;animation:walk 3s linear infinite}
-@keyframes walk{0%{left:40px}100%{left:-10px}}
-.bar-sep{width:1px;height:14px;background:var(--border)}
-.bar-stat{display:flex;align-items:baseline;gap:4px}
-.bar-lbl{font-size:9px;color:var(--dim);letter-spacing:.5px}
-.bar-val{font-size:12px;font-weight:700}
-.vc{color:var(--red)}.vt{color:var(--yellow)}.vs{color:var(--accent)}
-.bar-right{display:flex;align-items:center;gap:2px}
-.bbtn{background:none;border:1px solid transparent;color:var(--dim);width:24px;height:24px;border-radius:4px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;-webkit-app-region:no-drag}
-.bbtn:hover{color:var(--text);background:var(--card);border-color:var(--border)}
+.bar{position:relative;overflow:hidden;width:410px;height:36px;background:var(--bar);-webkit-app-region:no-drag}
+.bar-face{display:none;align-items:center;width:100%;height:36px;overflow:hidden}
+:root[data-skin="classic"] .face-classic,:root[data-skin="night"] .face-night,:root[data-skin="lcd"] .face-lcd,:root[data-skin="receipt"] .face-receipt,:root[data-skin="race"] .face-race{display:flex}
+.face-actions{display:flex;align-items:center;margin-left:auto;flex:0 0 auto}
+.bbtn{display:flex;align-items:center;justify-content:center;width:23px;height:23px;border:1px solid transparent;background:none;color:inherit;font-family:inherit;font-size:12px;cursor:pointer;-webkit-app-region:no-drag}
+.bbtn:focus-visible{outline:1px solid currentColor;outline-offset:1px}
+.dog-art{display:block;overflow:visible;fill:currentColor}
+
+/* Classic: the original CostDog bar, preserved as the calm default. */
+.face-classic{justify-content:space-between;padding:0 7px 0 10px;color:var(--text);background:linear-gradient(180deg,var(--bar),var(--bg));border-bottom:1px solid var(--border);font-family:'Cascadia Code','Consolas',monospace}
+.classic-left{display:flex;align-items:center;gap:9px;min-width:0}
+.classic-logo{position:relative;width:40px;height:24px;overflow:hidden;flex:0 0 auto;color:var(--accent)}
+.classic-dog{position:absolute;bottom:0;font-size:18px;animation:classic-walk 3s linear infinite}
+.classic-sep{width:1px;height:14px;background:var(--border);flex:0 0 auto}
+.classic-stat{display:flex;align-items:baseline;gap:4px;white-space:nowrap}.classic-stat span{color:var(--dim);font-size:9px;letter-spacing:.5px}.classic-stat strong{font-size:12px}
+.classic-cost{color:var(--red)}.classic-token{color:var(--yellow)}.classic-session{color:var(--accent)}
+.face-classic .face-actions{gap:2px}.face-classic .bbtn{width:24px;height:24px;color:var(--dim);border-radius:4px}.face-classic .bbtn:hover{color:var(--text);background:var(--card);border-color:var(--border)}
+@keyframes classic-walk{0%{left:40px}100%{left:-10px}}
+
+/* Night patrol: cost is the moon, secondary readings are radio chatter. */
+.face-night{position:relative;padding:0 7px 0 8px;color:#d7eaff;background:radial-gradient(circle at 43px 17px,rgba(151,211,255,.22) 0 12px,transparent 13px),linear-gradient(90deg,#06111b,#0b1c29 52%,#071019);border-bottom:1px solid #28465b;font-family:'Avenir Next Condensed','Arial Narrow',sans-serif}
+.face-night::before{content:'';position:absolute;inset:0;opacity:.32;background:radial-gradient(circle,#9dd7ff 0 1px,transparent 1.3px) 13px 5px/89px 29px;pointer-events:none}
+.night-mark{position:relative;width:61px;height:32px;color:#9fd8ff;flex:0 0 auto}
+.night-mark .dog-art{position:absolute;left:3px;top:6px;width:48px;height:23px;animation:night-breathe 2.8s ease-in-out infinite}
+.night-mark::after{content:'NIGHT WATCH';position:absolute;left:1px;bottom:1px;color:#6d9ab8;font:600 5px 'Avenir Next Condensed',sans-serif;letter-spacing:1.25px}
+.night-primary{display:flex;align-items:baseline;gap:5px;height:27px;padding:3px 9px 0 8px;border-left:1px solid #28465b}
+.night-primary span{color:#6f9ab5;font-size:7px;letter-spacing:1.2px}
+.night-primary strong{color:#ffb15c;font:700 16px 'Avenir Next Condensed','Arial Narrow',sans-serif;letter-spacing:.2px;text-shadow:0 0 9px rgba(255,177,92,.25)}
+.night-radio{display:grid;grid-template-columns:auto auto;gap:0 9px;align-items:center;padding-right:5px;color:#668da7;font-size:6px;letter-spacing:.8px;text-transform:uppercase}
+.night-radio b{display:block;color:#c4e6fa;font-size:10px;letter-spacing:.1px}
+.face-night .bbtn{color:#6f9ab5;border-left:1px solid #20394b}
+.face-night .bbtn:hover{color:#071019;background:#9fd8ff}
+@keyframes night-breathe{0%,100%{transform:translateY(0);filter:drop-shadow(0 0 2px rgba(159,216,255,.2))}50%{transform:translateY(-1px);filter:drop-shadow(0 0 5px rgba(159,216,255,.55))}}
+
+/* Pocket LCD: one screen, one pixel pet, physical keys. */
+.face-lcd{padding:2px 4px;color:#202a19;background:#6f784b;border:2px solid #27311f;font-family:'Courier New',monospace;box-shadow:inset 0 0 0 1px #cbd58f}
+.lcd-screen{display:flex;align-items:center;height:28px;min-width:0;flex:1;background:repeating-linear-gradient(90deg,rgba(32,42,25,.045) 0 1px,transparent 1px 4px),#adbb72;border:1px solid #3f4c30;box-shadow:inset 1px 1px #d7dfa1}
+.lcd-pet{width:42px;height:25px;padding:2px 5px;border-right:1px solid #53613d;flex:0 0 auto}
+.lcd-pet .dog-art{width:31px;height:20px;animation:lcd-blink 1.4s steps(1,end) infinite}
+.lcd-main{display:grid;grid-template-columns:auto auto;align-items:baseline;gap:0 4px;padding:0 7px;white-space:nowrap}
+.lcd-main span{font-size:6px;letter-spacing:.5px}.lcd-main strong{font-size:13px;letter-spacing:-1px}
+.lcd-sub{display:grid;grid-template-columns:auto auto;gap:0 7px;margin-left:auto;padding:0 7px;border-left:1px solid #53613d;font-size:6px;text-transform:uppercase}
+.lcd-sub b{display:block;font-size:9px;letter-spacing:-.5px}
+.lcd-keys{display:flex;gap:2px;margin-left:3px}
+.face-lcd .bbtn{width:22px;height:25px;color:#26321f;border:1px solid #3f4c30;background:#9daa68;border-radius:2px;box-shadow:inset 1px 1px #cbd58f,1px 1px #202a19;font-weight:700}
+.face-lcd .bbtn:hover{color:#b7c47c;background:#26321f}
+@keyframes lcd-blink{0%,84%{opacity:1}85%,100%{opacity:.18}}
+
+/* Daily receipt: brand, total and line items read like an actual thermal slip. */
+.face-receipt{position:relative;padding:0 5px 0 7px;color:#211d18;background:repeating-linear-gradient(0deg,rgba(68,58,46,.028) 0 1px,transparent 1px 3px),#f4ecd9;border-top:2px solid #fffaf0;border-bottom:2px dotted #8d7f6d;font-family:'Courier New',monospace}
+.receipt-brand{display:flex;align-items:center;gap:4px;width:72px;flex:0 0 auto}
+.receipt-paw{width:19px;height:19px;color:#211d18}
+.receipt-brand-name{font-size:8px;font-weight:800;line-height:7px}.receipt-brand-name small{display:block;font-size:5px;font-weight:400;letter-spacing:.8px}
+.receipt-total{display:grid;grid-template-columns:auto;line-height:11px;padding:0 12px 0 9px;border-left:1px dashed #9c8e7c;border-right:1px dashed #9c8e7c}
+.receipt-total span{color:#776c5f;font-size:6px;letter-spacing:1px}.receipt-total strong{color:#bd382d;font:700 14px 'Courier New',monospace;letter-spacing:-1px}
+.receipt-lines{display:grid;grid-template-columns:auto auto;gap:0 9px;padding:0 8px;color:#72685c;font-size:5px;line-height:8px}
+.receipt-lines b{display:block;color:#211d18;font-size:9px;letter-spacing:-.5px}
+.face-receipt .bbtn{width:21px;height:25px;color:#51483e;border-left:1px dashed #9c8e7c}
+.face-receipt .bbtn:hover{color:#f4ecd9;background:#211d18}
+
+/* Race telemetry: session count becomes the bib, cost is lap time, tokens are distance. */
+.face-race{position:relative;padding:0 5px;color:#f8f4e8;background:linear-gradient(105deg,#0d1012 0 58%,#181d20 58%);border-bottom:3px solid #ffca3a;font-family:'DIN Condensed','Arial Narrow',sans-serif}
+.face-race::after{content:'';position:absolute;left:0;right:0;bottom:1px;height:2px;opacity:.35;background:repeating-linear-gradient(90deg,#f8f4e8 0 15px,transparent 15px 29px);pointer-events:none}
+.race-runner{position:relative;width:70px;height:31px;color:#ffca3a;flex:0 0 auto;border-right:4px solid #ffca3a;transform:skewX(-10deg)}
+.race-runner .dog-art{position:absolute;left:3px;top:4px;width:50px;height:22px;animation:race-surge 1.6s ease-in-out infinite}
+.race-bib{position:absolute;right:4px;top:2px;color:#101315;background:#ffca3a;font-size:7px;font-weight:900;padding:1px 2px}
+.race-telemetry{display:flex;align-items:center;gap:9px;padding:0 10px;transform:skewX(-7deg)}
+.race-metric{display:grid;line-height:10px}.race-metric span{color:#8e989e;font-size:6px;font-weight:800;letter-spacing:1px}.race-metric strong{font-size:12px;font-style:italic;letter-spacing:.2px}.race-metric.cost strong{color:#ff625b;font-size:15px}.race-metric.distance strong{color:#ffca3a}
+.race-track{position:relative;align-self:stretch;min-width:38px;flex:1;border-left:1px solid #333a3e;background:repeating-linear-gradient(90deg,transparent 0 16px,rgba(255,202,58,.08) 16px 17px)}
+.race-track::before{content:'LIVE';position:absolute;right:5px;top:5px;color:#ffca3a;font-size:5px;font-weight:900;letter-spacing:1px}
+.race-track::after{content:'';position:absolute;left:5px;right:5px;top:20px;border-top:1px dashed #667078}
+.face-race .bbtn{width:22px;height:24px;color:#ffca3a;border:1px solid #333a3e;background:#14181b;font-weight:900}
+.face-race .bbtn:hover{color:#101315;background:#ffca3a;border-color:#ffca3a}
+@keyframes race-surge{0%,100%{transform:translateX(0) rotate(-2deg)}50%{transform:translateX(7px) rotate(2deg)}}
+
+@media(prefers-reduced-motion:reduce){.dog-art,.classic-dog{animation:none!important}.classic-dog{left:10px}}
 .detail{display:none;padding:12px;overflow-y:auto;height:calc(100vh - 36px)}
 .detail.show{display:block}
 .dh{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .dt{font-size:12px;color:var(--dim);font-weight:600}
 .xb{background:none;border:none;color:var(--dim);font-size:16px;cursor:pointer;padding:2px 6px;border-radius:3px}
 .xb:hover{color:var(--red)}
+.skin-trigger{width:25px;height:23px;margin-left:5px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--dim);font-size:12px;cursor:pointer;flex:0 0 auto}
+.skin-trigger:hover,.skin-trigger:focus-visible,.skin-trigger[aria-expanded="true"]{color:var(--accent);border-color:var(--accent);outline:none}
+.skin-panel{display:none;margin:-2px 0 10px;padding:7px;background:var(--panel);border:1px solid var(--border);border-radius:7px}
+.skin-panel.show{display:block}
+.skin-panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;color:var(--dim);font-size:8px;letter-spacing:1px;text-transform:uppercase}
+.skin-panel-head strong{color:var(--text);font-size:10px;letter-spacing:0;text-transform:none}
+.skin-rail{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
+.skin-choice{min-width:0;height:52px;padding:5px 3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--choice);color:var(--dim);font-family:inherit;cursor:pointer;text-align:center}
+.skin-choice:hover,.skin-choice:focus-visible{color:var(--text);border-color:var(--dim);outline:none;transform:translateY(-1px)}
+.skin-choice[aria-pressed="true"]{color:var(--accent);border-color:var(--accent);background:var(--choice-on);box-shadow:inset 0 -2px var(--accent)}
+.skin-symbol{display:flex;align-items:center;justify-content:center;height:25px;margin-bottom:3px;font-size:12px;font-weight:800}
+.skin-symbol svg{width:32px;height:18px;fill:currentColor}
+.skin-symbol.classic{gap:3px;color:var(--accent);background:linear-gradient(180deg,var(--bar),var(--bg));border:1px solid var(--border);font-size:11px}.skin-symbol.classic::after{content:'$12';color:var(--red);font-size:8px}.skin-symbol.night{color:#9fd8ff;background:#07131e}.skin-symbol.lcd{color:#26321f;background:#adbb72;border:1px solid #4b5838;font:700 10px 'Courier New',monospace}.skin-symbol.receipt{color:#bd382d;background:#f4ecd9;border-bottom:1px dotted #8d7f6d;font:700 9px 'Courier New',monospace}.skin-symbol.race{color:#ffca3a;background:#111518;border-bottom:2px solid #ffca3a;font:900 italic 10px 'Arial Narrow',sans-serif}
+.skin-choice-name{font-size:8px;white-space:nowrap}
+.theme-controls{display:flex;align-items:center;gap:6px;margin-top:7px;padding-top:7px;border-top:1px solid var(--border)}
+.theme-label{color:var(--dim);font-size:8px;letter-spacing:.7px;text-transform:uppercase}
+.theme-modes{display:flex;gap:2px}.theme-mode{height:24px;padding:0 7px;border:1px solid var(--border);border-radius:3px;background:var(--choice);color:var(--dim);font:inherit;font-size:9px;cursor:pointer}.theme-mode:hover,.theme-mode:focus-visible{color:var(--text);outline:none}.theme-mode[aria-pressed="true"]{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
+.accent-control{display:flex;align-items:center;gap:4px;margin-left:auto;color:var(--dim);font-size:8px}.accent-picker{width:27px;height:24px;padding:2px;border:1px solid var(--border);border-radius:4px;background:var(--choice);cursor:pointer}.accent-picker::-webkit-color-swatch-wrapper{padding:0}.accent-picker::-webkit-color-swatch{border:0;border-radius:2px}.accent-reset{height:24px;padding:0 6px;border:1px solid var(--border);border-radius:3px;background:transparent;color:var(--dim);font:inherit;font-size:9px;cursor:pointer}.accent-reset:hover,.accent-reset:focus-visible{color:var(--accent);border-color:var(--accent);outline:none}
 .tabs{display:flex;gap:2px;margin-bottom:10px}
 .tab{padding:4px 10px;background:transparent;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--dim);font-size:10px;font-family:inherit}
 .tab.on{background:var(--card);color:var(--accent);border-color:var(--accent)}
 .alert{padding:6px 10px;border-radius:4px;margin-bottom:6px;font-size:11px}
 .aw{background:rgba(249,226,175,.08);border:1px solid rgba(249,226,175,.2);color:var(--yellow)}
 .ad{background:rgba(243,139,168,.08);border:1px solid rgba(243,139,168,.2);color:var(--red)}
+.alert-dismiss{float:right;border:0;background:transparent;color:inherit;cursor:pointer;font:inherit}
+.insight{margin-bottom:8px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card)}
+.insight-title{color:var(--dim);font-size:9px;text-transform:uppercase;letter-spacing:.5px}
+.quality-line,.budget-line{display:flex;justify-content:space-between;gap:8px;margin-top:5px;font-size:10px}
+.budget-controls{display:flex;gap:5px;margin-top:7px}.budget-controls input{min-width:0;flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--panel);color:var(--text);font:inherit}.budget-controls button{padding:4px 7px;border:1px solid var(--accent);border-radius:4px;background:var(--accent-soft);color:var(--accent);font:inherit;cursor:pointer}
+.trend-svg{display:block;width:100%;height:92px;margin-top:4px}.trend-line{fill:none;stroke:var(--accent);stroke-width:2}.trend-area{fill:var(--accent-soft)}
+.contribution{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);font-size:10px}.contribution:last-child{border-bottom:0}.up{color:var(--red)}.down{color:var(--green)}
+.source-row{display:grid;grid-template-columns:70px 1fr auto;gap:6px;padding:4px 0;font-size:9px;border-bottom:1px solid var(--border)}.source-error{color:var(--red)}
 .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px}
 .sc{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 10px;position:relative;overflow:hidden}
 .sc::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
@@ -46,10 +148,16 @@ body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color
 .mc{font-weight:700}.ml{color:var(--dim);font-size:10px;margin-left:6px}
 table{width:100%;border-collapse:collapse;font-size:10px}
 th{text-align:left;padding:5px 6px;color:var(--dim);border-bottom:1px solid var(--border);font-size:9px;text-transform:uppercase;letter-spacing:.5px}
-td{padding:4px 6px;border-bottom:1px solid rgba(42,42,58,.5)}
-tr:hover{background:rgba(137,180,250,.03)}
+td{padding:4px 6px;border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent)}
+tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
 .badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700}
 .bcc{background:rgba(137,180,250,.12);color:var(--accent)}.bcx{background:rgba(166,227,161,.12);color:var(--green)}.bzc{background:rgba(200,160,255,.14);color:#b78cff}.boc{background:rgba(255,190,120,.14);color:#ffb878}
+.catpick{width:34px;height:22px;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text);font-family:inherit;font-size:11px;cursor:pointer;-webkit-app-region:no-drag}
+.catpick:hover,.catpick:focus{background:var(--card);border-color:var(--border);outline:none}
+.catpick.manual{border-color:var(--accent);background:var(--accent-soft)}
+.catpick:disabled{cursor:wait;opacity:.55}
+.edit-status{min-width:0;flex:1;margin-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;font-size:9px;color:var(--green)}
+.edit-status.error{color:var(--red)}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 .cat{display:flex;gap:10px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px}
 .cr{display:flex;align-items:center;gap:5px;font-size:10px;padding:2px 0;white-space:nowrap}
@@ -61,24 +169,46 @@ tr:hover{background:rgba(137,180,250,.03)}
 </head>
 <body>
 <div class="bar">
-  <div class="bar-left">
-    <span class="bar-logo"><span class="dog">🐕</span></span>
-    <div class="bar-sep"></div>
-    <div class="bar-stat"><span class="bar-lbl" id="bl">TODAY</span><span class="bar-val vc" id="bc">$0</span></div>
-    <div class="bar-sep"></div>
-    <div class="bar-stat"><span class="bar-lbl">TOK</span><span class="bar-val vt" id="bt">0</span></div>
-    <div class="bar-sep"></div>
-    <div class="bar-stat"><span class="bar-lbl">SESS</span><span class="bar-val vs" id="bs">0</span></div>
-    <div class="bar-sep"></div>
-    <button class="bbtn" onclick="doScan()" id="sb" title="Refresh">&#x21bb;</button>
-    <button class="bbtn" onclick="toggle()" title="Details">&#x25BC;</button>
+  <div class="bar-face face-classic">
+    <div class="classic-left">
+      <span class="classic-logo"><span class="classic-dog">🐕</span></span><span class="classic-sep"></span>
+      <span class="classic-stat"><span data-bar-range>TODAY</span><strong class="classic-cost" data-bar-cost>$0</strong></span><span class="classic-sep"></span>
+      <span class="classic-stat"><span>TOK</span><strong class="classic-token" data-bar-tokens>0</strong></span><span class="classic-sep"></span>
+      <span class="classic-stat"><span>SESS</span><strong class="classic-session" data-bar-sessions>0</strong></span><span class="classic-sep"></span>
+    </div>
+    <div class="face-actions"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">↻</button><button class="bbtn" onclick="toggle()" title="Details">▼</button><button class="bbtn" onclick="closeWindow()" title="Close">×</button></div>
   </div>
-  <div class="bar-right">
-    <button class="bbtn" onclick="closeWindow()" title="Close">&#x2715;</button>
+  <div class="bar-face face-night">
+    <div class="night-mark"><svg class="dog-art" viewBox="0 0 64 32" aria-hidden="true"><ellipse cx="28" cy="14" rx="14" ry="6"/><circle cx="45" cy="11" r="5"/><path d="M44 7l2-6 5 7 8 3-6 5-4-1-5 4-5-1 6-7zM15 13L5 7l7 1 5 3zM20 18l-5 12h5l6-11zM35 18l4 12h5l-3-13z"/></svg></div>
+    <div class="night-primary"><span data-bar-range>TODAY</span><strong data-bar-cost>$0</strong></div>
+    <div class="night-radio"><span><b data-bar-tokens>0</b>tokens</span><span><b data-bar-sessions>0</b>runs</span></div>
+    <div class="face-actions"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">↻</button><button class="bbtn" onclick="toggle()" title="Details">⌄</button><button class="bbtn" onclick="closeWindow()" title="Close">×</button></div>
+  </div>
+  <div class="bar-face face-lcd">
+    <div class="lcd-screen"><div class="lcd-pet"><svg class="dog-art" viewBox="0 0 32 20" aria-hidden="true"><path d="M3 5h5v3h3v2H8V8H3zM8 8h14v8H8zM21 5h7v8h-7zM23 3h4v3h-4zM10 15h4v5h-4zM19 15h4v5h-4z"/></svg></div><div class="lcd-main"><span data-bar-range>TODAY</span><strong data-bar-cost>$0</strong></div><div class="lcd-sub"><span><b data-bar-tokens>0</b>TOK</span><span><b data-bar-sessions>0</b>DAY</span></div></div>
+    <div class="lcd-keys"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">R</button><button class="bbtn" onclick="toggle()" title="Details">D</button><button class="bbtn" onclick="closeWindow()" title="Close">X</button></div>
+  </div>
+  <div class="bar-face face-receipt">
+    <div class="receipt-brand"><svg class="receipt-paw" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="7" r="3"/><circle cx="12" cy="4" r="3"/><circle cx="18" cy="7" r="3"/><path d="M5 17c0-5 3-8 7-8s7 3 7 8c0 3-3 4-7 2-4 2-7 1-7-2z"/></svg><span class="receipt-brand-name">COSTDOG<small>DAILY RECEIPT</small></span></div>
+    <div class="receipt-total"><span data-bar-range>TODAY TOTAL</span><strong data-bar-cost>$0</strong></div>
+    <div class="receipt-lines"><span><b data-bar-tokens>0</b>TOKENS</span><span><b data-bar-sessions>0</b>SESSIONS</span></div>
+    <div class="face-actions"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">R</button><button class="bbtn" onclick="toggle()" title="Details">+</button><button class="bbtn" onclick="closeWindow()" title="Close">×</button></div>
+  </div>
+  <div class="bar-face face-race">
+    <div class="race-runner"><svg class="dog-art" viewBox="0 0 64 32" aria-hidden="true"><ellipse cx="28" cy="14" rx="14" ry="6"/><circle cx="45" cy="11" r="5"/><path d="M44 7l2-6 5 7 8 3-6 5-4-1-5 4-5-1 6-7zM15 13L5 7l7 1 5 3zM20 18l-5 12h5l6-11zM35 18l4 12h5l-3-13z"/></svg><span class="race-bib">#<b data-bar-sessions>0</b></span></div>
+    <div class="race-telemetry"><span class="race-metric cost"><span data-bar-range>LAP COST</span><strong data-bar-cost>$0</strong></span><span class="race-metric distance"><span>DIST / TOK</span><strong data-bar-tokens>0</strong></span></div><span class="race-track" aria-hidden="true"></span>
+    <div class="face-actions"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">↻</button><button class="bbtn" onclick="toggle()" title="Details">▾</button><button class="bbtn" onclick="closeWindow()" title="Close">×</button></div>
   </div>
 </div>
 <div class="detail" id="detail">
-  <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><button class="xb" onclick="toggle()">&#x2715;</button></div>
+  <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><span class="edit-status" id="editstatus"></span><button class="skin-trigger" id="skinbtn" onclick="toggleSkinPanel()" aria-expanded="false" aria-controls="skinpanel" title="选择外观">◈</button><button class="xb" onclick="toggle()">&#x2715;</button></div>
+  <div class="skin-panel" id="skinpanel" aria-label="外观设置"><div class="skin-panel-head"><span>Bar wardrobe / 05</span><strong id="skinname">经典原版</strong></div><div class="skin-rail">
+    <button class="skin-choice" data-skin-choice="classic" onclick="selectSkin('classic')" aria-label="经典原版" aria-pressed="false"><span class="skin-symbol classic">🐕</span><span class="skin-choice-name">经典</span></button>
+    <button class="skin-choice" data-skin-choice="night" onclick="selectSkin('night')" aria-label="夜巡霓虹" aria-pressed="false"><span class="skin-symbol night"><svg viewBox="0 0 64 32" aria-hidden="true"><ellipse cx="28" cy="14" rx="14" ry="6"/><circle cx="45" cy="11" r="5"/><path d="M44 7l2-6 5 7 8 3-6 5-4-1-5 4-5-1 6-7zM15 13L5 7l7 1 5 3zM20 18l-5 12h5l6-11zM35 18l4 12h5l-3-13z"/></svg></span><span class="skin-choice-name">夜巡</span></button>
+    <button class="skin-choice" data-skin-choice="lcd" onclick="selectSkin('lcd')" aria-label="电子宠物" aria-pressed="false"><span class="skin-symbol lcd">▦ 12.48</span><span class="skin-choice-name">电子宠物</span></button>
+    <button class="skin-choice" data-skin-choice="receipt" onclick="selectSkin('receipt')" aria-label="CostDog 小票" aria-pressed="false"><span class="skin-symbol receipt">PAID $12</span><span class="skin-choice-name">小票</span></button>
+    <button class="skin-choice" data-skin-choice="race" onclick="selectSkin('race')" aria-label="赛犬遥测" aria-pressed="false"><span class="skin-symbol race">#09 / LAP</span><span class="skin-choice-name">赛犬</span></button>
+  </div><div class="theme-controls"><span class="theme-label">界面</span><div class="theme-modes" role="group" aria-label="界面明暗模式"><button class="theme-mode" data-theme-mode="system" onclick="selectThemeMode('system')" aria-pressed="false">跟随系统</button><button class="theme-mode" data-theme-mode="dark" onclick="selectThemeMode('dark')" aria-pressed="false">暗黑</button><button class="theme-mode" data-theme-mode="light" onclick="selectThemeMode('light')" aria-pressed="false">明亮</button></div><label class="accent-control" for="accentpicker">主题色<input class="accent-picker" id="accentpicker" type="color" value="#89b4fa" oninput="selectAccent(this.value,true)" aria-label="选择主题强调色"></label><button class="accent-reset" onclick="resetAccent()" title="恢复默认主题色">重置</button></div></div>
   <div class="tabs">
     <div class="tab on" data-r="today">Today</div>
     <div class="tab" data-r="week">7D</div>
@@ -86,10 +216,28 @@ tr:hover{background:rgba(137,180,250,.03)}
     <div class="tab" data-r="all">All</div>
   </div>
   <div id="alerts"></div>
+  <div class="insight">
+    <div class="insight-title">Cost quality</div>
+    <div class="quality-line" id="qualityline"><span>Actual $0</span><span>Estimated $0</span><span>Unpriced 0</span></div>
+  </div>
+  <div class="insight">
+    <div class="insight-title">Monthly budget</div>
+    <div class="budget-line"><span id="budgetused">Not set</span><span id="budgetforecast">Forecast unavailable</span></div>
+    <div class="budget-controls"><input id="budgetinput" type="number" min="0.01" max="1000000" step="1" placeholder="USD / month" aria-label="Monthly budget in USD"><button onclick="saveBudget()">Save</button><button onclick="clearBudget()">Off</button></div>
+  </div>
+  <div class="insight">
+    <div class="insight-title">Cost trend</div>
+    <svg class="trend-svg" id="trendsvg" viewBox="0 0 360 92" role="img" aria-label="Daily priced cost trend"></svg>
+  </div>
+  <div class="insight">
+    <div class="insight-title">Why cost changed</div>
+    <div id="contributions"><span style="color:var(--dim);font-size:10px">Open details to load</span></div>
+  </div>
+  <details class="insight"><summary class="insight-title">Data sources</summary><div id="sources"></div></details>
   <div class="grid">
     <div class="sc s1"><div class="sl">Sessions</div><div class="sv s" id="ds">0</div></div>
     <div class="sc s2"><div class="sl">Cost</div><div class="sv c" id="dc">$0</div></div>
-    <div class="sc s3"><div class="sl">Disk</div><div class="sv d" id="dd">0</div></div>
+    <div class="sc s3"><div class="sl">Unpriced</div><div class="sv d" id="dd">0</div></div>
     <div class="sc s4"><div class="sl">Input</div><div class="sv ti" id="di">0</div></div>
     <div class="sc s5"><div class="sl">Output</div><div class="sv to" id="do">0</div></div>
     <div class="sc s6"><div class="sl">Cache</div><div class="sv" id="dk" style="color:var(--dim)">0</div></div>
@@ -110,12 +258,59 @@ tr:hover{background:rgba(137,180,250,.03)}
   <table><thead><tr><th>Src</th><th></th><th>Model</th><th>Proj</th><th>In</th><th>Out</th><th>$</th></tr></thead><tbody id="dt"></tbody></table>
 </div>
 <script>
-let D=null,R='today',open=false;
+let D=null,A=null,B=null,SRC=null,R='today',open=false;
 const M={today:'today',week:'week',month:'month',all:'allTime'};
+const AR={today:'today',week:'7d',month:'30d',all:'month'};
 const LABELS={today:'TODAY',week:'7D',month:'30D',all:'ALL'};
 function fT(n){if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n}
 function fC(n){if(n>=100)return'$'+n.toFixed(0);if(n>=1)return'$'+n.toFixed(2);return'$'+n.toFixed(4)}
-function fB(n){if(n>=1073741824)return(n/1073741824).toFixed(1)+'GB';if(n>=1048576)return(n/1048576).toFixed(1)+'MB';if(n>=1024)return(n/1024).toFixed(1)+'KB';return n+'B'}
+function fD(n){return(n>=0?'+':'-')+fC(Math.abs(n))}
+function esc(value){const node=document.createElement('span');node.textContent=String(value??'');return node.innerHTML}
+let statusTimer=null;
+function editStatus(message,isError){const e=document.getElementById('editstatus');e.textContent=message||'';e.classList.toggle('error',!!isError);clearTimeout(statusTimer);if(message)statusTimer=setTimeout(()=>{e.textContent='';e.classList.remove('error')},3000)}
+const SKIN_NAMES={classic:'经典原版',night:'夜巡霓虹',lcd:'电子宠物',receipt:'CostDog 小票',race:'赛犬遥测'};
+const DEFAULT_ACCENT='#89b4fa';
+const systemTheme=matchMedia('(prefers-color-scheme: light)');
+function applySkin(skin,persist){
+  if(!Object.prototype.hasOwnProperty.call(SKIN_NAMES,skin))skin='classic';
+  document.documentElement.dataset.skin=skin;
+  document.querySelectorAll('[data-skin-choice]').forEach(choice=>choice.setAttribute('aria-pressed',String(choice.dataset.skinChoice===skin)));
+  const skinName=document.getElementById('skinname');if(skinName)skinName.textContent=SKIN_NAMES[skin];
+  if(persist){
+    try{localStorage.setItem('costdog.barSkin',skin)}catch(error){console.error('Unable to save the bar skin:',error);editStatus('皮肤已切换，但无法保存',true)}
+  }
+}
+function resolvedTheme(mode){return mode==='system'?(systemTheme.matches?'light':'dark'):mode}
+function applyThemeMode(mode,persist){
+  if(!['system','dark','light'].includes(mode))mode='system';
+  document.documentElement.dataset.themeMode=mode;
+  document.documentElement.dataset.theme=resolvedTheme(mode);
+  document.querySelectorAll('[data-theme-mode]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.themeMode===mode)));
+  if(persist){
+    try{localStorage.setItem('costdog.themeMode',mode)}catch(error){console.error('Unable to save the theme mode:',error);editStatus('主题已切换，但无法保存',true)}
+  }
+}
+function selectThemeMode(mode){applyThemeMode(mode,true);editStatus('界面模式：'+({system:'跟随系统',dark:'暗黑',light:'明亮'}[mode]||mode),false)}
+function selectAccent(color,persist){
+  if(!/^#[0-9a-f]{6}$/i.test(color||''))return;
+  document.documentElement.style.setProperty('--accent',color);
+  const picker=document.getElementById('accentpicker');if(picker&&picker.value.toLowerCase()!==color.toLowerCase())picker.value=color;
+  if(persist){
+    try{localStorage.setItem('costdog.accent',color)}catch(error){console.error('Unable to save the accent color:',error);editStatus('主题色已应用，但无法保存',true)}
+  }
+}
+function resetAccent(){
+  document.documentElement.style.setProperty('--accent',DEFAULT_ACCENT);
+  const picker=document.getElementById('accentpicker');if(picker)picker.value=DEFAULT_ACCENT;
+  try{localStorage.removeItem('costdog.accent');editStatus('主题色已恢复默认',false)}catch(error){console.error('Unable to reset the accent color:',error);editStatus('主题色已恢复，但无法保存',true)}
+}
+function toggleSkinPanel(force){
+  const panel=document.getElementById('skinpanel'),button=document.getElementById('skinbtn');
+  const show=typeof force==='boolean'?force:!panel.classList.contains('show');
+  panel.classList.toggle('show',show);button.setAttribute('aria-expanded',String(show));
+}
+function selectSkin(skin){applySkin(skin,true);editStatus('已切换：'+SKIN_NAMES[skin],false)}
+function setBarText(name,value){document.querySelectorAll('[data-bar-'+name+']').forEach(element=>{element.textContent=value})}
 function toggle(){
   open=!open;
   document.getElementById('detail').classList.toggle('show',open);
@@ -123,6 +318,7 @@ function toggle(){
   if(window.__TAURI_INTERNALS__){
     window.__TAURI_INTERNALS__.invoke('resize_window',{width:410,height:open?520:36});
   }
+  if(open)loadDetails();
 }
 function closeWindow(){
   if(window.__TAURI_INTERNALS__){
@@ -146,7 +342,7 @@ function renderCat(list,totalCost){
   let off=25,sh='';const tot=merged.reduce((a,b)=>a+b.cost,0)||1;
   merged.forEach(c=>{const pct=c.cost/tot*100;if(pct<0.5)return;const col=(CATS[c.key]||CATS.other)[1];sh+=`<circle cx="21" cy="21" r="15.915" fill="none" stroke="${col}" stroke-width="6" stroke-dasharray="${pct} ${100-pct}" stroke-dashoffset="${off}"></circle>`;off-=pct;});
   seg.innerHTML=sh;
-  let rh='';merged.forEach(c=>{const[em,col]=CATS[c.key]||CATS.other;const pct=c.cost/tot*100;rh+=`<div class="cr"><span class="ce">${em}</span><span class="cn">${CATNAMES[c.key]||c.key}</span><span class="cb" style="background:${col};width:${Math.max(8,pct*0.4)}px"></span><span class="cv">${fC(c.cost)} ${pct.toFixed(0)}%</span></div>`;});
+  let rh='';merged.forEach(c=>{const[em,col]=CATS[c.key]||CATS.other;const pct=c.cost/tot*100;rh+=`<div class="cr"><span class="ce">${em}</span><span class="cn">${esc(CATNAMES[c.key]||c.key)}</span><span class="cb" style="background:${col};width:${Math.max(8,pct*0.4)}px"></span><span class="cv">${fC(c.cost)} ${pct.toFixed(0)}%</span></div>`;});
   rows.innerHTML=rh;
 }
 function render(){
@@ -154,10 +350,10 @@ function render(){
   // Bar shows current tab's data
   const d=D[M[R]];
   if(d){
-    document.getElementById('bl').textContent=LABELS[R]||'TODAY';
-    document.getElementById('bc').textContent=fC(d.cost);
-    document.getElementById('bt').textContent=fT(d.tokenUsage.inputTokens+d.tokenUsage.outputTokens);
-    document.getElementById('bs').textContent=d.sessions;
+    setBarText('range',LABELS[R]||'TODAY');
+    setBarText('cost',fC(d.cost));
+    setBarText('tokens',fT(d.tokenUsage.inputTokens+d.tokenUsage.outputTokens));
+    setBarText('sessions',d.sessions);
   }
   // Detail panel
   if(!d)return;
@@ -166,20 +362,81 @@ function render(){
   document.getElementById('di').textContent=fT(d.tokenUsage.inputTokens);
   document.getElementById('do').textContent=fT(d.tokenUsage.outputTokens);
   document.getElementById('dk').textContent=fT(d.tokenUsage.cacheReadTokens);
-  document.getElementById('dd').textContent=fB(d.diskWriteBytes);
+  document.getElementById('dd').textContent=d.costQuality?.unpricedSessions??0;
   renderCat(d.byCategory||[], d.cost||0);
   const ms=d.topModels||[];
   let mh='';
   if(!ms.length) mh='<div style="color:var(--dim);font-size:11px;padding:4px 8px">No data</div>';
-  else ms.slice(0,5).forEach(m=>{mh+='<div class="mr"><span class="mn">'+m.model+'</span><span><span class="mc c">'+fC(m.cost)+'</span><span class="ml">'+m.calls+' calls</span></span></div>'});
+  else ms.slice(0,5).forEach(m=>{mh+='<div class="mr"><span class="mn">'+esc(m.model)+'</span><span><span class="mc c">'+fC(m.cost)+'</span><span class="ml">'+(m.sessions??0)+' sessions</span></span></div>'});
   document.getElementById('dm').innerHTML=mh;
-  let ah='';(D.alerts||[]).forEach(a=>{ah+='<div class="alert '+(a.level==='danger'?'ad':'aw')+'">'+(a.level==='danger'?'&#x1F534;':'&#x1F7E1;')+' '+a.message+'</div>'});
+  let ah='';(D.alerts||[]).forEach(a=>{ah+='<div class="alert '+(a.level==='danger'?'ad':'aw')+'">'+(a.level==='danger'?'&#x1F534;':'&#x1F7E1;')+' '+esc(a.message)+(a.id?'<button class="alert-dismiss" data-alert-id="'+Number(a.id)+'" aria-label="Dismiss alert">×</button>':'')+'</div>'});
   document.getElementById('alerts').innerHTML=ah;
+  const q=d.costQuality||{};
+  document.getElementById('qualityline').innerHTML='<span>Actual '+fC(q.providerCost||0)+'</span><span>Estimated '+fC(q.estimatedCost||0)+'</span><span>Unpriced '+(q.unpricedSessions||0)+'</span>';
   const ss=D.recentSessions||[];
   let th='';
   if(!ss.length) th='<tr><td colspan="7" style="color:var(--dim);text-align:center;padding:12px">No data</td></tr>';
-  else ss.slice(0,15).forEach(s=>{const bc={'claude-code':'bcc','codex':'bcx','zcode':'bzc','opencode':'boc'}[s.source]||'bcx',bl={'claude-code':'CC','codex':'CX','zcode':'ZC','opencode':'OC'}[s.source]||'CX',catEm=(CATS[s.activityCategory]||CATS.other)[0];th+='<tr><td><span class="badge '+bc+'">'+bl+'</span></td><td>'+catEm+'</td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
+  else ss.slice(0,15).forEach((s,i)=>{const bc={'claude-code':'bcc','codex':'bcx','zcode':'bzc','opencode':'boc'}[s.source]||'bcx',bl={'claude-code':'CC','codex':'CX','zcode':'ZC','opencode':'OC'}[s.source]||'CX',auto=s.automaticActivityCategory||'other',manual=s.activityCategoryOverride||'';let opts='<option value=""'+(!manual?' selected':'')+'>↺ 自动 · '+(CATNAMES[auto]||'其他')+'</option>';Object.keys(CATS).forEach(k=>{opts+='<option value="'+k+'"'+(manual===k?' selected':'')+'>'+CATS[k][0]+' '+CATNAMES[k]+'</option>'});th+='<tr><td><span class="badge '+bc+'">'+bl+'</span></td><td><select class="catpick'+(manual?' manual':'')+'" data-session-index="'+i+'" title="用途：'+(CATNAMES[s.activityCategory]||'其他')+(manual?'（人工）':'（自动）')+'" aria-label="修改 Session 用途">'+opts+'</select></td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
   document.getElementById('dt').innerHTML=th;
+}
+function renderDetails(){
+  if(B){
+    const used=B.pricedMonthToDate||0,limit=B.monthlyLimit;
+    document.getElementById('budgetused').textContent=limit?fC(used)+' / '+fC(limit)+' · '+(B.percentUsed||0).toFixed(0)+'%':fC(used)+' this month · no limit';
+    document.getElementById('budgetforecast').textContent=B.forecast!=null?'Forecast '+fC(B.forecast)+' · '+B.confidence:B.reasonUnavailable||'Forecast unavailable';
+    document.getElementById('budgetinput').value=limit||'';
+  }
+  const points=A?.dailySeries||[],svg=document.getElementById('trendsvg');
+  if(points.length){
+    const max=Math.max(...points.map(p=>p.cost||0),.0001),w=350,h=72,pad=5;
+    const coords=points.map((p,i)=>[(points.length===1?w/2:pad+i*(w-2*pad)/(points.length-1)),h-(p.cost||0)/max*(h-2*pad)+pad]);
+    const line=coords.map(p=>p.join(',')).join(' '),area=`${coords[0][0]},${h+8} ${line} ${coords[coords.length-1][0]},${h+8}`;
+    svg.innerHTML='<polyline class="trend-area" points="'+area+'"></polyline><polyline class="trend-line" points="'+line+'"></polyline><text x="5" y="90" fill="var(--dim)" font-size="8">'+esc(points[0].date.slice(5))+'</text><text x="345" y="90" text-anchor="end" fill="var(--dim)" font-size="8">'+esc(points[points.length-1].date.slice(5))+'</text>';
+  }else svg.textContent='';
+  const net=(A?.totals?.cost||0)-(A?.comparisonTotals?.cost||0);
+  const items=(A?.contributions||[]).filter(item=>Math.abs(item.delta)>.000001).slice(0,3);
+  let html='<div class="budget-line"><span>vs previous period</span><strong class="'+(net>=0?'up':'down')+'">'+fD(net)+'</strong></div>';
+  if(!items.length)html+='<div style="color:var(--dim);font-size:10px;margin-top:5px">No priced cost change</div>';
+  items.forEach(item=>{html+='<div class="contribution"><span>'+esc(item.displayName)+' · '+esc(item.dimension)+'</span><strong class="'+(item.delta>=0?'up':'down')+'">'+fD(item.delta)+'</strong></div>'});
+  document.getElementById('contributions').innerHTML=html;
+  document.getElementById('sources').innerHTML=(SRC||[]).map(s=>{const stats=s.detected?s.recordsFound+' rows · '+(s.skippedFiles||0)+' skipped'+(s.malformedLines?' · '+s.malformedLines+' bad':''):'Not found';return '<div class="source-row"><strong>'+esc(s.source)+'</strong><span class="'+(s.lastError?'source-error':'')+'">'+esc(s.lastError||s.displayPath)+'</span><span>'+stats+'</span></div>'}).join('');
+}
+async function loadDetails(){
+  if(!open||!window.__TAURI_INTERNALS__)return;
+  try{
+    const [analytics,budget,sources]=await Promise.all([
+      window.__TAURI_INTERNALS__.invoke('get_analytics',{range:AR[R],filters:null}),
+      window.__TAURI_INTERNALS__.invoke('get_monthly_budget'),
+      window.__TAURI_INTERNALS__.invoke('get_source_status')
+    ]);
+    A=analytics;B=budget;SRC=sources;renderDetails();
+  }catch(e){editStatus(String(e||'Unable to load details'),true)}
+}
+async function saveBudget(){
+  const input=document.getElementById('budgetinput'),amount=Number(input.value);
+  if(!Number.isFinite(amount)||amount<=0){editStatus('请输入有效的月预算',true);return;}
+  try{B=await window.__TAURI_INTERNALS__.invoke('set_monthly_budget',{amountUsd:amount});renderDetails();await load();editStatus('月预算已保存',false)}catch(e){editStatus(String(e),true)}
+}
+async function clearBudget(){
+  try{B=await window.__TAURI_INTERNALS__.invoke('set_monthly_budget',{amountUsd:null});renderDetails();await load();editStatus('月预算已关闭',false)}catch(e){editStatus(String(e),true)}
+}
+async function dismissAlert(id){
+  if(!window.__TAURI_INTERNALS__)return;
+  try{await window.__TAURI_INTERNALS__.invoke('dismiss_alert',{alertId:id});await load()}catch(e){editStatus(String(e),true)}
+}
+async function changeActivityCategory(select){
+  const index=Number(select.dataset.sessionIndex),s=(D&&D.recentSessions||[])[index];
+  if(!s){editStatus('找不到 Session',true);render();return;}
+  if(!window.__TAURI_INTERNALS__){editStatus('请在桌面应用中修改',true);render();return;}
+  select.disabled=true;
+  try{
+    await window.__TAURI_INTERNALS__.invoke('set_activity_category_override',{sessionId:s.session_id,source:s.source,date:s.date,category:select.value||null});
+    await load();
+    editStatus(select.value?'分类已保存':'已恢复自动分类',false);
+  }catch(e){
+    editStatus(String(e||'保存失败'),true);
+    render();
+  }
 }
 async function load(){
   try{
@@ -188,28 +445,26 @@ async function load(){
       const result=await window.__TAURI_INTERNALS__.invoke('get_data');
       data=JSON.parse(result);
     }else{
-      const r=await fetch('http://localhost:3456/api/dashboard');
+      const r=await fetch('http://127.0.0.1:3456/api/dashboard');
       data=await r.json();
     }
-    D=data;render();
+    D=data;render();if(open)await loadDetails();
   }catch(e){
-    document.getElementById('bc').textContent='--';
+    setBarText('cost','--');
   }
 }
 async function doScan(){
-  const b=document.getElementById('sb');
-  b.disabled=true;
-  b.textContent='...';
+  const buttons=[...document.querySelectorAll('.scan-btn')];
+  buttons.forEach(button=>{button.disabled=true;button.textContent='…'});
   try{
     if(window.__TAURI_INTERNALS__){
       await window.__TAURI_INTERNALS__.invoke('scan');
     }else{
-      await fetch('http://localhost:3456/api/scan',{method:'POST'});
+      await fetch('http://127.0.0.1:3456/api/scan',{method:'POST'});
     }
   }catch(e){}
   await load();
-  b.disabled=false;
-  b.innerHTML='&#x21bb;';
+  buttons.forEach(button=>{button.disabled=false;button.textContent=button.closest('.face-lcd,.face-receipt')?'R':'↻'});
 }
 
 // Tauri v2 event listener (uses plugin:event|listen via invoke)
@@ -228,12 +483,12 @@ function tauriListen(eventName, callback){
 tauriListen('refresh-data',()=>{load();});
 
 // While an update is downloading/installing, turn the refresh button into a down-arrow.
-tauriListen('update-installing',()=>{const b=document.getElementById('sb');if(b)b.innerHTML='&#x2B07;&#xFE0E;';});
+tauriListen('update-installing',()=>{document.querySelectorAll('.scan-btn').forEach(button=>{button.textContent='↓'})});
 
 // Surface the update process in the cost slot: downloading X% / installing.
 // (event callback receives the full Event object; use .payload for the value)
-tauriListen('update-status',function(e){var s=(e&&e.payload!=null)?e.payload:e;var b=document.getElementById('bc');if(b){b.textContent=s;b.style.color='var(--accent)';}});
-tauriListen('update-progress',function(e){var p=(e&&e.payload!=null)?e.payload:e;var b=document.getElementById('bc');if(b){b.textContent='⬇ '+p+'%';b.style.color='var(--accent)';}});
+tauriListen('update-status',function(e){var s=(e&&e.payload!=null)?e.payload:e;setBarText('cost',s)});
+tauriListen('update-progress',function(e){var p=(e&&e.payload!=null)?e.payload:e;setBarText('cost','↓ '+p+'%')});
 
 // Drag the bar by calling the core start_dragging command directly — the same
 // __TAURI_INTERNALS__.invoke pattern the app already uses for resize/close.
@@ -259,7 +514,15 @@ tauriListen('update-progress',function(e){var p=(e&&e.payload!=null)?e.payload:e
 })();
 
 
-document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');R=t.dataset.r;render()}));
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');R=t.dataset.r;render();loadDetails()}));
+document.getElementById('alerts').addEventListener('click',e=>{const button=e.target.closest('[data-alert-id]');if(button)dismissAlert(Number(button.dataset.alertId))});
+document.getElementById('dt').addEventListener('change',e=>{const select=e.target.closest('.catpick');if(select)changeActivityCategory(select)});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')toggleSkinPanel(false)});
+applySkin(document.documentElement.dataset.skin,false);
+applyThemeMode(document.documentElement.dataset.themeMode,false);
+selectAccent(document.documentElement.style.getPropertyValue('--accent').trim()||DEFAULT_ACCENT,false);
+const syncSystemTheme=()=>{if(document.documentElement.dataset.themeMode==='system')applyThemeMode('system',false)};
+if(systemTheme.addEventListener)systemTheme.addEventListener('change',syncSystemTheme);else systemTheme.addListener(syncSystemTheme);
 load();
 </script>
 </body>

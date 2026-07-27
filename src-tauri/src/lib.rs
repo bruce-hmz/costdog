@@ -1,8 +1,15 @@
+mod analytics;
+mod budget;
+mod cost_ledger;
+mod source_status;
+
+use cost_ledger::{build_cost_record, ResolvedPrice};
+use source_status::SourceScanMeasurement;
 use tauri::{Manager, Emitter};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::collections::HashMap;
@@ -15,13 +22,31 @@ struct TokenUsage {
     output_tokens: u64,
     #[serde(rename = "cacheReadTokens")]
     cache_read_tokens: u64,
+    #[serde(rename = "cacheCreationTokens")]
+    cache_creation_tokens: u64,
+    #[serde(rename = "reasoningOutputTokens")]
+    reasoning_output_tokens: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TopModel {
     model: String,
-    calls: u64,
+    sessions: u64,
     cost: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CostQualitySummary {
+    #[serde(rename = "providerCost")]
+    provider_cost: f64,
+    #[serde(rename = "estimatedCost")]
+    estimated_cost: f64,
+    #[serde(rename = "unpricedSessions")]
+    unpriced_sessions: u64,
+    #[serde(rename = "unpricedTokens")]
+    unpriced_tokens: u64,
+    #[serde(rename = "partialSessions")]
+    partial_sessions: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -45,12 +70,15 @@ struct DailySummary {
     top_models: Vec<TopModel>,
     #[serde(rename = "byCategory")]
     by_category: Vec<CategoryBreakdown>,
+    #[serde(rename = "costQuality")]
+    cost_quality: CostQualitySummary,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct RecentSession {
     session_id: String,
     source: String,
+    date: String,
     model: Option<String>,
     project: Option<String>,
     start_time: Option<String>,
@@ -59,15 +87,30 @@ struct RecentSession {
     output_tokens: u64,
     cache_read_tokens: u64,
     cost: f64,
+    #[serde(rename = "costBasis")]
+    cost_basis: String,
+    #[serde(rename = "usageCompleteness")]
+    usage_completeness: String,
+    #[serde(rename = "pricingMatch")]
+    pricing_match: String,
     disk_write_bytes: u64,
     #[serde(rename = "activityCategory")]
     activity_category: Option<String>,
+    #[serde(rename = "automaticActivityCategory")]
+    automatic_activity_category: Option<String>,
+    #[serde(rename = "activityCategoryOverride")]
+    activity_category_override: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Alert {
+    id: i64,
     level: String,
     message: String,
+    #[serde(rename = "alertKey")]
+    alert_key: Option<String>,
+    #[serde(rename = "alertPeriod")]
+    alert_period: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -98,6 +141,8 @@ struct SessionData {
     reasoning_tokens: u64,
     disk_write_bytes: u64,
     cost: f64,
+    provider_cost_amount: Option<f64>,
+    usage_complete: bool,
     tool_calls: HashMap<String, u64>,
     git_branch: Option<String>,
     activity_category: String,
@@ -152,6 +197,81 @@ fn get_opencode_db_path() -> PathBuf {
     base.join("opencode").join("opencode.db")
 }
 
+struct SourceScanOutcome {
+    measurement: SourceScanMeasurement,
+    sessions: Vec<SessionData>,
+    fingerprints: Vec<source_status::FileFingerprint>,
+}
+
+#[derive(Default)]
+struct FileScanResult {
+    sessions: Vec<SessionData>,
+    fingerprints: Vec<source_status::FileFingerprint>,
+    skipped_files: u64,
+    malformed_lines: u64,
+}
+
+impl FileScanResult {
+    fn from_sessions(sessions: Vec<SessionData>) -> Self {
+        Self {
+            sessions,
+            ..Self::default()
+        }
+    }
+}
+
+fn scan_source<F>(
+    source: &str,
+    path: &Path,
+    expected_table: Option<&str>,
+    scanner: F,
+) -> SourceScanOutcome
+where
+    F: FnOnce() -> Result<FileScanResult, String>,
+{
+    let started = std::time::Instant::now();
+    let detected = path.exists();
+    let error = if !detected {
+        None
+    } else if let Some(table) = expected_table {
+        if open_readonly_db(&path.to_path_buf(), table).is_some() {
+            None
+        } else {
+            Some(format!("Cannot read expected table '{table}'"))
+        }
+    } else {
+        fs::read_dir(path)
+            .map(|_| None)
+            .unwrap_or_else(|error| Some(format!("Cannot read source directory: {error}")))
+    };
+
+    let scan_result = if detected && error.is_none() {
+        scanner()
+    } else {
+        Ok(FileScanResult::default())
+    };
+    let (scan_result, error) = match scan_result {
+        Ok(result) => (result, error),
+        Err(scan_error) => (FileScanResult::default(), Some(scan_error)),
+    };
+    SourceScanOutcome {
+        measurement: SourceScanMeasurement {
+            source: source.to_string(),
+            detected,
+            records_found: 0,
+            priced_records: 0,
+            unpriced_records: 0,
+            partial_records: 0,
+            skipped_files: scan_result.skipped_files,
+            malformed_lines: scan_result.malformed_lines,
+            duration_ms: started.elapsed().as_millis() as u64,
+            error,
+        },
+        sessions: scan_result.sessions,
+        fingerprints: scan_result.fingerprints,
+    }
+}
+
 /// Local YYYY-MM-DD of a millisecond epoch timestamp (so "today" matches the user's clock).
 fn local_date_from_ms(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
@@ -192,13 +312,12 @@ fn open_readonly_db(path: &PathBuf, table: &str) -> Option<rusqlite::Connection>
     Some(conn)
 }
 
-fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
-    let db_path = get_costdog_db_path();
+fn ensure_db_exists_at(db_path: &Path) -> Result<rusqlite::Connection, String> {
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
     conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| e.to_string())?;
     conn.pragma_update(None, "synchronous", "NORMAL").map_err(|e| e.to_string())?;
     // busy_timeout: Rust 与 TS 并发写同一 DB 时,ALTER 撞 SQLITE_BUSY 时等待重试
@@ -233,8 +352,15 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
             level TEXT NOT NULL,
             message TEXT NOT NULL,
             alert_key TEXT,
+            alert_period TEXT,
             timestamp TEXT DEFAULT (datetime('now')),
             dismissed INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );"
     ).map_err(|e| e.to_string())?;
 
@@ -245,7 +371,6 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
         [],
     )
     .map_err(|e| e.to_string())?;
-
     // Migration: CREATE TABLE IF NOT EXISTS won't add alert_key to an existing table.
     let has_alert_key: i64 = conn
         .query_row(
@@ -258,6 +383,33 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
         conn.execute("ALTER TABLE alerts ADD COLUMN alert_key TEXT", [])
             .map_err(|e| e.to_string())?;
     }
+    let has_alert_period: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('alerts') WHERE name = 'alert_period'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if has_alert_period == 0 {
+        conn.execute("ALTER TABLE alerts ADD COLUMN alert_period TEXT", [])
+            .map_err(|e| e.to_string())?;
+    }
+    conn.execute_batch(
+        "UPDATE alerts
+         SET alert_period = date(timestamp)
+         WHERE alert_key IS NOT NULL
+           AND (alert_period IS NULL OR alert_period = '');
+         DELETE FROM alerts
+         WHERE alert_key IS NOT NULL AND alert_period IS NOT NULL
+           AND id NOT IN (
+             SELECT MAX(id) FROM alerts
+             WHERE alert_key IS NOT NULL AND alert_period IS NOT NULL
+             GROUP BY alert_key, alert_period
+           );
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_key_period_unique
+           ON alerts(alert_key, alert_period);",
+    )
+    .map_err(|e| e.to_string())?;
 
     // Migration: per-day attribution. Old sessions table had PK (session_id, source) and no
     // date column — recreate with a date column + PK (session_id, source, date) so a session
@@ -304,7 +456,7 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date)", [])
         .map_err(|e| e.to_string())?;
 
-    // Activity category 迁移: 3 个新增列,各幂等
+    // Activity category migrations: each column is added idempotently.
     let need = |conn: &rusqlite::Connection, col: &str| -> bool {
         conn.query_row(
             "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?1",
@@ -314,8 +466,11 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
     };
     for (col, ddl) in [
         ("activity_category", "ALTER TABLE sessions ADD COLUMN activity_category TEXT"),
+        ("activity_category_override", "ALTER TABLE sessions ADD COLUMN activity_category_override TEXT"),
         ("tool_calls",        "ALTER TABLE sessions ADD COLUMN tool_calls TEXT"),
         ("git_branch",        "ALTER TABLE sessions ADD COLUMN git_branch TEXT"),
+        ("project_key",       "ALTER TABLE sessions ADD COLUMN project_key TEXT"),
+        ("project_display",   "ALTER TABLE sessions ADD COLUMN project_display TEXT"),
     ] {
         if need(&conn, col) {
             match conn.execute(ddl, []) {
@@ -330,7 +485,33 @@ fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
         }
     }
 
+    backfill_project_identity(&conn)?;
+    cost_ledger::ensure_schema(&conn)?;
+    source_status::ensure_schema(&conn)?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_date_project
+           ON sessions(date, project_key);
+         CREATE INDEX IF NOT EXISTS idx_sessions_date_source
+           ON sessions(date, source);
+         CREATE INDEX IF NOT EXISTS idx_sessions_date_model
+           ON sessions(date, model);
+         CREATE INDEX IF NOT EXISTS idx_sessions_date_activity
+           ON sessions(
+             date,
+             COALESCE(
+               NULLIF(activity_category_override,''),
+               NULLIF(activity_category,''),
+               'other'
+             )
+           );",
+    )
+    .map_err(|e| e.to_string())?;
+
     Ok(conn)
+}
+
+fn ensure_db_exists() -> Result<rusqlite::Connection, String> {
+    ensure_db_exists_at(&get_costdog_db_path())
 }
 
 fn get_db_connection() -> Result<rusqlite::Connection, String> {
@@ -359,6 +540,103 @@ fn decode_project_dir(dir_name: &str) -> String {
         // macOS/Linux: "Users-bruce-codes-costdog" -> "/Users/bruce/codes/costdog"
         format!("/{}", dir_name.replace('-', "/"))
     }
+}
+
+fn normalize_project_identity(source: &str, raw_project: &str) -> (String, String) {
+    let raw = raw_project.trim();
+    if raw.is_empty() || raw == "unknown" {
+        return (
+            format!("unknown:{source}"),
+            "Unknown project".to_string(),
+        );
+    }
+
+    let canonical = {
+        let path = PathBuf::from(raw);
+        if path.is_absolute() && path.exists() {
+            fs::canonicalize(path)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+        } else {
+            None
+        }
+    };
+    let normalized_input = canonical.as_deref().unwrap_or(raw).replace('\\', "/");
+    let bytes = normalized_input.as_bytes();
+    let is_windows_absolute = bytes.len() >= 2 && bytes[1] == b':';
+    let is_absolute = normalized_input.starts_with('/') || is_windows_absolute;
+
+    if !is_absolute {
+        return (
+            format!("name:{source}:{raw}"),
+            raw.to_string(),
+        );
+    }
+
+    let mut parts: Vec<&str> = Vec::new();
+    for part in normalized_input.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            parts.pop();
+        } else {
+            parts.push(part);
+        }
+    }
+
+    if parts.is_empty() {
+        return (
+            format!("unknown:{source}"),
+            "Unknown project".to_string(),
+        );
+    }
+
+    let mut normalized = if normalized_input.starts_with('/') {
+        format!("/{}", parts.join("/"))
+    } else {
+        parts.join("/")
+    };
+    if is_windows_absolute && normalized.len() >= 2 {
+        let drive = normalized[0..1].to_ascii_uppercase();
+        normalized.replace_range(0..1, &drive);
+    }
+    let display = parts.last().copied().unwrap_or("Unknown project").to_string();
+    (format!("path:{normalized}"), display)
+}
+
+fn backfill_project_identity(conn: &rusqlite::Connection) -> Result<(), String> {
+    let rows = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT session_id, source, date, COALESCE(project, '')
+                 FROM sessions
+                 WHERE project_key IS NULL OR project_key = ''
+                    OR project_display IS NULL OR project_display = ''",
+            )
+            .map_err(|e| e.to_string())?;
+        let mapped_rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+        mapped_rows.filter_map(Result::ok).collect::<Vec<_>>()
+    };
+
+    for (session_id, source, date, project) in rows {
+        let (key, display) = normalize_project_identity(&source, &project);
+        conn.execute(
+            "UPDATE sessions SET project_key = ?1, project_display = ?2
+             WHERE session_id = ?3 AND source = ?4 AND date = ?5",
+            rusqlite::params![key, display, session_id, source, date],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn local_date(ts: &str) -> String {
@@ -401,19 +679,24 @@ fn user_message_text(content: &serde_json::Value) -> Option<String> {
 
 /// Parse a single Claude Code JSONL session file into per-(session_id, date) SessionData buckets.
 /// `project_display` is the human-readable project path derived from the parent directory name.
-fn parse_claude_jsonl(file_path: &std::path::Path, project_display: &str) -> Vec<SessionData> {
-    let file = match fs::File::open(file_path) {
-        Ok(f) => f,
-        Err(_) => return Vec::new(),
-    };
+fn parse_claude_jsonl_with_diagnostics(
+    file_path: &std::path::Path,
+    project_display: &str,
+) -> Result<(Vec<SessionData>, u64), String> {
+    let file = fs::File::open(file_path)
+        .map_err(|error| format!("Cannot open Claude JSONL: {error}"))?;
     let reader = BufReader::new(file);
 
     let mut session_map: HashMap<(String, String), SessionData> = HashMap::new();
+    let mut malformed_lines = 0;
 
     for line_result in reader.lines() {
         let line = match line_result {
             Ok(l) => l,
-            Err(_) => continue,
+            Err(_) => {
+                malformed_lines += 1;
+                continue;
+            }
         };
         let line = line.trim().to_string();
         if line.is_empty() {
@@ -422,7 +705,10 @@ fn parse_claude_jsonl(file_path: &std::path::Path, project_display: &str) -> Vec
 
         let data: serde_json::Value = match serde_json::from_str(&line) {
             Ok(d) => d,
-            Err(_) => continue,
+            Err(_) => {
+                malformed_lines += 1;
+                continue;
+            }
         };
 
         let record_type = data["type"].as_str().unwrap_or("");
@@ -457,9 +743,11 @@ fn parse_claude_jsonl(file_path: &std::path::Path, project_display: &str) -> Vec
                 cache_read_tokens: 0,
                 cache_creation_tokens: 0,
                 reasoning_tokens: 0,
-                disk_write_bytes: 0,
-                cost: 0.0,
-                tool_calls: HashMap::new(),
+                    disk_write_bytes: 0,
+                    cost: 0.0,
+                    provider_cost_amount: None,
+                    usage_complete: true,
+                    tool_calls: HashMap::new(),
                 git_branch: None,
                 activity_category: String::new(),
                 user_intent: String::new(),
@@ -541,17 +829,31 @@ fn parse_claude_jsonl(file_path: &std::path::Path, project_display: &str) -> Vec
         }
     }
 
-    session_map.into_values().collect()
+    Ok((session_map.into_values().collect(), malformed_lines))
 }
 
-fn scan_claude_sessions() -> Vec<SessionData> {
+#[cfg(test)]
+fn parse_claude_jsonl(file_path: &std::path::Path, project_display: &str) -> Vec<SessionData> {
+    parse_claude_jsonl_with_diagnostics(file_path, project_display)
+        .map(|(sessions, _)| sessions)
+        .unwrap_or_default()
+}
+
+fn scan_claude_sessions(conn: &rusqlite::Connection) -> Result<FileScanResult, String> {
     let projects_dir = get_claude_sessions_dir();
+    scan_claude_directory(conn, &projects_dir)
+}
+
+fn scan_claude_directory(
+    conn: &rusqlite::Connection,
+    projects_dir: &Path,
+) -> Result<FileScanResult, String> {
     if !projects_dir.exists() {
         eprintln!("[CostDog] Claude projects dir not found: {:?}", projects_dir);
-        return Vec::new();
+        return Ok(FileScanResult::default());
     }
 
-    let mut sessions: Vec<SessionData> = Vec::new();
+    let mut result = FileScanResult::default();
     let mut file_count = 0;
 
     if let Ok(projects) = fs::read_dir(&projects_dir) {
@@ -582,16 +884,33 @@ fn scan_claude_sessions() -> Vec<SessionData> {
                     }
 
                     file_count += 1;
+                    let fingerprint =
+                        source_status::fingerprint(&file_path, "claude-code")?;
+                    if !source_status::file_changed(conn, &fingerprint)? {
+                        result.skipped_files += 1;
+                        continue;
+                    }
 
-                    let file_sessions = parse_claude_jsonl(&file_path, &project_display);
-                    sessions.extend(file_sessions);
+                    let (file_sessions, malformed_lines) =
+                        parse_claude_jsonl_with_diagnostics(
+                            &file_path,
+                            &project_display,
+                        )?;
+                    result.sessions.extend(file_sessions);
+                    result.malformed_lines += malformed_lines;
+                    result.fingerprints.push(fingerprint);
                 }
             }
         }
     }
 
-    eprintln!("[CostDog] Claude scan: {} files, {} sessions", file_count, sessions.len());
-    sessions
+    eprintln!(
+        "[CostDog] Claude scan: {} files, {} skipped, {} sessions",
+        file_count,
+        result.skipped_files,
+        result.sessions.len()
+    );
+    Ok(result)
 }
 
 // Codex CLI writes rollout-*.jsonl event streams (NOT flat .json). Each line is a
@@ -604,8 +923,11 @@ fn scan_claude_sessions() -> Vec<SessionData> {
 //                   cached_input_tokens, reasoning_output_tokens.
 // Codex input_tokens is the TOTAL prompt (includes cached), so we subtract cached to get
 // the non-cached portion calculate_cost expects (cache read is billed separately at 0.1x).
-fn parse_codex_rollout(path: &PathBuf) -> Option<SessionData> {
-    let file = fs::File::open(path).ok()?;
+fn parse_codex_rollout_with_diagnostics(
+    path: &PathBuf,
+) -> Result<(Option<SessionData>, u64), String> {
+    let file = fs::File::open(path)
+        .map_err(|error| format!("Cannot open Codex JSONL: {error}"))?;
     let reader = BufReader::new(file);
 
     let mut session_id = String::new();
@@ -620,14 +942,27 @@ fn parse_codex_rollout(path: &PathBuf) -> Option<SessionData> {
     let mut reasoning = 0u64;
     let mut tool_calls: HashMap<String, u64> = HashMap::new();
     let mut user_intent = String::new();
+    let mut malformed_lines = 0;
 
     for line in reader.lines() {
-        let line = match line { Ok(l) => l, Err(_) => continue };
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => {
+                malformed_lines += 1;
+                continue;
+            }
+        };
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        let v: serde_json::Value = match serde_json::from_str(line) { Ok(v) => v, Err(_) => continue };
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => {
+                malformed_lines += 1;
+                continue;
+            }
+        };
 
         if let Some(ts) = v["timestamp"].as_str() {
             end_time = ts.to_string();
@@ -695,14 +1030,14 @@ fn parse_codex_rollout(path: &PathBuf) -> Option<SessionData> {
     }
 
     if session_id.is_empty() {
-        return None;
+        return Ok((None, malformed_lines));
     }
 
     let non_cached_input = input.saturating_sub(cached);
-    let project = cwd.rsplit(|c| c == '/' || c == '\\').next().unwrap_or("").to_string();
+    let project = cwd;
     let date = local_date(&start_time);
 
-    Some(SessionData {
+    Ok((Some(SessionData {
         session_id,
         source: "codex".to_string(),
         date,
@@ -717,11 +1052,20 @@ fn parse_codex_rollout(path: &PathBuf) -> Option<SessionData> {
         reasoning_tokens: reasoning,
         disk_write_bytes: 0,
         cost: 0.0,
+        provider_cost_amount: None,
+        usage_complete: false,
         tool_calls,
         git_branch: None,
         activity_category: String::new(),
         user_intent,
-    })
+    }), malformed_lines))
+}
+
+#[cfg(test)]
+fn parse_codex_rollout(path: &PathBuf) -> Option<SessionData> {
+    parse_codex_rollout_with_diagnostics(path)
+        .ok()
+        .and_then(|(session, _)| session)
 }
 
 fn normalize_codex_tool(name: &str, input: &str) -> Option<&'static str> {
@@ -771,21 +1115,60 @@ fn walk_rollout_files<F: FnMut(&PathBuf)>(dir: &PathBuf, cb: &mut F) {
     }
 }
 
-fn scan_codex_sessions() -> Vec<SessionData> {
+fn scan_codex_sessions(conn: &rusqlite::Connection) -> Result<FileScanResult, String> {
     let sessions_dir = get_codex_sessions_dir();
     if !sessions_dir.exists() {
-        return Vec::new();
+        return Ok(FileScanResult::default());
     }
 
-    let mut sessions = Vec::new();
+    let mut result = FileScanResult::default();
+    let mut scan_error = None;
     let mut on_file = |path: &PathBuf| {
-        if let Some(s) = parse_codex_rollout(path) {
-            sessions.push(s);
+        if scan_error.is_some() {
+            return;
         }
+        let fingerprint = match source_status::fingerprint(path, "codex") {
+            Ok(fingerprint) => fingerprint,
+            Err(error) => {
+                scan_error = Some(error);
+                return;
+            }
+        };
+        match source_status::file_changed(conn, &fingerprint) {
+            Ok(false) => {
+                result.skipped_files += 1;
+                return;
+            }
+            Ok(true) => {}
+            Err(error) => {
+                scan_error = Some(error);
+                return;
+            }
+        }
+        match parse_codex_rollout_with_diagnostics(path) {
+            Ok((session, malformed_lines)) => {
+                result.malformed_lines += malformed_lines;
+                if let Some(session) = session {
+                    result.sessions.push(session);
+                }
+            }
+            Err(error) => {
+                scan_error = Some(error);
+                return;
+            }
+        }
+        result.fingerprints.push(fingerprint);
     };
     walk_rollout_files(&sessions_dir, &mut on_file);
-    eprintln!("[CostDog] Codex scan: {} sessions", sessions.len());
-    sessions
+    if let Some(error) = scan_error {
+        return Err(error);
+    }
+    eprintln!(
+        "[CostDog] Codex scan: {} skipped, {} sessions",
+        result.skipped_files,
+        result.sessions.len()
+    );
+    Ok(result)
 }
 
 // ZCode CLI stores per-request model usage in ~/.zcode/cli/db/db.sqlite.
@@ -899,7 +1282,7 @@ fn scan_zcode_sessions() -> Vec<SessionData> {
     for (key, b) in buckets {
         let sid = key.split('\u{0}').next().unwrap_or("").to_string();
         let dir = projects.get(&sid).cloned().unwrap_or_default();
-        let project = dir.rsplit(|c| c == '/' || c == '\\').next().unwrap_or("").to_string();
+        let project = dir;
         out.push(SessionData {
             session_id: sid,
             source: "zcode".to_string(),
@@ -915,6 +1298,8 @@ fn scan_zcode_sessions() -> Vec<SessionData> {
             reasoning_tokens: b.reasoning,
             disk_write_bytes: 0,
             cost: 0.0,
+            provider_cost_amount: None,
+            usage_complete: true,
             tool_calls: HashMap::new(),
             git_branch: None,
             activity_category: String::new(),
@@ -948,7 +1333,8 @@ fn scan_opencode_sessions() -> Vec<SessionData> {
         rows.filter_map(|r| r.ok()).collect()
     };
     let has = |n: &str| col_names.iter().any(|c| c == n);
-    let cost_col = if has("cost") { "cost" } else { "0" };
+    let has_cost = has("cost");
+    let cost_col = if has_cost { "cost" } else { "NULL" };
     let ti_col = if has("tokens_input") { "tokens_input" } else { "0" };
     let to_col = if has("tokens_output") { "tokens_output" } else { "0" };
     let tr_col = if has("tokens_reasoning") { "tokens_reasoning" } else { "0" };
@@ -1008,13 +1394,12 @@ fn scan_opencode_sessions() -> Vec<SessionData> {
             },
             None => String::new(),
         };
-        let project = dir
-            .as_deref()
-            .unwrap_or("")
-            .rsplit(|c| c == '/' || c == '\\')
-            .next()
-            .unwrap_or("")
-            .to_string();
+        let project = dir.unwrap_or_default();
+        let usage_complete = has("tokens_input")
+            && has("tokens_output")
+            && has("tokens_reasoning")
+            && has("tokens_cache_read")
+            && has("tokens_cache_write");
         out.push(SessionData {
             session_id: id,
             source: "opencode".to_string(),
@@ -1031,6 +1416,8 @@ fn scan_opencode_sessions() -> Vec<SessionData> {
             disk_write_bytes: 0,
             // Prefer the app's own cost (provider-accurate); full_scan recomputes when 0.
             cost: cost.unwrap_or(0.0),
+            provider_cost_amount: if has_cost { cost } else { None },
+            usage_complete,
             tool_calls: HashMap::new(),
             git_branch: None,
             activity_category: String::new(),
@@ -1173,8 +1560,9 @@ fn normalize_digit_dashes(s: &str) -> String {
 }
 
 /// Last-resort prices ($/M input, $/M output) for models OpenRouter doesn't list.
-fn fallback_price(model_id: &str) -> Option<(f64, f64)> {
+fn fallback_price(model_id: &str) -> Option<ResolvedPrice> {
     let lower = model_id.to_lowercase();
+    let suffix = lower.split('/').last().unwrap_or("");
     const TABLE: &[(&str, f64, f64)] = &[
         ("mimo-v2.5-pro", 0.5, 2.0),
         ("glm-5.1", 1.0, 3.0),
@@ -1182,28 +1570,46 @@ fn fallback_price(model_id: &str) -> Option<(f64, f64)> {
     ];
     for (id, pin, pout) in TABLE {
         let id_l = id.to_lowercase();
-        if lower.contains(id_l.as_str()) || id_l.contains(lower.as_str()) {
-            return Some((*pin, *pout));
+        if lower == id_l || suffix == id_l {
+            return Some(ResolvedPrice {
+                model_id: id.to_string(),
+                match_kind: "fallback",
+                input_per_m: *pin,
+                output_per_m: *pout,
+                cache_read_per_m: *pin * 0.1,
+                cache_creation_per_m: *pin * 1.25,
+            });
         }
     }
     None
 }
 
-/// Match a model id to (input $/M, output $/M). Tiers:
-/// exact -> '/'-suffix -> dash/dot-normalized -> contains -> fallback table.
-fn find_model_price(model_id: &str, prices: &[PricedModel]) -> Option<(f64, f64)> {
+fn resolved_openrouter_price(model: &PricedModel, match_kind: &'static str) -> ResolvedPrice {
+    ResolvedPrice {
+        model_id: model.model_id.clone(),
+        match_kind,
+        input_per_m: model.input,
+        output_per_m: model.output,
+        cache_read_per_m: model.input * 0.1,
+        cache_creation_per_m: model.input * 1.25,
+    }
+}
+
+/// Match a model id to an auditable price snapshot. Deliberately avoid fuzzy
+/// `contains` matching: an unmatched model is safer than a silently wrong bill.
+fn find_model_price(model_id: &str, prices: &[PricedModel]) -> Option<ResolvedPrice> {
     if model_id.is_empty() {
         return None;
     }
     let lower = model_id.to_lowercase();
     for m in prices {
         if m.model_id.to_lowercase() == lower {
-            return Some((m.input, m.output));
+            return Some(resolved_openrouter_price(m, "exact"));
         }
     }
     for m in prices {
         if m.model_id.split('/').last().map(|s| s.to_lowercase()) == Some(lower.clone()) {
-            return Some((m.input, m.output));
+            return Some(resolved_openrouter_price(m, "suffix"));
         }
     }
     // Claude Code: "claude-opus-4-8" (dash); OpenRouter: "anthropic/claude-opus-4.8" (dot).
@@ -1213,38 +1619,11 @@ fn find_model_price(model_id: &str, prices: &[PricedModel]) -> Option<(f64, f64)
             let m_lower = m.model_id.to_lowercase();
             let suffix = m_lower.split('/').last().unwrap_or("").to_string();
             if m_lower == normalized || suffix == normalized {
-                return Some((m.input, m.output));
+                return Some(resolved_openrouter_price(m, "normalized"));
             }
         }
     }
-    for m in prices {
-        let a = m.model_id.to_lowercase();
-        if a.contains(lower.as_str()) || lower.contains(a.as_str()) {
-            return Some((m.input, m.output));
-        }
-    }
     fallback_price(model_id)
-}
-
-fn calculate_cost(
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_tokens: u64,
-    cache_creation_tokens: u64,
-    reasoning_tokens: u64,
-    model: &str,
-    prices: &[PricedModel],
-) -> f64 {
-    let (pin, pout) = match find_model_price(model, prices) {
-        Some(p) => p,
-        None => return 0.0,
-    };
-    let per_m = 1_000_000.0_f64;
-    (input_tokens as f64 / per_m) * pin
-        + (cache_read_tokens as f64 / per_m) * (pin * 0.1)
-        + (cache_creation_tokens as f64 / per_m) * (pin * 1.25)
-        + (output_tokens as f64 / per_m) * pout
-        + (reasoning_tokens as f64 / per_m) * pout
 }
 
 fn upsert_session(conn: &rusqlite::Connection, session: &SessionData) -> Result<(), String> {
@@ -1253,13 +1632,19 @@ fn upsert_session(conn: &rusqlite::Connection, session: &SessionData) -> Result<
         "opencode" | "zcode" => None,
         _ => Some(serde_json::to_string(&session.tool_calls).unwrap_or_else(|_| "{}".to_string())),
     };
+    let (project_key, project_display) =
+        normalize_project_identity(&session.source, &session.project);
     conn.execute(
-        "INSERT INTO sessions (session_id, source, date, model, project, start_time, end_time,
+        "INSERT INTO sessions (session_id, source, date, model, project, project_key,
+            project_display, start_time, end_time,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             reasoning_output_tokens, disk_write_bytes, cost, activity_category, tool_calls, git_branch)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_id, source, date) DO UPDATE SET
             model = excluded.model,
+            project = excluded.project,
+            project_key = excluded.project_key,
+            project_display = excluded.project_display,
             end_time = excluded.end_time,
             input_tokens = excluded.input_tokens,
             output_tokens = excluded.output_tokens,
@@ -1274,7 +1659,7 @@ fn upsert_session(conn: &rusqlite::Connection, session: &SessionData) -> Result<
             scanned_at = datetime('now')",
         rusqlite::params![
             session.session_id, session.source, session.date, session.model, session.project,
-            session.start_time, session.end_time, session.input_tokens,
+            project_key, project_display, session.start_time, session.end_time, session.input_tokens,
             session.output_tokens, session.cache_read_tokens,
             session.cache_creation_tokens, session.reasoning_tokens,
             session.disk_write_bytes, session.cost,
@@ -1287,62 +1672,86 @@ fn upsert_session(conn: &rusqlite::Connection, session: &SessionData) -> Result<
     Ok(())
 }
 
-/// Insert or refresh today's alert for `key`. One row per (key, day): if today's alert
-/// already exists, update its message/level (so the amount stays fresh); otherwise insert.
-/// Prevents the 30s rescan from spawning thousands of duplicate rows.
-fn add_alert(conn: &rusqlite::Connection, key: &str, level: &str, message: &str) -> Result<(), String> {
-    let updated = conn.execute(
-        "UPDATE alerts SET message = ?, level = ?, timestamp = datetime('now','localtime'), dismissed = 0
-         WHERE alert_key = ? AND date(timestamp) = date('now','localtime')",
-        rusqlite::params![message, level, key],
-    ).map_err(|e| e.to_string())?;
-    if updated == 0 {
-        conn.execute(
-            "INSERT INTO alerts (level, message, alert_key, timestamp)
-             VALUES (?, ?, ?, datetime('now','localtime'))",
-            rusqlite::params![level, message, key],
-        ).map_err(|e| e.to_string())?;
-    }
+/// Insert or refresh one alert per logical rule period. Updating a dismissed
+/// alert deliberately preserves `dismissed = 1` until the period changes.
+#[allow(dead_code)] // Generic rule infrastructure; real budget rules are added in M5.
+fn upsert_alert(
+    conn: &rusqlite::Connection,
+    key: &str,
+    period: &str,
+    level: &str,
+    message: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO alerts (level, message, alert_key, alert_period, timestamp, dismissed)
+         VALUES (?1, ?2, ?3, ?4, datetime('now','localtime'), 0)
+         ON CONFLICT(alert_key, alert_period) DO UPDATE SET
+           level = excluded.level,
+           message = excluded.message,
+           timestamp = excluded.timestamp",
+        rusqlite::params![level, message, key, period],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-fn check_alerts(conn: &rusqlite::Connection, sessions: &[SessionData]) -> Result<(), String> {
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let today_sessions: Vec<&SessionData> = sessions.iter()
-        .filter(|s| s.start_time.starts_with(&today))
-        .collect();
-
-    // High daily cost alert
-    let today_cost: f64 = today_sessions.iter().map(|s| s.cost).sum();
-    if today_cost > 10.0 {
-        add_alert(conn, "daily_cost", "warn", &format!("Daily cost exceeds $10: ${:.2}", today_cost))?;
+fn dismiss_alert_in_connection(
+    conn: &rusqlite::Connection,
+    alert_id: i64,
+) -> Result<(), String> {
+    let updated = conn
+        .execute(
+            "UPDATE alerts SET dismissed = 1 WHERE id = ?1",
+            rusqlite::params![alert_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if updated == 0 {
+        return Err(format!("Alert not found: {alert_id}"));
     }
-
-    // High disk write alert
-    let today_disk: u64 = today_sessions.iter().map(|s| s.disk_write_bytes).sum();
-    if today_disk > 100 * 1024 * 1024 {
-        add_alert(conn, "disk_write", "danger", &format!("Excessive disk writes: {:.1} MB", today_disk as f64 / 1024.0 / 1024.0))?;
-    }
-
     Ok(())
 }
 
 fn full_scan() -> Result<usize, String> {
     let conn = ensure_db_exists()?;
 
-    let claude_sessions = scan_claude_sessions();
-    let codex_sessions = scan_codex_sessions();
-    let zcode_sessions = scan_zcode_sessions();
-    let opencode_sessions = scan_opencode_sessions();
-    let all_sessions = [claude_sessions, codex_sessions, zcode_sessions, opencode_sessions]
-        .concat()
+    let mut outcomes = vec![
+        scan_source(
+            "claude-code",
+            &get_claude_sessions_dir(),
+            None,
+            || scan_claude_sessions(&conn),
+        ),
+        scan_source(
+            "codex",
+            &get_codex_sessions_dir(),
+            None,
+            || scan_codex_sessions(&conn),
+        ),
+        scan_source(
+            "zcode",
+            &get_zcode_db_path(),
+            Some("model_usage"),
+            || Ok(FileScanResult::from_sessions(scan_zcode_sessions())),
+        ),
+        scan_source(
+            "opencode",
+            &get_opencode_db_path(),
+            Some("session"),
+            || Ok(FileScanResult::from_sessions(scan_opencode_sessions())),
+        ),
+    ];
+    let mut scanned_sessions = Vec::new();
+    for outcome in &mut outcomes {
+        scanned_sessions.append(&mut outcome.sessions);
+    }
+    let all_sessions = scanned_sessions
         .into_iter()
         .filter(|s| {
             // Keep rows with tokens OR a pre-computed cost (OpenCode writes its own cost).
             s.input_tokens + s.output_tokens + s.cache_read_tokens
                 + s.cache_creation_tokens + s.reasoning_tokens
                 > 0
-                || s.cost > 0.0
+                || s.provider_cost_amount.is_some()
         })
         .collect::<Vec<_>>();
 
@@ -1350,6 +1759,7 @@ fn full_scan() -> Result<usize, String> {
 
     let prices = load_pricing();
     let mut new_count = 0;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     for session in &all_sessions {
         let mut s = session.clone();
         s.activity_category = classify_with_intent(
@@ -1358,65 +1768,158 @@ fn full_scan() -> Result<usize, String> {
             &s.source,
             &s.user_intent,
         ).to_string();
-        // OpenCode writes its own (provider-accurate) cost into the session row.
-        // Trust it when present; otherwise recompute from tokens + our pricing table.
-        s.cost = if s.cost > 0.0 {
-            s.cost
-        } else {
-            calculate_cost(
-                s.input_tokens,
-                s.output_tokens,
-                s.cache_read_tokens,
-                s.cache_creation_tokens,
-                s.reasoning_tokens,
-                &s.model,
-                &prices,
-            )
-        };
-        upsert_session(&conn, &s)?;
+        let cost_record = build_cost_record(
+            &s.model,
+            s.input_tokens,
+            s.output_tokens,
+            s.cache_read_tokens,
+            s.cache_creation_tokens,
+            s.reasoning_tokens,
+            s.provider_cost_amount,
+            s.usage_complete,
+            find_model_price(&s.model, &prices),
+        );
+        s.cost = cost_record.cost;
+        upsert_session(&tx, &s)?;
+        cost_ledger::upsert(
+            &tx,
+            &s.session_id,
+            &s.source,
+            &s.date,
+            &cost_record,
+        )?;
         new_count += 1;
     }
+    tx.commit().map_err(|e| e.to_string())?;
 
-    check_alerts(&conn, &all_sessions)?;
+    let metadata_tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    for outcome in &mut outcomes {
+        source_status::save_fingerprints(&metadata_tx, &outcome.fingerprints)?;
+        source_status::refresh_measurement_counts(
+            &metadata_tx,
+            &mut outcome.measurement,
+        )?;
+        source_status::save_measurement(&metadata_tx, &outcome.measurement)?;
+    }
+    metadata_tx.commit().map_err(|e| e.to_string())?;
+    let budget_status = budget::get_status(&conn, pricing_cache_age_hours())?;
+    for event in budget::threshold_events(&budget_status) {
+        upsert_alert(
+            &conn,
+            &event.key,
+            &event.period,
+            &event.level,
+            &event.message,
+        )?;
+    }
 
     Ok(new_count)
 }
 
 fn get_aggregate_stats(conn: &rusqlite::Connection, start: &str, end: &str) -> Result<serde_json::Value, String> {
+    let unique_sessions: u64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM (
+                SELECT DISTINCT source, session_id
+                FROM sessions
+                WHERE date >= ?1 AND date <= ?2
+            )",
+            rusqlite::params![start, end],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
     let mut stmt = conn.prepare(
         "SELECT
-            COUNT(*) as sessions,
-            COALESCE(SUM(input_tokens), 0) as input_tokens,
-            COALESCE(SUM(output_tokens), 0) as output_tokens,
-            COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
-            COALESCE(SUM(disk_write_bytes), 0) as disk_write_bytes,
-            COALESCE(SUM(cost), 0) as cost
-        FROM sessions
-        WHERE date >= ? AND date <= ?"
+            COALESCE(SUM(s.input_tokens), 0) as input_tokens,
+            COALESCE(SUM(s.output_tokens), 0) as output_tokens,
+            COALESCE(SUM(s.cache_read_tokens), 0) as cache_read_tokens,
+            COALESCE(SUM(s.cache_creation_tokens), 0) as cache_creation_tokens,
+            COALESCE(SUM(s.reasoning_output_tokens), 0) as reasoning_output_tokens,
+            COALESCE(SUM(s.disk_write_bytes), 0) as disk_write_bytes,
+            COALESCE(SUM(sc.cost), 0) as cost
+        FROM sessions s
+        JOIN session_costs sc
+          ON sc.session_id = s.session_id AND sc.source = s.source AND sc.date = s.date
+        WHERE s.date >= ? AND s.date <= ?"
     ).map_err(|e| e.to_string())?;
 
     let result = stmt.query_row(rusqlite::params![start, end], |row| {
         Ok(serde_json::json!({
-            "sessions": row.get::<_, u64>(0)?,
-            "input_tokens": row.get::<_, u64>(1)?,
-            "output_tokens": row.get::<_, u64>(2)?,
-            "cache_read_tokens": row.get::<_, u64>(3)?,
-            "disk_write_bytes": row.get::<_, u64>(4)?,
-            "cost": row.get::<_, f64>(5)?,
+            "sessions": unique_sessions,
+            "input_tokens": row.get::<_, u64>(0)?,
+            "output_tokens": row.get::<_, u64>(1)?,
+            "cache_read_tokens": row.get::<_, u64>(2)?,
+            "cache_creation_tokens": row.get::<_, u64>(3)?,
+            "reasoning_output_tokens": row.get::<_, u64>(4)?,
+            "disk_write_bytes": row.get::<_, u64>(5)?,
+            "cost": row.get::<_, f64>(6)?,
         }))
     }).map_err(|e| e.to_string())?;
 
     Ok(result)
 }
 
+fn get_cost_quality(
+    conn: &rusqlite::Connection,
+    start: &str,
+    end: &str,
+) -> Result<CostQualitySummary, String> {
+    let (provider_cost, estimated_cost, unpriced_tokens): (f64, f64, u64) = conn
+        .query_row(
+            "SELECT
+                COALESCE(SUM(CASE WHEN sc.cost_basis = 'provider' THEN sc.cost ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN sc.cost_basis = 'estimated' THEN sc.cost ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN sc.cost_basis = 'unpriced'
+                    THEN s.input_tokens + s.output_tokens + s.cache_read_tokens
+                       + s.cache_creation_tokens + s.reasoning_output_tokens
+                    ELSE 0 END), 0)
+             FROM sessions s
+             JOIN session_costs sc
+               ON sc.session_id = s.session_id AND sc.source = s.source AND sc.date = s.date
+             WHERE s.date >= ?1 AND s.date <= ?2",
+            rusqlite::params![start, end],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let count_distinct = |predicate: &str| -> Result<u64, String> {
+        let sql = format!(
+            "SELECT COUNT(*) FROM (
+                SELECT DISTINCT s.source, s.session_id
+                FROM sessions s
+                JOIN session_costs sc
+                  ON sc.session_id = s.session_id AND sc.source = s.source AND sc.date = s.date
+                WHERE s.date >= ?1 AND s.date <= ?2 AND {predicate}
+            )"
+        );
+        conn.query_row(&sql, rusqlite::params![start, end], |row| row.get(0))
+            .map_err(|e| e.to_string())
+    };
+
+    Ok(CostQualitySummary {
+        provider_cost,
+        estimated_cost,
+        unpriced_sessions: count_distinct("sc.cost_basis = 'unpriced'")?,
+        unpriced_tokens,
+        partial_sessions: count_distinct("sc.usage_completeness = 'partial'")?,
+    })
+}
+
 fn get_top_models(conn: &rusqlite::Connection, start: &str, end: &str) -> Result<Vec<TopModel>, String> {
     let mut stmt = conn.prepare(
         "SELECT
             model,
-            COUNT(*) as calls,
+            COUNT(*) as sessions,
             SUM(cost) as cost
-        FROM sessions
-        WHERE date >= ? AND date <= ?
+        FROM (
+            SELECT s.model, s.source, s.session_id, SUM(sc.cost) AS cost
+            FROM sessions s
+            JOIN session_costs sc
+              ON sc.session_id = s.session_id AND sc.source = s.source AND sc.date = s.date
+            WHERE s.date >= ? AND s.date <= ?
+            GROUP BY s.model, s.source, s.session_id
+        )
         GROUP BY model
         ORDER BY cost DESC
         LIMIT 5"
@@ -1425,7 +1928,7 @@ fn get_top_models(conn: &rusqlite::Connection, start: &str, end: &str) -> Result
     let models = stmt.query_map(rusqlite::params![start, end], |row| {
         Ok(TopModel {
             model: row.get::<_, Option<String>>(0)?.unwrap_or_else(|| "unknown".to_string()),
-            calls: row.get::<_, u64>(1)?,
+            sessions: row.get::<_, u64>(1)?,
             cost: row.get::<_, f64>(2)?,
         })
     }).map_err(|e| e.to_string())?
@@ -1437,13 +1940,16 @@ fn get_top_models(conn: &rusqlite::Connection, start: &str, end: &str) -> Result
 
 fn get_cost_by_category(conn: &rusqlite::Connection, start: &str, end: &str) -> Result<Vec<CategoryBreakdown>, String> {
     let mut stmt = conn.prepare(
-        "SELECT COALESCE(NULLIF(activity_category,''),'other') AS key,
+        "SELECT COALESCE(NULLIF(s.activity_category_override,''), NULLIF(s.activity_category,''), 'other') AS key,
                 COUNT(*) AS sessions,
-                COALESCE(SUM(cost), 0) AS cost,
-                COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens), 0) AS tokens
-         FROM sessions
-         WHERE date >= ? AND date <= ?
-         GROUP BY COALESCE(NULLIF(activity_category,''),'other')
+                COALESCE(SUM(sc.cost), 0) AS cost,
+                COALESCE(SUM(s.input_tokens + s.output_tokens + s.cache_read_tokens
+                    + s.cache_creation_tokens + s.reasoning_output_tokens), 0) AS tokens
+         FROM sessions s
+         JOIN session_costs sc
+           ON sc.session_id = s.session_id AND sc.source = s.source AND sc.date = s.date
+         WHERE s.date >= ? AND s.date <= ?
+         GROUP BY COALESCE(NULLIF(s.activity_category_override,''), NULLIF(s.activity_category,''), 'other')
          ORDER BY cost DESC"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map(rusqlite::params![start, end], |row| {
@@ -1463,9 +1969,60 @@ fn date_range(days: i64) -> (String, String) {
     let start = if days == 0 {
         end.clone()
     } else {
-        (now - chrono::Duration::days(days)).format("%Y-%m-%d").to_string()
+        (now - chrono::Duration::days(days.saturating_sub(1)))
+            .format("%Y-%m-%d")
+            .to_string()
     };
     (start, end)
+}
+
+const ACTIVITY_CATEGORIES: [&str; 9] = [
+    "feature", "bugfix", "refactor", "docs", "research", "debug", "agent", "explore", "other",
+];
+
+fn set_activity_category_override_in_connection(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    source: &str,
+    date: &str,
+    category: Option<&str>,
+) -> Result<(), String> {
+    let category = category.map(str::trim).filter(|value| !value.is_empty());
+    if let Some(value) = category {
+        if !ACTIVITY_CATEGORIES.contains(&value) {
+            return Err(format!(
+                "Invalid activity category '{value}'. Expected one of: {}",
+                ACTIVITY_CATEGORIES.join(", ")
+            ));
+        }
+    }
+
+    let changed = conn.execute(
+        "UPDATE sessions SET activity_category_override = ?1
+         WHERE session_id = ?2 AND source = ?3 AND date = ?4",
+        rusqlite::params![category, session_id, source, date],
+    ).map_err(|e| format!("Failed to update activity category: {e}"))?;
+
+    if changed == 0 {
+        return Err(format!(
+            "Session not found for session_id='{session_id}', source='{source}', date='{date}'"
+        ));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn set_activity_category_override(
+    session_id: String,
+    source: String,
+    date: String,
+    category: Option<String>,
+) -> Result<(), String> {
+    let conn = get_db_connection()?;
+    set_activity_category_override_in_connection(
+        &conn, &session_id, &source, &date, category.as_deref(),
+    )
 }
 
 #[tauri::command]
@@ -1500,28 +2057,47 @@ fn get_data() -> Result<String, String> {
     let month_categories = get_cost_by_category(&conn, &month_start, &month_end)?;
     let all_categories = get_cost_by_category(&conn, &all_start, &all_end)?;
 
+    let today_quality = get_cost_quality(&conn, &today_start, &today_end)?;
+    let week_quality = get_cost_quality(&conn, &week_start, &week_end)?;
+    let month_quality = get_cost_quality(&conn, &month_start, &month_end)?;
+    let all_quality = get_cost_quality(&conn, &all_start, &all_end)?;
+
     // Get recent sessions
     let mut stmt = conn.prepare(
-        "SELECT session_id, source, model, project, start_time, end_time,
-                input_tokens, output_tokens, cache_read_tokens, cost, disk_write_bytes,
-                activity_category
-        FROM sessions ORDER BY date DESC, start_time DESC LIMIT 20"
+        "SELECT s.session_id, s.source, s.date, s.model,
+                COALESCE(NULLIF(s.project_display,''), NULLIF(s.project,''), 'Unknown project'),
+                s.start_time, s.end_time, s.input_tokens, s.output_tokens,
+                s.cache_read_tokens, sc.cost, s.disk_write_bytes,
+                COALESCE(NULLIF(s.activity_category_override,''), NULLIF(s.activity_category,''), 'other'),
+                COALESCE(NULLIF(s.activity_category,''), 'other'),
+                NULLIF(s.activity_category_override,''),
+                sc.cost_basis, sc.usage_completeness, sc.pricing_match
+        FROM sessions s
+        JOIN session_costs sc
+          ON sc.session_id = s.session_id AND sc.source = s.source AND sc.date = s.date
+        ORDER BY s.date DESC, s.start_time DESC LIMIT 20"
     ).map_err(|e| e.to_string())?;
 
     let recent_sessions: Vec<RecentSession> = stmt.query_map([], |row| {
         Ok(RecentSession {
             session_id: row.get(0)?,
             source: row.get(1)?,
-            model: row.get(2)?,
-            project: row.get(3)?,
-            start_time: row.get(4)?,
-            end_time: row.get(5)?,
-            input_tokens: row.get(6)?,
-            output_tokens: row.get(7)?,
-            cache_read_tokens: row.get(8)?,
-            cost: row.get(9)?,
-            disk_write_bytes: row.get(10)?,
-            activity_category: row.get::<_, Option<String>>(11)?,
+            date: row.get(2)?,
+            model: row.get(3)?,
+            project: row.get(4)?,
+            start_time: row.get(5)?,
+            end_time: row.get(6)?,
+            input_tokens: row.get(7)?,
+            output_tokens: row.get(8)?,
+            cache_read_tokens: row.get(9)?,
+            cost: row.get(10)?,
+            cost_basis: row.get(15)?,
+            usage_completeness: row.get(16)?,
+            pricing_match: row.get(17)?,
+            disk_write_bytes: row.get(11)?,
+            activity_category: row.get::<_, Option<String>>(12)?,
+            automatic_activity_category: row.get::<_, Option<String>>(13)?,
+            activity_category_override: row.get::<_, Option<String>>(14)?,
         })
     }).map_err(|e| e.to_string())?
     .filter_map(|r| r.ok())
@@ -1529,19 +2105,34 @@ fn get_data() -> Result<String, String> {
 
     // Get alerts
     let mut stmt = conn.prepare(
-        "SELECT level, message FROM alerts WHERE dismissed = 0 AND date(timestamp) = date('now','localtime') ORDER BY timestamp DESC LIMIT 10"
+        "SELECT id, level, message, alert_key, alert_period
+         FROM alerts
+         WHERE dismissed = 0 AND (
+           (length(alert_period) = 10 AND alert_period = date('now','localtime'))
+           OR
+           (length(alert_period) = 7 AND alert_period = strftime('%Y-%m','now','localtime'))
+         )
+         ORDER BY timestamp DESC
+         LIMIT 10"
     ).map_err(|e| e.to_string())?;
 
     let alerts: Vec<Alert> = stmt.query_map([], |row| {
         Ok(Alert {
-            level: row.get(0)?,
-            message: row.get(1)?,
+            id: row.get(0)?,
+            level: row.get(1)?,
+            message: row.get(2)?,
+            alert_key: row.get(3)?,
+            alert_period: row.get(4)?,
         })
     }).map_err(|e| e.to_string())?
     .filter_map(|r| r.ok())
     .collect();
 
-    let to_daily_summary = |stats: &serde_json::Value, models: Vec<TopModel>, by_category: Vec<CategoryBreakdown>| -> DailySummary {
+    let to_daily_summary = |stats: &serde_json::Value,
+                            models: Vec<TopModel>,
+                            by_category: Vec<CategoryBreakdown>,
+                            cost_quality: CostQualitySummary|
+     -> DailySummary {
         DailySummary {
             date: String::new(),
             sessions: stats["sessions"].as_u64().unwrap_or(0),
@@ -1549,19 +2140,22 @@ fn get_data() -> Result<String, String> {
                 input_tokens: stats["input_tokens"].as_u64().unwrap_or(0),
                 output_tokens: stats["output_tokens"].as_u64().unwrap_or(0),
                 cache_read_tokens: stats["cache_read_tokens"].as_u64().unwrap_or(0),
+                cache_creation_tokens: stats["cache_creation_tokens"].as_u64().unwrap_or(0),
+                reasoning_output_tokens: stats["reasoning_output_tokens"].as_u64().unwrap_or(0),
             },
             cost: stats["cost"].as_f64().unwrap_or(0.0),
             disk_write_bytes: stats["disk_write_bytes"].as_u64().unwrap_or(0),
             top_models: models,
             by_category,
+            cost_quality,
         }
     };
 
     let data = DashboardData {
-        today: to_daily_summary(&today_stats, today_models, today_categories),
-        week: to_daily_summary(&week_stats, week_models, week_categories),
-        month: to_daily_summary(&month_stats, month_models, month_categories),
-        all_time: to_daily_summary(&all_stats, all_models, all_categories),
+        today: to_daily_summary(&today_stats, today_models, today_categories, today_quality),
+        week: to_daily_summary(&week_stats, week_models, week_categories, week_quality),
+        month: to_daily_summary(&month_stats, month_models, month_categories, month_quality),
+        all_time: to_daily_summary(&all_stats, all_models, all_categories, all_quality),
         recent_sessions: recent_sessions,
         alerts: alerts,
     };
@@ -1573,6 +2167,70 @@ fn get_data() -> Result<String, String> {
 fn scan() -> Result<String, String> {
     let count = full_scan()?;
     Ok(format!("Scanned {} sessions", count))
+}
+
+#[tauri::command]
+fn dismiss_alert(alert_id: i64) -> Result<(), String> {
+    let conn = ensure_db_exists()?;
+    dismiss_alert_in_connection(&conn, alert_id)
+}
+
+#[tauri::command]
+fn get_source_status() -> Result<Vec<source_status::SourceStatus>, String> {
+    let conn = ensure_db_exists()?;
+    source_status::load_statuses(
+        &conn,
+        &[
+            ("claude-code", get_claude_sessions_dir()),
+            ("codex", get_codex_sessions_dir()),
+            ("zcode", get_zcode_db_path()),
+            ("opencode", get_opencode_db_path()),
+        ],
+    )
+}
+
+#[tauri::command]
+fn get_analytics(
+    range: String,
+    filters: Option<analytics::AnalyticsFilters>,
+) -> Result<analytics::AnalyticsResponse, String> {
+    let conn = ensure_db_exists()?;
+    analytics::get_analytics(&conn, &range, filters.unwrap_or_default())
+}
+
+fn pricing_cache_age_hours() -> Option<i64> {
+    let content = fs::read_to_string(get_pricing_cache_path()).ok()?;
+    let cache = serde_json::from_str::<PricingCache>(&content).ok()?;
+    let fetched_at = chrono::DateTime::parse_from_rfc3339(&cache.fetched_at).ok()?;
+    Some(
+        chrono::Utc::now()
+            .signed_duration_since(fetched_at.with_timezone(&chrono::Utc))
+            .num_hours()
+            .max(0),
+    )
+}
+
+#[tauri::command]
+fn get_monthly_budget() -> Result<budget::BudgetStatus, String> {
+    let conn = ensure_db_exists()?;
+    budget::get_status(&conn, pricing_cache_age_hours())
+}
+
+#[tauri::command]
+fn set_monthly_budget(amount_usd: Option<f64>) -> Result<budget::BudgetStatus, String> {
+    let conn = ensure_db_exists()?;
+    budget::set_budget(&conn, amount_usd)?;
+    let status = budget::get_status(&conn, pricing_cache_age_hours())?;
+    for event in budget::threshold_events(&status) {
+        upsert_alert(
+            &conn,
+            &event.key,
+            &event.period,
+            &event.level,
+            &event.message,
+        )?;
+    }
+    Ok(status)
 }
 
 #[tauri::command]
@@ -1711,7 +2369,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![resize_window, get_data, scan, close_window, check_for_updates])
+        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, close_window, check_for_updates])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
             window.set_always_on_top(true).ok();
@@ -1875,33 +2533,68 @@ mod tests {
 
     #[test]
     fn test_dashboard_json_keys() {
+        let empty_quality = || CostQualitySummary {
+            provider_cost: 0.0,
+            estimated_cost: 0.0,
+            unpriced_sessions: 0,
+            unpriced_tokens: 0,
+            partial_sessions: 0,
+        };
         let data = DashboardData {
             today: DailySummary {
                 date: "2026-06-25".to_string(),
                 sessions: 5,
-                token_usage: TokenUsage { input_tokens: 100, output_tokens: 200, cache_read_tokens: 50 },
+                token_usage: TokenUsage {
+                    input_tokens: 100,
+                    output_tokens: 200,
+                    cache_read_tokens: 50,
+                    cache_creation_tokens: 25,
+                    reasoning_output_tokens: 10,
+                },
                 cost: 1.23,
                 disk_write_bytes: 1024,
-                top_models: vec![TopModel { model: "test".to_string(), calls: 3, cost: 0.5 }],
+                top_models: vec![TopModel { model: "test".to_string(), sessions: 3, cost: 0.5 }],
                 by_category: vec![],
+                cost_quality: empty_quality(),
             },
             week: DailySummary {
                 date: String::new(), sessions: 0,
-                token_usage: TokenUsage { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 },
+                token_usage: TokenUsage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_creation_tokens: 0,
+                    reasoning_output_tokens: 0,
+                },
                 cost: 0.0, disk_write_bytes: 0, top_models: vec![],
                 by_category: vec![],
+                cost_quality: empty_quality(),
             },
             month: DailySummary {
                 date: String::new(), sessions: 0,
-                token_usage: TokenUsage { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 },
+                token_usage: TokenUsage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_creation_tokens: 0,
+                    reasoning_output_tokens: 0,
+                },
                 cost: 0.0, disk_write_bytes: 0, top_models: vec![],
                 by_category: vec![],
+                cost_quality: empty_quality(),
             },
             all_time: DailySummary {
                 date: String::new(), sessions: 0,
-                token_usage: TokenUsage { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 },
+                token_usage: TokenUsage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_creation_tokens: 0,
+                    reasoning_output_tokens: 0,
+                },
                 cost: 0.0, disk_write_bytes: 0, top_models: vec![],
                 by_category: vec![],
+                cost_quality: empty_quality(),
             },
             recent_sessions: vec![],
             alerts: vec![],
@@ -1915,8 +2608,11 @@ mod tests {
         assert!(json.contains("\"inputTokens\""), "Expected 'inputTokens' but got: {}", json);
         assert!(json.contains("\"outputTokens\""), "Expected 'outputTokens' but got: {}", json);
         assert!(json.contains("\"cacheReadTokens\""), "Expected 'cacheReadTokens' but got: {}", json);
+        assert!(json.contains("\"cacheCreationTokens\""), "Expected 'cacheCreationTokens' but got: {}", json);
+        assert!(json.contains("\"reasoningOutputTokens\""), "Expected 'reasoningOutputTokens' but got: {}", json);
         assert!(json.contains("\"diskWriteBytes\""), "Expected 'diskWriteBytes' but got: {}", json);
         assert!(json.contains("\"topModels\""), "Expected 'topModels' but got: {}", json);
+        assert!(json.contains("\"costQuality\""), "Expected 'costQuality' but got: {}", json);
         assert!(json.contains("\"allTime\""), "Expected 'allTime' but got: {}", json);
         assert!(json.contains("\"recentSessions\""), "Expected 'recentSessions' but got: {}", json);
         assert!(json.contains("\"byCategory\""), "Expected 'byCategory' but got: {}", json);
@@ -1927,6 +2623,7 @@ mod tests {
         let session = RecentSession {
             session_id: "abc".to_string(),
             source: "claude-code".to_string(),
+            date: "2026-07-06".to_string(),
             model: Some("claude-4-sonnet".to_string()),
             project: Some("myproj".to_string()),
             start_time: Some("2026-07-06T10:00:00".to_string()),
@@ -1935,8 +2632,13 @@ mod tests {
             output_tokens: 50,
             cache_read_tokens: 0,
             cost: 0.05,
+            cost_basis: "estimated".to_string(),
+            usage_completeness: "complete".to_string(),
+            pricing_match: "exact".to_string(),
             disk_write_bytes: 0,
             activity_category: Some("feature".to_string()),
+            automatic_activity_category: Some("feature".to_string()),
+            activity_category_override: None,
         };
         let json = serde_json::to_string(&session).unwrap();
         assert!(json.contains("\"activityCategory\":\"feature\""), "Expected activityCategory in JSON but got: {}", json);
@@ -2136,8 +2838,21 @@ mod tests {
 
     #[test]
     fn test_ensure_db_migration_adds_activity_columns() {
-        let conn = ensure_db_exists().expect("ensure_db_exists should succeed");
-        for col in ["activity_category", "tool_calls", "git_branch"] {
+        let dir = std::env::temp_dir().join(format!(
+            "costdog_test_migration_{}_{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let db_path = dir.join("costdog.sqlite");
+        let conn = ensure_db_exists_at(&db_path).expect("ensure_db_exists_at should succeed");
+        for col in [
+            "activity_category",
+            "activity_category_override",
+            "tool_calls",
+            "git_branch",
+            "project_key",
+            "project_display",
+        ] {
             let count: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?1",
                 rusqlite::params![col],
@@ -2145,6 +2860,305 @@ mod tests {
             ).unwrap();
             assert_eq!(count, 1, "column {} should exist after migration", col);
         }
+        for table in ["session_costs", "scan_files", "source_scan_status", "app_settings"] {
+            let table_exists: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                rusqlite::params![table],
+                |row| row.get(0),
+            ).unwrap();
+            assert_eq!(table_exists, 1, "table {table} should exist after migration");
+        }
+        drop(conn);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn v024_database_migrates_without_losing_sessions_or_alerts() {
+        let dir = std::env::temp_dir().join(format!(
+            "costdog_test_v024_migration_{}_{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("costdog.sqlite");
+        {
+            let legacy = rusqlite::Connection::open(&db_path).unwrap();
+            legacy
+                .execute_batch(
+                    "CREATE TABLE sessions (
+                        session_id TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        model TEXT,
+                        project TEXT,
+                        start_time TEXT,
+                        end_time TEXT,
+                        input_tokens INTEGER DEFAULT 0,
+                        output_tokens INTEGER DEFAULT 0,
+                        cache_read_tokens INTEGER DEFAULT 0,
+                        cache_creation_tokens INTEGER DEFAULT 0,
+                        reasoning_output_tokens INTEGER DEFAULT 0,
+                        disk_write_bytes INTEGER DEFAULT 0,
+                        cost REAL DEFAULT 0,
+                        scanned_at TEXT,
+                        PRIMARY KEY (session_id, source)
+                    );
+                    INSERT INTO sessions (
+                        session_id, source, model, project, start_time, end_time,
+                        input_tokens, output_tokens, cache_read_tokens,
+                        cache_creation_tokens, reasoning_output_tokens,
+                        disk_write_bytes, cost, scanned_at
+                    ) VALUES (
+                        'legacy-session', 'codex', 'gpt-legacy', '/tmp/legacy',
+                        '2026-07-25T12:00:00Z', '2026-07-25T12:05:00Z',
+                        100, 20, 5, 0, 3, 0, 1.25, '2026-07-25 12:06:00'
+                    );
+                    CREATE TABLE alerts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        level TEXT NOT NULL,
+                        message TEXT NOT NULL,
+                        alert_key TEXT,
+                        timestamp TEXT,
+                        dismissed INTEGER DEFAULT 0
+                    );
+                    INSERT INTO alerts(level,message,alert_key,timestamp)
+                      VALUES ('warn','old amount','daily_cost','2026-07-25 12:00:00');
+                    INSERT INTO alerts(level,message,alert_key,timestamp)
+                      VALUES ('warn','new amount','daily_cost','2026-07-25 12:01:00');",
+                )
+                .unwrap();
+        }
+
+        let conn = ensure_db_exists_at(&db_path).unwrap();
+        let (date, input_tokens, cost): (String, u64, f64) = conn
+            .query_row(
+                "SELECT date, input_tokens, cost FROM sessions
+                 WHERE session_id='legacy-session' AND source='codex'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(date, "2026-07-25");
+        assert_eq!(input_tokens, 100);
+        assert!((cost - 1.25).abs() < f64::EPSILON);
+
+        let (ledger_cost, basis, completeness): (f64, String, String) = conn
+            .query_row(
+                "SELECT cost, cost_basis, usage_completeness FROM session_costs
+                 WHERE session_id='legacy-session' AND source='codex'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert!((ledger_cost - 1.25).abs() < f64::EPSILON);
+        assert_eq!(basis, "estimated");
+        assert_eq!(completeness, "partial");
+
+        let alert_count: u64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM alerts
+                 WHERE alert_key='daily_cost' AND alert_period='2026-07-25'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(alert_count, 1);
+        drop(conn);
+
+        let second = ensure_db_exists_at(&db_path).unwrap();
+        let session_count: u64 = second
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE session_id='legacy-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(session_count, 1);
+        drop(second);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn date_ranges_use_inclusive_calendar_days() {
+        let (start, end) = date_range(7);
+        let start = chrono::NaiveDate::parse_from_str(&start, "%Y-%m-%d").unwrap();
+        let end = chrono::NaiveDate::parse_from_str(&end, "%Y-%m-%d").unwrap();
+        assert_eq!((end - start).num_days(), 6);
+
+        let (start, end) = date_range(30);
+        let start = chrono::NaiveDate::parse_from_str(&start, "%Y-%m-%d").unwrap();
+        let end = chrono::NaiveDate::parse_from_str(&end, "%Y-%m-%d").unwrap();
+        assert_eq!((end - start).num_days(), 29);
+    }
+
+    fn alert_test_connection() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                level TEXT NOT NULL,
+                message TEXT NOT NULL,
+                alert_key TEXT,
+                alert_period TEXT,
+                timestamp TEXT DEFAULT (datetime('now')),
+                dismissed INTEGER DEFAULT 0
+            );
+            CREATE UNIQUE INDEX idx_alerts_key_period_unique
+              ON alerts(alert_key, alert_period);",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn alert_upsert_is_unique_and_preserves_dismissal_within_period() {
+        let conn = alert_test_connection();
+        upsert_alert(&conn, "synthetic", "2026-07", "warn", "first").unwrap();
+        let alert_id: i64 = conn
+            .query_row("SELECT id FROM alerts", [], |row| row.get(0))
+            .unwrap();
+        dismiss_alert_in_connection(&conn, alert_id).unwrap();
+        upsert_alert(&conn, "synthetic", "2026-07", "danger", "updated").unwrap();
+
+        let (count, dismissed, level, message): (u64, bool, String, String) = conn
+            .query_row(
+                "SELECT COUNT(*), dismissed, level, message FROM alerts
+                 WHERE alert_key='synthetic' AND alert_period='2026-07'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        assert!(dismissed);
+        assert_eq!(level, "danger");
+        assert_eq!(message, "updated");
+    }
+
+    #[test]
+    fn dismiss_alert_reports_unknown_id() {
+        let conn = alert_test_connection();
+        let error = dismiss_alert_in_connection(&conn, 404).unwrap_err();
+        assert!(error.contains("404"));
+    }
+
+    fn override_test_connection() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions (
+                session_id TEXT NOT NULL, source TEXT NOT NULL, date TEXT NOT NULL,
+                model TEXT, project TEXT, project_key TEXT, project_display TEXT,
+                start_time TEXT, end_time TEXT,
+                input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
+                cache_read_tokens INTEGER DEFAULT 0, cache_creation_tokens INTEGER DEFAULT 0,
+                reasoning_output_tokens INTEGER DEFAULT 0, disk_write_bytes INTEGER DEFAULT 0,
+                cost REAL DEFAULT 0, scanned_at TEXT, activity_category TEXT,
+                activity_category_override TEXT, tool_calls TEXT, git_branch TEXT,
+                PRIMARY KEY (session_id, source, date)
+            );"
+        ).unwrap();
+        cost_ledger::ensure_schema(&conn).unwrap();
+        conn
+    }
+
+    fn override_test_session(category: &str) -> SessionData {
+        SessionData {
+            session_id: "session-1".to_string(), source: "codex".to_string(),
+            date: "2026-07-16".to_string(), model: "gpt-test".to_string(),
+            project: "costdog".to_string(), start_time: "2026-07-16T08:00:00".to_string(),
+            end_time: "2026-07-16T08:05:00".to_string(), input_tokens: 100,
+            output_tokens: 20, cache_read_tokens: 5, cache_creation_tokens: 0,
+            reasoning_tokens: 0, disk_write_bytes: 0, cost: 1.5,
+            provider_cost_amount: None, usage_complete: true,
+            tool_calls: HashMap::new(), git_branch: None,
+            activity_category: category.to_string(), user_intent: String::new(),
+        }
+    }
+
+    fn upsert_override_test_session(
+        conn: &rusqlite::Connection,
+        category: &str,
+    ) -> Result<(), String> {
+        let session = override_test_session(category);
+        upsert_session(conn, &session)?;
+        let record = build_cost_record(
+            &session.model,
+            session.input_tokens,
+            session.output_tokens,
+            session.cache_read_tokens,
+            session.cache_creation_tokens,
+            session.reasoning_tokens,
+            Some(session.cost),
+            session.usage_complete,
+            None,
+        );
+        cost_ledger::upsert(
+            conn,
+            &session.session_id,
+            &session.source,
+            &session.date,
+            &record,
+        )
+    }
+
+    #[test]
+    fn activity_override_survives_session_rescan_and_can_be_cleared() {
+        let conn = override_test_connection();
+        upsert_override_test_session(&conn, "feature").unwrap();
+        set_activity_category_override_in_connection(
+            &conn, "session-1", "codex", "2026-07-16", Some("docs"),
+        ).unwrap();
+
+        upsert_override_test_session(&conn, "bugfix").unwrap();
+        let (automatic, manual, effective): (String, Option<String>, String) = conn.query_row(
+            "SELECT activity_category, activity_category_override,
+                    COALESCE(activity_category_override, activity_category, 'other')
+             FROM sessions WHERE session_id='session-1' AND source='codex' AND date='2026-07-16'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(automatic, "bugfix");
+        assert_eq!(manual.as_deref(), Some("docs"));
+        assert_eq!(effective, "docs");
+
+        set_activity_category_override_in_connection(
+            &conn, "session-1", "codex", "2026-07-16", None,
+        ).unwrap();
+        let manual: Option<String> = conn.query_row(
+            "SELECT activity_category_override FROM sessions WHERE session_id='session-1'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(manual, None);
+    }
+
+    #[test]
+    fn activity_override_validates_category_and_full_session_key() {
+        let conn = override_test_connection();
+        upsert_override_test_session(&conn, "feature").unwrap();
+
+        let invalid = set_activity_category_override_in_connection(
+            &conn, "session-1", "codex", "2026-07-16", Some("custom"),
+        ).unwrap_err();
+        assert!(invalid.contains("Invalid activity category"));
+
+        let missing = set_activity_category_override_in_connection(
+            &conn, "session-1", "codex", "2026-07-17", Some("docs"),
+        ).unwrap_err();
+        assert!(missing.contains("Session not found"));
+    }
+
+    #[test]
+    fn category_breakdown_uses_manual_override() {
+        let conn = override_test_connection();
+        upsert_override_test_session(&conn, "feature").unwrap();
+        set_activity_category_override_in_connection(
+            &conn, "session-1", "codex", "2026-07-16", Some("docs"),
+        ).unwrap();
+
+        let categories = get_cost_by_category(&conn, "2026-07-16", "2026-07-16").unwrap();
+        assert_eq!(categories.len(), 1);
+        assert_eq!(categories[0].key, "docs");
+        assert_eq!(categories[0].sessions, 1);
+        assert!((categories[0].cost - 1.5).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -2185,6 +3199,44 @@ mod tests {
 
         // cleanup
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unchanged_claude_jsonl_is_not_parsed_twice() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        source_status::ensure_schema(&conn).unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "costdog_incremental_claude_{}_{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let project = root.join("test-project");
+        std::fs::create_dir_all(&project).unwrap();
+        let path = project.join("session.jsonl");
+        let assistant = serde_json::json!({
+            "type": "assistant",
+            "sessionId": "incremental-session",
+            "timestamp": "2026-07-27T08:00:00Z",
+            "cwd": "/tmp/incremental",
+            "message": {
+                "model": "claude-test",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": []
+            }
+        });
+        std::fs::write(&path, format!("not-json\n{assistant}\n")).unwrap();
+
+        let first = scan_claude_directory(&conn, &root).unwrap();
+        assert_eq!(first.sessions.len(), 1);
+        assert_eq!(first.malformed_lines, 1);
+        assert_eq!(first.skipped_files, 0);
+        source_status::save_fingerprints(&conn, &first.fingerprints).unwrap();
+
+        let second = scan_claude_directory(&conn, &root).unwrap();
+        assert!(second.sessions.is_empty());
+        assert_eq!(second.malformed_lines, 0);
+        assert_eq!(second.skipped_files, 1);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -2236,6 +3288,8 @@ mod tests {
             reasoning_tokens: 0,
             disk_write_bytes: 0,
             cost: 0.0,
+            provider_cost_amount: None,
+            usage_complete: true,
             tool_calls: HashMap::new(),
             git_branch: None,
             activity_category: "other".to_string(),

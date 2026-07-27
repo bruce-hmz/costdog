@@ -43,7 +43,7 @@ function printSection(title: string, data: any) {
     console.log(chalk.cyan('│'));
     console.log(chalk.cyan('│') + chalk.bold('  Top Models:'));
     for (const m of data.topModels.slice(0, 3)) {
-      console.log(chalk.cyan('│') + `    ${pad(m.model, 25)} ${chalk.gray(`${m.calls} calls`)}  ${chalk.red(formatCost(m.cost))}`);
+      console.log(chalk.cyan('│') + `    ${pad(m.model, 25)} ${chalk.gray(`${m.sessions} sessions`)}  ${chalk.red(formatCost(m.cost))}`);
     }
   }
   console.log(chalk.cyan('└' + '─'.repeat(55)));
@@ -183,11 +183,11 @@ async function main() {
     }
 
     case 'desktop': {
-      // Start web server + open browser mini-dashboard
+      // Keep the compatibility command, but use the canonical Web dashboard.
       const { startWebServer } = await import('../web/server');
       const port = 3456;
       startWebServer(port);
-      console.log(chalk.gray(`\n  Mini-dashboard: http://localhost:${port}\n`));
+      console.log(chalk.gray(`\n  Dashboard: http://127.0.0.1:${port}/\n`));
       console.log(chalk.bold('  Tip: Open in a small browser window and pin it to your desktop'));
       console.log(chalk.gray('  For native desktop widget, run: npm run tauri:build\n'));
       break;
@@ -204,7 +204,7 @@ async function main() {
       console.log('  watch [sec]     Auto-refresh dashboard (default 60s)');
       console.log('  pricing, p      Show model pricing from OpenRouter');
       console.log('  web [port]      Start web dashboard server');
-      console.log('  desktop         Start web + show mini-dashboard URL');
+      console.log('  desktop         Start web + show dashboard URL');
       console.log('  help, h         Show this help');
       console.log();
       console.log('Environment:');

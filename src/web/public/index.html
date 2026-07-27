@@ -94,7 +94,7 @@
         <div class="card-label">Recent Sessions</div>
         <table>
           <thead>
-            <tr><th>Source</th><th>Model</th><th>Project</th><th>Input</th><th>Output</th><th>Disk</th><th>Cost</th></tr>
+            <tr><th>Source</th><th>Model</th><th>Project</th><th>Input</th><th>Output</th><th>Cost</th></tr>
           </thead>
           <tbody id="sessionsBody"></tbody>
         </table>
@@ -118,11 +118,10 @@
       if (n >= 1) return '$' + n.toFixed(2);
       return '$' + n.toFixed(4);
     }
-    function fmtBytes(n) {
-      if (n >= 1073741824) return (n/1073741824).toFixed(1) + ' GB';
-      if (n >= 1048576) return (n/1048576).toFixed(1) + ' MB';
-      if (n >= 1024) return (n/1024).toFixed(1) + ' KB';
-      return n + ' B';
+    function esc(value) {
+      const node = document.createElement('span');
+      node.textContent = String(value ?? '');
+      return node.innerHTML;
     }
 
     function renderDashboard() {
@@ -135,7 +134,7 @@
         <div class="card"><div class="card-label">Sessions</div><div class="card-value sessions-count">${d.sessions}</div></div>
         <div class="card"><div class="card-label">Total Cost</div><div class="card-value cost">${fmtCost(d.cost)}</div><div class="card-sub">Input: ${fmtTokens(d.tokenUsage.inputTokens)} · Output: ${fmtTokens(d.tokenUsage.outputTokens)}</div></div>
         <div class="card"><div class="card-label">Cache Read</div><div class="card-value tokens-in">${fmtTokens(d.tokenUsage.cacheReadTokens)}</div><div class="card-sub">tokens saved from cache</div></div>
-        <div class="card"><div class="card-label">Disk Writes</div><div class="card-value disk">${fmtBytes(d.diskWriteBytes)}</div><div class="card-sub">from Write/Edit tools</div></div>
+        <div class="card"><div class="card-label">Cache Creation</div><div class="card-value tokens-in">${fmtTokens(d.tokenUsage.cacheCreationTokens||0)}</div><div class="card-sub">tokens written to cache</div></div>
       `;
 
       // Model chart
@@ -146,9 +145,9 @@
         ? '<div class="empty">No data</div>'
         : models.map((m, i) => `
           <div class="chart-bar">
-            <div class="chart-bar-label">${m.model}</div>
+            <div class="chart-bar-label">${esc(m.model)}</div>
             <div class="chart-bar-fill" style="width:${Math.max(2,(m.cost/maxCost)*100)}%;background:${colors[i%colors.length]}"></div>
-            <div class="chart-bar-value">${fmtCost(m.cost)} (${m.calls} calls)</div>
+            <div class="chart-bar-value">${fmtCost(m.cost)} (${m.sessions ?? 0} sessions)</div>
           </div>
         `).join('');
 
@@ -157,22 +156,21 @@
       document.getElementById('alerts').innerHTML = alerts.map(a => `
         <div class="alert alert-${a.level}">
           <span>${a.level==='danger'?'🔴':a.level==='warn'?'🟡':'🔵'}</span>
-          <span>${a.message}</span>
+          <span>${esc(a.message)}</span>
         </div>
       `).join('');
 
       // Sessions table
       const sessions = dashData.recentSessions || [];
       document.getElementById('sessionsBody').innerHTML = sessions.length === 0
-        ? '<tr><td colspan="7" class="empty">No sessions found</td></tr>'
+        ? '<tr><td colspan="6" class="empty">No sessions found</td></tr>'
         : sessions.slice(0, 15).map(s => `
           <tr>
-            <td><span class="source-badge source-${s.source}">${s.source}</span></td>
-            <td>${s.model||'-'}</td>
-            <td>${s.project||'-'}</td>
+            <td><span class="source-badge source-${['claude-code','codex','zcode','opencode'].includes(s.source)?s.source:'codex'}">${esc(s.source)}</span></td>
+            <td>${esc(s.model||'-')}</td>
+            <td>${esc(s.project||'-')}</td>
             <td class="tokens-in">${fmtTokens(s.input_tokens||0)}</td>
             <td class="tokens-out">${fmtTokens(s.output_tokens||0)}</td>
-            <td class="disk">${fmtBytes(s.disk_write_bytes||0)}</td>
             <td class="cost">${fmtCost(s.cost||0)}</td>
           </tr>
         `).join('');
@@ -187,7 +185,9 @@
         document.getElementById('lastScan').textContent = 'Updated: ' + new Date().toLocaleTimeString();
         renderDashboard();
       } catch(e) {
-        document.getElementById('loading').innerHTML = '<div class="empty">Failed to load data: '+e.message+'</div>';
+        const loading = document.getElementById('loading');
+        loading.textContent = 'Failed to load data: ' + e.message;
+        loading.className = 'empty';
       }
     }
 

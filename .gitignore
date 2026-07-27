@@ -9,3 +9,5 @@ src-tauri/gen/
 .DS_Store
 Thumbs.db
 .omx/
+.playwright-cli/
+output/playwright/

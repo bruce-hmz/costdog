@@ -6,21 +6,7 @@ import { loadPricing } from '../utils/pricing';
 const app = express();
 const PORT = process.env.COSTDOG_PORT || 3456;
 
-// CORS support for Tauri app
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
-  next();
-});
-
 app.use(express.static(path.join(__dirname, 'public')));
-
-// Mini-dashboard for Tauri desktop widget
-app.get('/mini', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'mini-dashboard', 'index.html'));
-});
 
 // API: Full scan and return dashboard data
 app.get('/api/dashboard', async (req, res) => {
@@ -54,9 +40,11 @@ app.get('/api/pricing', async (req, res) => {
 });
 
 export function startWebServer(port?: number) {
-  const p = port || Number(PORT);
-  app.listen(p, () => {
-    console.log(`🐕 CostDog web dashboard: http://localhost:${p}`);
+  const p = port ?? Number(PORT);
+  const server = app.listen(p, '127.0.0.1', () => {
+    const address = server.address();
+    const listeningPort = typeof address === 'object' && address ? address.port : p;
+    console.log(`🐕 CostDog web dashboard: http://127.0.0.1:${listeningPort}`);
   });
-  return app;
+  return server;
 }

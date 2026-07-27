@@ -45,6 +45,7 @@ export function getDb(): Database.Database {
       level TEXT NOT NULL,
       message TEXT NOT NULL,
       alert_key TEXT,
+      alert_period TEXT,
       timestamp TEXT DEFAULT (datetime('now')),
       dismissed INTEGER DEFAULT 0
     );
@@ -55,6 +56,24 @@ export function getDb(): Database.Database {
   if (!alertCols.some(c => c.name === 'alert_key')) {
     _db.exec('ALTER TABLE alerts ADD COLUMN alert_key TEXT');
   }
+  if (!alertCols.some(c => c.name === 'alert_period')) {
+    _db.exec('ALTER TABLE alerts ADD COLUMN alert_period TEXT');
+  }
+  _db.exec(`
+    UPDATE alerts
+    SET alert_period = date(timestamp)
+    WHERE alert_key IS NOT NULL
+      AND (alert_period IS NULL OR alert_period = '');
+    DELETE FROM alerts
+    WHERE alert_key IS NOT NULL AND alert_period IS NOT NULL
+      AND id NOT IN (
+        SELECT MAX(id) FROM alerts
+        WHERE alert_key IS NOT NULL AND alert_period IS NOT NULL
+        GROUP BY alert_key, alert_period
+      );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_key_period_unique
+      ON alerts(alert_key, alert_period);
+  `);
 
   // Migration: per-day attribution. Old sessions table had PK (session_id, source) and no
   // date column, so a session spanning midnight was bucketed to its start day only. Recreate
@@ -187,7 +206,14 @@ export function getAggregateStats(startDate: string, endDate: string) {
   const db = getDb();
   return db.prepare(`
     SELECT
-      COUNT(*) as sessions,
+      (
+        SELECT COUNT(*) FROM (
+          SELECT session_id, source
+          FROM sessions
+          WHERE date >= ? AND date <= ?
+          GROUP BY session_id, source
+        )
+      ) as sessions,
       COALESCE(SUM(input_tokens), 0) as input_tokens,
       COALESCE(SUM(output_tokens), 0) as output_tokens,
       COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
@@ -195,7 +221,7 @@ export function getAggregateStats(startDate: string, endDate: string) {
       COALESCE(SUM(cost), 0) as cost
     FROM sessions
     WHERE date >= ? AND date <= ?
-  `).get(startDate, endDate) as any;
+  `).get(startDate, endDate, startDate, endDate) as any;
 }
 
 /**
@@ -206,12 +232,22 @@ export function getTopModels(startDate: string, endDate: string, limit = 5) {
   return db.prepare(`
     SELECT
       model,
-      COUNT(*) as calls,
+      COUNT(*) as sessions,
       SUM(input_tokens) as input_tokens,
       SUM(output_tokens) as output_tokens,
       SUM(cost) as cost
-    FROM sessions
-    WHERE date >= ? AND date <= ?
+    FROM (
+      SELECT
+        model,
+        source,
+        session_id,
+        SUM(input_tokens) as input_tokens,
+        SUM(output_tokens) as output_tokens,
+        SUM(cost) as cost
+      FROM sessions
+      WHERE date >= ? AND date <= ?
+      GROUP BY model, source, session_id
+    )
     GROUP BY model
     ORDER BY cost DESC
     LIMIT ?
@@ -233,18 +269,16 @@ export function getRecentSessions(limit = 20) {
 /**
  * Add an alert
  */
-export function addAlert(key: string, level: string, message: string) {
+export function addAlert(key: string, period: string, level: string, message: string) {
   const db = getDb();
-  // One row per (key, day): refresh today's existing row (keeps amount fresh), else insert.
-  const res = db.prepare(
-    `UPDATE alerts SET message = ?, level = ?, timestamp = datetime('now','localtime'), dismissed = 0
-     WHERE alert_key = ? AND date(timestamp) = date('now','localtime')`
-  ).run(message, level, key);
-  if (res.changes === 0) {
-    db.prepare(
-      `INSERT INTO alerts (level, message, alert_key, timestamp) VALUES (?, ?, ?, datetime('now','localtime'))`
-    ).run(level, message, key);
-  }
+  db.prepare(`
+    INSERT INTO alerts (level, message, alert_key, alert_period, timestamp, dismissed)
+    VALUES (?, ?, ?, ?, datetime('now','localtime'), 0)
+    ON CONFLICT(alert_key, alert_period) DO UPDATE SET
+      level = excluded.level,
+      message = excluded.message,
+      timestamp = excluded.timestamp
+  `).run(level, message, key, period);
 }
 
 /**

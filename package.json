@@ -1,13 +1,15 @@
 {
   "name": "costdog",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "🐕 Cost & resource monitor for Claude Code and Codex CLI",
   "main": "dist/cli/index.js",
   "bin": {
     "costdog": "dist/cli/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-web-assets.mjs",
+    "test:ts": "tsx --test tests/**/*.test.ts",
+    "test:web": "npm run build && node scripts/web-smoke.mjs",
     "dev": "tsx src/cli/index.ts",
     "dev:web": "tsx src/cli/index.ts web",
     "start": "node dist/cli/index.js",
