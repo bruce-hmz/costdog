@@ -198,7 +198,9 @@ pub fn upsert(
             cost_formula_version = excluded.cost_formula_version,
             usage_fingerprint = excluded.usage_fingerprint,
             priced_at = datetime('now')
-         WHERE session_costs.usage_fingerprint <> excluded.usage_fingerprint",
+         WHERE session_costs.usage_fingerprint <> excluded.usage_fingerprint
+            OR (session_costs.cost_basis = 'unpriced'
+                AND excluded.cost_basis IN ('provider', 'estimated'))",
         params![
             session_id,
             source,
@@ -310,5 +312,44 @@ mod tests {
             )
             .unwrap();
         assert_eq!(priced_at, "2026-01-01 00:00:00");
+    }
+
+    #[test]
+    fn unpriced_session_is_upgraded_when_pricing_becomes_available() {
+        let conn = test_connection();
+        let unpriced = build_cost_record("provider/model", 100, 20, 0, 0, 0, None, true, None);
+        let priced = build_cost_record(
+            "provider/model",
+            100,
+            20,
+            0,
+            0,
+            0,
+            None,
+            true,
+            Some(ResolvedPrice {
+                model_id: "provider/model".to_string(),
+                match_kind: "exact",
+                input_per_m: 2.0,
+                output_per_m: 4.0,
+                cache_read_per_m: 0.2,
+                cache_creation_per_m: 2.5,
+            }),
+        );
+
+        assert_eq!(unpriced.usage_fingerprint, priced.usage_fingerprint);
+        upsert(&conn, "s1", "codex", "2026-07-27", &unpriced).unwrap();
+        upsert(&conn, "s1", "codex", "2026-07-27", &priced).unwrap();
+
+        let (basis, cost, model): (String, f64, Option<String>) = conn
+            .query_row(
+                "SELECT cost_basis, cost, pricing_model_id FROM session_costs WHERE session_id = 's1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(basis, "estimated");
+        assert!(cost > 0.0);
+        assert_eq!(model.as_deref(), Some("provider/model"));
     }
 }
