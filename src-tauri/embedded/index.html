@@ -126,6 +126,14 @@ body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color
 .alert{padding:6px 10px;border-radius:4px;margin-bottom:6px;font-size:11px}
 .aw{background:rgba(249,226,175,.08);border:1px solid rgba(249,226,175,.2);color:var(--yellow)}
 .ad{background:rgba(243,139,168,.08);border:1px solid rgba(243,139,168,.2);color:var(--red)}
+.alert-dismiss{float:right;border:0;background:transparent;color:inherit;cursor:pointer;font:inherit}
+.insight{margin-bottom:8px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card)}
+.insight-title{color:var(--dim);font-size:9px;text-transform:uppercase;letter-spacing:.5px}
+.quality-line,.budget-line{display:flex;justify-content:space-between;gap:8px;margin-top:5px;font-size:10px}
+.budget-controls{display:flex;gap:5px;margin-top:7px}.budget-controls input{min-width:0;flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--panel);color:var(--text);font:inherit}.budget-controls button{padding:4px 7px;border:1px solid var(--accent);border-radius:4px;background:var(--accent-soft);color:var(--accent);font:inherit;cursor:pointer}
+.trend-svg{display:block;width:100%;height:92px;margin-top:4px}.trend-line{fill:none;stroke:var(--accent);stroke-width:2}.trend-area{fill:var(--accent-soft)}
+.contribution{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);font-size:10px}.contribution:last-child{border-bottom:0}.up{color:var(--red)}.down{color:var(--green)}
+.source-row{display:grid;grid-template-columns:70px 1fr auto;gap:6px;padding:4px 0;font-size:9px;border-bottom:1px solid var(--border)}.source-error{color:var(--red)}
 .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px}
 .sc{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 10px;position:relative;overflow:hidden}
 .sc::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
@@ -208,10 +216,28 @@ tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
     <div class="tab" data-r="all">All</div>
   </div>
   <div id="alerts"></div>
+  <div class="insight">
+    <div class="insight-title">Cost quality</div>
+    <div class="quality-line" id="qualityline"><span>Actual $0</span><span>Estimated $0</span><span>Unpriced 0</span></div>
+  </div>
+  <div class="insight">
+    <div class="insight-title">Monthly budget</div>
+    <div class="budget-line"><span id="budgetused">Not set</span><span id="budgetforecast">Forecast unavailable</span></div>
+    <div class="budget-controls"><input id="budgetinput" type="number" min="0.01" max="1000000" step="1" placeholder="USD / month" aria-label="Monthly budget in USD"><button onclick="saveBudget()">Save</button><button onclick="clearBudget()">Off</button></div>
+  </div>
+  <div class="insight">
+    <div class="insight-title">Cost trend</div>
+    <svg class="trend-svg" id="trendsvg" viewBox="0 0 360 92" role="img" aria-label="Daily priced cost trend"></svg>
+  </div>
+  <div class="insight">
+    <div class="insight-title">Why cost changed</div>
+    <div id="contributions"><span style="color:var(--dim);font-size:10px">Open details to load</span></div>
+  </div>
+  <details class="insight"><summary class="insight-title">Data sources</summary><div id="sources"></div></details>
   <div class="grid">
     <div class="sc s1"><div class="sl">Sessions</div><div class="sv s" id="ds">0</div></div>
     <div class="sc s2"><div class="sl">Cost</div><div class="sv c" id="dc">$0</div></div>
-    <div class="sc s3"><div class="sl">Disk</div><div class="sv d" id="dd">0</div></div>
+    <div class="sc s3"><div class="sl">Unpriced</div><div class="sv d" id="dd">0</div></div>
     <div class="sc s4"><div class="sl">Input</div><div class="sv ti" id="di">0</div></div>
     <div class="sc s5"><div class="sl">Output</div><div class="sv to" id="do">0</div></div>
     <div class="sc s6"><div class="sl">Cache</div><div class="sv" id="dk" style="color:var(--dim)">0</div></div>
@@ -232,12 +258,14 @@ tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
   <table><thead><tr><th>Src</th><th></th><th>Model</th><th>Proj</th><th>In</th><th>Out</th><th>$</th></tr></thead><tbody id="dt"></tbody></table>
 </div>
 <script>
-let D=null,R='today',open=false;
+let D=null,A=null,B=null,SRC=null,R='today',open=false;
 const M={today:'today',week:'week',month:'month',all:'allTime'};
+const AR={today:'today',week:'7d',month:'30d',all:'month'};
 const LABELS={today:'TODAY',week:'7D',month:'30D',all:'ALL'};
 function fT(n){if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n}
 function fC(n){if(n>=100)return'$'+n.toFixed(0);if(n>=1)return'$'+n.toFixed(2);return'$'+n.toFixed(4)}
-function fB(n){if(n>=1073741824)return(n/1073741824).toFixed(1)+'GB';if(n>=1048576)return(n/1048576).toFixed(1)+'MB';if(n>=1024)return(n/1024).toFixed(1)+'KB';return n+'B'}
+function fD(n){return(n>=0?'+':'-')+fC(Math.abs(n))}
+function esc(value){const node=document.createElement('span');node.textContent=String(value??'');return node.innerHTML}
 let statusTimer=null;
 function editStatus(message,isError){const e=document.getElementById('editstatus');e.textContent=message||'';e.classList.toggle('error',!!isError);clearTimeout(statusTimer);if(message)statusTimer=setTimeout(()=>{e.textContent='';e.classList.remove('error')},3000)}
 const SKIN_NAMES={classic:'经典原版',night:'夜巡霓虹',lcd:'电子宠物',receipt:'CostDog 小票',race:'赛犬遥测'};
@@ -290,6 +318,7 @@ function toggle(){
   if(window.__TAURI_INTERNALS__){
     window.__TAURI_INTERNALS__.invoke('resize_window',{width:410,height:open?520:36});
   }
+  if(open)loadDetails();
 }
 function closeWindow(){
   if(window.__TAURI_INTERNALS__){
@@ -313,7 +342,7 @@ function renderCat(list,totalCost){
   let off=25,sh='';const tot=merged.reduce((a,b)=>a+b.cost,0)||1;
   merged.forEach(c=>{const pct=c.cost/tot*100;if(pct<0.5)return;const col=(CATS[c.key]||CATS.other)[1];sh+=`<circle cx="21" cy="21" r="15.915" fill="none" stroke="${col}" stroke-width="6" stroke-dasharray="${pct} ${100-pct}" stroke-dashoffset="${off}"></circle>`;off-=pct;});
   seg.innerHTML=sh;
-  let rh='';merged.forEach(c=>{const[em,col]=CATS[c.key]||CATS.other;const pct=c.cost/tot*100;rh+=`<div class="cr"><span class="ce">${em}</span><span class="cn">${CATNAMES[c.key]||c.key}</span><span class="cb" style="background:${col};width:${Math.max(8,pct*0.4)}px"></span><span class="cv">${fC(c.cost)} ${pct.toFixed(0)}%</span></div>`;});
+  let rh='';merged.forEach(c=>{const[em,col]=CATS[c.key]||CATS.other;const pct=c.cost/tot*100;rh+=`<div class="cr"><span class="ce">${em}</span><span class="cn">${esc(CATNAMES[c.key]||c.key)}</span><span class="cb" style="background:${col};width:${Math.max(8,pct*0.4)}px"></span><span class="cv">${fC(c.cost)} ${pct.toFixed(0)}%</span></div>`;});
   rows.innerHTML=rh;
 }
 function render(){
@@ -333,20 +362,67 @@ function render(){
   document.getElementById('di').textContent=fT(d.tokenUsage.inputTokens);
   document.getElementById('do').textContent=fT(d.tokenUsage.outputTokens);
   document.getElementById('dk').textContent=fT(d.tokenUsage.cacheReadTokens);
-  document.getElementById('dd').textContent=fB(d.diskWriteBytes);
+  document.getElementById('dd').textContent=d.costQuality?.unpricedSessions??0;
   renderCat(d.byCategory||[], d.cost||0);
   const ms=d.topModels||[];
   let mh='';
   if(!ms.length) mh='<div style="color:var(--dim);font-size:11px;padding:4px 8px">No data</div>';
-  else ms.slice(0,5).forEach(m=>{mh+='<div class="mr"><span class="mn">'+m.model+'</span><span><span class="mc c">'+fC(m.cost)+'</span><span class="ml">'+m.calls+' calls</span></span></div>'});
+  else ms.slice(0,5).forEach(m=>{mh+='<div class="mr"><span class="mn">'+esc(m.model)+'</span><span><span class="mc c">'+fC(m.cost)+'</span><span class="ml">'+(m.sessions??0)+' sessions</span></span></div>'});
   document.getElementById('dm').innerHTML=mh;
-  let ah='';(D.alerts||[]).forEach(a=>{ah+='<div class="alert '+(a.level==='danger'?'ad':'aw')+'">'+(a.level==='danger'?'&#x1F534;':'&#x1F7E1;')+' '+a.message+'</div>'});
+  let ah='';(D.alerts||[]).forEach(a=>{ah+='<div class="alert '+(a.level==='danger'?'ad':'aw')+'">'+(a.level==='danger'?'&#x1F534;':'&#x1F7E1;')+' '+esc(a.message)+(a.id?'<button class="alert-dismiss" data-alert-id="'+Number(a.id)+'" aria-label="Dismiss alert">×</button>':'')+'</div>'});
   document.getElementById('alerts').innerHTML=ah;
+  const q=d.costQuality||{};
+  document.getElementById('qualityline').innerHTML='<span>Actual '+fC(q.providerCost||0)+'</span><span>Estimated '+fC(q.estimatedCost||0)+'</span><span>Unpriced '+(q.unpricedSessions||0)+'</span>';
   const ss=D.recentSessions||[];
   let th='';
   if(!ss.length) th='<tr><td colspan="7" style="color:var(--dim);text-align:center;padding:12px">No data</td></tr>';
-  else ss.slice(0,15).forEach((s,i)=>{const bc={'claude-code':'bcc','codex':'bcx','zcode':'bzc','opencode':'boc'}[s.source]||'bcx',bl={'claude-code':'CC','codex':'CX','zcode':'ZC','opencode':'OC'}[s.source]||'CX',auto=s.automaticActivityCategory||'other',manual=s.activityCategoryOverride||'',catEm=(CATS[s.activityCategory]||CATS.other)[0];let opts='<option value=""'+(!manual?' selected':'')+'>↺ 自动 · '+(CATNAMES[auto]||'其他')+'</option>';Object.keys(CATS).forEach(k=>{opts+='<option value="'+k+'"'+(manual===k?' selected':'')+'>'+CATS[k][0]+' '+CATNAMES[k]+'</option>'});th+='<tr><td><span class="badge '+bc+'">'+bl+'</span></td><td><select class="catpick'+(manual?' manual':'')+'" data-session-index="'+i+'" title="用途：'+(CATNAMES[s.activityCategory]||'其他')+(manual?'（人工）':'（自动）')+'" aria-label="修改 Session 用途">'+opts+'</select></td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
+  else ss.slice(0,15).forEach((s,i)=>{const bc={'claude-code':'bcc','codex':'bcx','zcode':'bzc','opencode':'boc'}[s.source]||'bcx',bl={'claude-code':'CC','codex':'CX','zcode':'ZC','opencode':'OC'}[s.source]||'CX',auto=s.automaticActivityCategory||'other',manual=s.activityCategoryOverride||'';let opts='<option value=""'+(!manual?' selected':'')+'>↺ 自动 · '+(CATNAMES[auto]||'其他')+'</option>';Object.keys(CATS).forEach(k=>{opts+='<option value="'+k+'"'+(manual===k?' selected':'')+'>'+CATS[k][0]+' '+CATNAMES[k]+'</option>'});th+='<tr><td><span class="badge '+bc+'">'+bl+'</span></td><td><select class="catpick'+(manual?' manual':'')+'" data-session-index="'+i+'" title="用途：'+(CATNAMES[s.activityCategory]||'其他')+(manual?'（人工）':'（自动）')+'" aria-label="修改 Session 用途">'+opts+'</select></td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
   document.getElementById('dt').innerHTML=th;
+}
+function renderDetails(){
+  if(B){
+    const used=B.pricedMonthToDate||0,limit=B.monthlyLimit;
+    document.getElementById('budgetused').textContent=limit?fC(used)+' / '+fC(limit)+' · '+(B.percentUsed||0).toFixed(0)+'%':fC(used)+' this month · no limit';
+    document.getElementById('budgetforecast').textContent=B.forecast!=null?'Forecast '+fC(B.forecast)+' · '+B.confidence:B.reasonUnavailable||'Forecast unavailable';
+    document.getElementById('budgetinput').value=limit||'';
+  }
+  const points=A?.dailySeries||[],svg=document.getElementById('trendsvg');
+  if(points.length){
+    const max=Math.max(...points.map(p=>p.cost||0),.0001),w=350,h=72,pad=5;
+    const coords=points.map((p,i)=>[(points.length===1?w/2:pad+i*(w-2*pad)/(points.length-1)),h-(p.cost||0)/max*(h-2*pad)+pad]);
+    const line=coords.map(p=>p.join(',')).join(' '),area=`${coords[0][0]},${h+8} ${line} ${coords[coords.length-1][0]},${h+8}`;
+    svg.innerHTML='<polyline class="trend-area" points="'+area+'"></polyline><polyline class="trend-line" points="'+line+'"></polyline><text x="5" y="90" fill="var(--dim)" font-size="8">'+esc(points[0].date.slice(5))+'</text><text x="345" y="90" text-anchor="end" fill="var(--dim)" font-size="8">'+esc(points[points.length-1].date.slice(5))+'</text>';
+  }else svg.textContent='';
+  const net=(A?.totals?.cost||0)-(A?.comparisonTotals?.cost||0);
+  const items=(A?.contributions||[]).filter(item=>Math.abs(item.delta)>.000001).slice(0,3);
+  let html='<div class="budget-line"><span>vs previous period</span><strong class="'+(net>=0?'up':'down')+'">'+fD(net)+'</strong></div>';
+  if(!items.length)html+='<div style="color:var(--dim);font-size:10px;margin-top:5px">No priced cost change</div>';
+  items.forEach(item=>{html+='<div class="contribution"><span>'+esc(item.displayName)+' · '+esc(item.dimension)+'</span><strong class="'+(item.delta>=0?'up':'down')+'">'+fD(item.delta)+'</strong></div>'});
+  document.getElementById('contributions').innerHTML=html;
+  document.getElementById('sources').innerHTML=(SRC||[]).map(s=>{const stats=s.detected?s.recordsFound+' rows · '+(s.skippedFiles||0)+' skipped'+(s.malformedLines?' · '+s.malformedLines+' bad':''):'Not found';return '<div class="source-row"><strong>'+esc(s.source)+'</strong><span class="'+(s.lastError?'source-error':'')+'">'+esc(s.lastError||s.displayPath)+'</span><span>'+stats+'</span></div>'}).join('');
+}
+async function loadDetails(){
+  if(!open||!window.__TAURI_INTERNALS__)return;
+  try{
+    const [analytics,budget,sources]=await Promise.all([
+      window.__TAURI_INTERNALS__.invoke('get_analytics',{range:AR[R],filters:null}),
+      window.__TAURI_INTERNALS__.invoke('get_monthly_budget'),
+      window.__TAURI_INTERNALS__.invoke('get_source_status')
+    ]);
+    A=analytics;B=budget;SRC=sources;renderDetails();
+  }catch(e){editStatus(String(e||'Unable to load details'),true)}
+}
+async function saveBudget(){
+  const input=document.getElementById('budgetinput'),amount=Number(input.value);
+  if(!Number.isFinite(amount)||amount<=0){editStatus('请输入有效的月预算',true);return;}
+  try{B=await window.__TAURI_INTERNALS__.invoke('set_monthly_budget',{amountUsd:amount});renderDetails();await load();editStatus('月预算已保存',false)}catch(e){editStatus(String(e),true)}
+}
+async function clearBudget(){
+  try{B=await window.__TAURI_INTERNALS__.invoke('set_monthly_budget',{amountUsd:null});renderDetails();await load();editStatus('月预算已关闭',false)}catch(e){editStatus(String(e),true)}
+}
+async function dismissAlert(id){
+  if(!window.__TAURI_INTERNALS__)return;
+  try{await window.__TAURI_INTERNALS__.invoke('dismiss_alert',{alertId:id});await load()}catch(e){editStatus(String(e),true)}
 }
 async function changeActivityCategory(select){
   const index=Number(select.dataset.sessionIndex),s=(D&&D.recentSessions||[])[index];
@@ -369,10 +445,10 @@ async function load(){
       const result=await window.__TAURI_INTERNALS__.invoke('get_data');
       data=JSON.parse(result);
     }else{
-      const r=await fetch('http://localhost:3456/api/dashboard');
+      const r=await fetch('http://127.0.0.1:3456/api/dashboard');
       data=await r.json();
     }
-    D=data;render();
+    D=data;render();if(open)await loadDetails();
   }catch(e){
     setBarText('cost','--');
   }
@@ -384,7 +460,7 @@ async function doScan(){
     if(window.__TAURI_INTERNALS__){
       await window.__TAURI_INTERNALS__.invoke('scan');
     }else{
-      await fetch('http://localhost:3456/api/scan',{method:'POST'});
+      await fetch('http://127.0.0.1:3456/api/scan',{method:'POST'});
     }
   }catch(e){}
   await load();
@@ -438,7 +514,8 @@ tauriListen('update-progress',function(e){var p=(e&&e.payload!=null)?e.payload:e
 })();
 
 
-document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');R=t.dataset.r;render()}));
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');R=t.dataset.r;render();loadDetails()}));
+document.getElementById('alerts').addEventListener('click',e=>{const button=e.target.closest('[data-alert-id]');if(button)dismissAlert(Number(button.dataset.alertId))});
 document.getElementById('dt').addEventListener('change',e=>{const select=e.target.closest('.catpick');if(select)changeActivityCategory(select)});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')toggleSkinPanel(false)});
 applySkin(document.documentElement.dataset.skin,false);

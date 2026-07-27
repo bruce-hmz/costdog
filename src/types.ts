@@ -34,7 +34,7 @@ export interface DailySummary {
   tokenUsage: TokenUsage;
   cost: number;
   diskWriteBytes: number;
-  topModels: { model: string; calls: number; cost: number }[];
+  topModels: { model: string; sessions: number; cost: number }[];
 }
 
 export interface ModelPricing {
