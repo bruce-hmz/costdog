@@ -176,39 +176,39 @@ tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
       <span class="classic-stat"><span>TOK</span><strong class="classic-token" data-bar-tokens>0</strong></span><span class="classic-sep"></span>
       <span class="classic-stat"><span>SESS</span><strong class="classic-session" data-bar-sessions>0</strong></span><span class="classic-sep"></span>
     </div>
-    <div class="face-actions"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">↻</button><button class="bbtn" onclick="toggle()" title="Details">▼</button><button class="bbtn" onclick="closeWindow()" title="Close">×</button></div>
+    <div class="face-actions"><button class="bbtn scan-btn" data-action="scan" title="Refresh">↻</button><button class="bbtn" data-action="toggle" title="Details">▼</button><button class="bbtn" data-action="close" title="Close">×</button></div>
   </div>
   <div class="bar-face face-night">
     <div class="night-mark"><svg class="dog-art" viewBox="0 0 64 32" aria-hidden="true"><ellipse cx="28" cy="14" rx="14" ry="6"/><circle cx="45" cy="11" r="5"/><path d="M44 7l2-6 5 7 8 3-6 5-4-1-5 4-5-1 6-7zM15 13L5 7l7 1 5 3zM20 18l-5 12h5l6-11zM35 18l4 12h5l-3-13z"/></svg></div>
     <div class="night-primary"><span data-bar-range>TODAY</span><strong data-bar-cost>$0</strong></div>
     <div class="night-radio"><span><b data-bar-tokens>0</b>tokens</span><span><b data-bar-sessions>0</b>runs</span></div>
-    <div class="face-actions"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">↻</button><button class="bbtn" onclick="toggle()" title="Details">⌄</button><button class="bbtn" onclick="closeWindow()" title="Close">×</button></div>
+    <div class="face-actions"><button class="bbtn scan-btn" data-action="scan" title="Refresh">↻</button><button class="bbtn" data-action="toggle" title="Details">⌄</button><button class="bbtn" data-action="close" title="Close">×</button></div>
   </div>
   <div class="bar-face face-lcd">
     <div class="lcd-screen"><div class="lcd-pet"><svg class="dog-art" viewBox="0 0 32 20" aria-hidden="true"><path d="M3 5h5v3h3v2H8V8H3zM8 8h14v8H8zM21 5h7v8h-7zM23 3h4v3h-4zM10 15h4v5h-4zM19 15h4v5h-4z"/></svg></div><div class="lcd-main"><span data-bar-range>TODAY</span><strong data-bar-cost>$0</strong></div><div class="lcd-sub"><span><b data-bar-tokens>0</b>TOK</span><span><b data-bar-sessions>0</b>DAY</span></div></div>
-    <div class="lcd-keys"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">R</button><button class="bbtn" onclick="toggle()" title="Details">D</button><button class="bbtn" onclick="closeWindow()" title="Close">X</button></div>
+    <div class="lcd-keys"><button class="bbtn scan-btn" data-action="scan" title="Refresh">R</button><button class="bbtn" data-action="toggle" title="Details">D</button><button class="bbtn" data-action="close" title="Close">X</button></div>
   </div>
   <div class="bar-face face-receipt">
     <div class="receipt-brand"><svg class="receipt-paw" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="7" r="3"/><circle cx="12" cy="4" r="3"/><circle cx="18" cy="7" r="3"/><path d="M5 17c0-5 3-8 7-8s7 3 7 8c0 3-3 4-7 2-4 2-7 1-7-2z"/></svg><span class="receipt-brand-name">COSTDOG<small>DAILY RECEIPT</small></span></div>
     <div class="receipt-total"><span data-bar-range>TODAY TOTAL</span><strong data-bar-cost>$0</strong></div>
     <div class="receipt-lines"><span><b data-bar-tokens>0</b>TOKENS</span><span><b data-bar-sessions>0</b>SESSIONS</span></div>
-    <div class="face-actions"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">R</button><button class="bbtn" onclick="toggle()" title="Details">+</button><button class="bbtn" onclick="closeWindow()" title="Close">×</button></div>
+    <div class="face-actions"><button class="bbtn scan-btn" data-action="scan" title="Refresh">R</button><button class="bbtn" data-action="toggle" title="Details">+</button><button class="bbtn" data-action="close" title="Close">×</button></div>
   </div>
   <div class="bar-face face-race">
     <div class="race-runner"><svg class="dog-art" viewBox="0 0 64 32" aria-hidden="true"><ellipse cx="28" cy="14" rx="14" ry="6"/><circle cx="45" cy="11" r="5"/><path d="M44 7l2-6 5 7 8 3-6 5-4-1-5 4-5-1 6-7zM15 13L5 7l7 1 5 3zM20 18l-5 12h5l6-11zM35 18l4 12h5l-3-13z"/></svg><span class="race-bib">#<b data-bar-sessions>0</b></span></div>
     <div class="race-telemetry"><span class="race-metric cost"><span data-bar-range>LAP COST</span><strong data-bar-cost>$0</strong></span><span class="race-metric distance"><span>DIST / TOK</span><strong data-bar-tokens>0</strong></span></div><span class="race-track" aria-hidden="true"></span>
-    <div class="face-actions"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">↻</button><button class="bbtn" onclick="toggle()" title="Details">▾</button><button class="bbtn" onclick="closeWindow()" title="Close">×</button></div>
+    <div class="face-actions"><button class="bbtn scan-btn" data-action="scan" title="Refresh">↻</button><button class="bbtn" data-action="toggle" title="Details">▾</button><button class="bbtn" data-action="close" title="Close">×</button></div>
   </div>
 </div>
 <div class="detail" id="detail">
-  <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><span class="edit-status" id="editstatus"></span><button class="skin-trigger" id="skinbtn" onclick="toggleSkinPanel()" aria-expanded="false" aria-controls="skinpanel" title="选择外观">◈</button><button class="xb" onclick="toggle()">&#x2715;</button></div>
+  <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><span class="edit-status" id="editstatus"></span><button class="skin-trigger" id="skinbtn" data-action="toggle-skin-panel" aria-expanded="false" aria-controls="skinpanel" title="选择外观">◈</button><button class="xb" data-action="toggle">&#x2715;</button></div>
   <div class="skin-panel" id="skinpanel" aria-label="外观设置"><div class="skin-panel-head"><span>Bar wardrobe / 05</span><strong id="skinname">经典原版</strong></div><div class="skin-rail">
-    <button class="skin-choice" data-skin-choice="classic" onclick="selectSkin('classic')" aria-label="经典原版" aria-pressed="false"><span class="skin-symbol classic">🐕</span><span class="skin-choice-name">经典</span></button>
-    <button class="skin-choice" data-skin-choice="night" onclick="selectSkin('night')" aria-label="夜巡霓虹" aria-pressed="false"><span class="skin-symbol night"><svg viewBox="0 0 64 32" aria-hidden="true"><ellipse cx="28" cy="14" rx="14" ry="6"/><circle cx="45" cy="11" r="5"/><path d="M44 7l2-6 5 7 8 3-6 5-4-1-5 4-5-1 6-7zM15 13L5 7l7 1 5 3zM20 18l-5 12h5l6-11zM35 18l4 12h5l-3-13z"/></svg></span><span class="skin-choice-name">夜巡</span></button>
-    <button class="skin-choice" data-skin-choice="lcd" onclick="selectSkin('lcd')" aria-label="电子宠物" aria-pressed="false"><span class="skin-symbol lcd">▦ 12.48</span><span class="skin-choice-name">电子宠物</span></button>
-    <button class="skin-choice" data-skin-choice="receipt" onclick="selectSkin('receipt')" aria-label="CostDog 小票" aria-pressed="false"><span class="skin-symbol receipt">PAID $12</span><span class="skin-choice-name">小票</span></button>
-    <button class="skin-choice" data-skin-choice="race" onclick="selectSkin('race')" aria-label="赛犬遥测" aria-pressed="false"><span class="skin-symbol race">#09 / LAP</span><span class="skin-choice-name">赛犬</span></button>
-  </div><div class="theme-controls"><span class="theme-label">界面</span><div class="theme-modes" role="group" aria-label="界面明暗模式"><button class="theme-mode" data-theme-mode="system" onclick="selectThemeMode('system')" aria-pressed="false">跟随系统</button><button class="theme-mode" data-theme-mode="dark" onclick="selectThemeMode('dark')" aria-pressed="false">暗黑</button><button class="theme-mode" data-theme-mode="light" onclick="selectThemeMode('light')" aria-pressed="false">明亮</button></div><label class="accent-control" for="accentpicker">主题色<input class="accent-picker" id="accentpicker" type="color" value="#89b4fa" oninput="selectAccent(this.value,true)" aria-label="选择主题强调色"></label><button class="accent-reset" onclick="resetAccent()" title="恢复默认主题色">重置</button></div></div>
+    <button class="skin-choice" data-skin-choice="classic" aria-label="经典原版" aria-pressed="false"><span class="skin-symbol classic">🐕</span><span class="skin-choice-name">经典</span></button>
+    <button class="skin-choice" data-skin-choice="night" aria-label="夜巡霓虹" aria-pressed="false"><span class="skin-symbol night"><svg viewBox="0 0 64 32" aria-hidden="true"><ellipse cx="28" cy="14" rx="14" ry="6"/><circle cx="45" cy="11" r="5"/><path d="M44 7l2-6 5 7 8 3-6 5-4-1-5 4-5-1 6-7zM15 13L5 7l7 1 5 3zM20 18l-5 12h5l6-11zM35 18l4 12h5l-3-13z"/></svg></span><span class="skin-choice-name">夜巡</span></button>
+    <button class="skin-choice" data-skin-choice="lcd" aria-label="电子宠物" aria-pressed="false"><span class="skin-symbol lcd">▦ 12.48</span><span class="skin-choice-name">电子宠物</span></button>
+    <button class="skin-choice" data-skin-choice="receipt" aria-label="CostDog 小票" aria-pressed="false"><span class="skin-symbol receipt">PAID $12</span><span class="skin-choice-name">小票</span></button>
+    <button class="skin-choice" data-skin-choice="race" aria-label="赛犬遥测" aria-pressed="false"><span class="skin-symbol race">#09 / LAP</span><span class="skin-choice-name">赛犬</span></button>
+  </div><div class="theme-controls"><span class="theme-label">界面</span><div class="theme-modes" role="group" aria-label="界面明暗模式"><button class="theme-mode" data-theme-mode="system" aria-pressed="false">跟随系统</button><button class="theme-mode" data-theme-mode="dark" aria-pressed="false">暗黑</button><button class="theme-mode" data-theme-mode="light" aria-pressed="false">明亮</button></div><label class="accent-control" for="accentpicker">主题色<input class="accent-picker" id="accentpicker" type="color" value="#89b4fa" aria-label="选择主题强调色"></label><button class="accent-reset" data-action="reset-accent" title="恢复默认主题色">重置</button></div></div>
   <div class="tabs">
     <div class="tab on" data-r="today">Today</div>
     <div class="tab" data-r="week">7D</div>
@@ -223,7 +223,7 @@ tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
   <div class="insight">
     <div class="insight-title">Monthly budget</div>
     <div class="budget-line"><span id="budgetused">Not set</span><span id="budgetforecast">Forecast unavailable</span></div>
-    <div class="budget-controls"><input id="budgetinput" type="number" min="0.01" max="1000000" step="1" placeholder="USD / month" aria-label="Monthly budget in USD"><button onclick="saveBudget()">Save</button><button onclick="clearBudget()">Off</button></div>
+    <div class="budget-controls"><input id="budgetinput" type="number" min="0.01" max="1000000" step="1" placeholder="USD / month" aria-label="Monthly budget in USD"><button data-action="save-budget">Save</button><button data-action="clear-budget">Off</button></div>
   </div>
   <div class="insight">
     <div class="insight-title">Cost trend</div>
@@ -514,6 +514,29 @@ tauriListen('update-progress',function(e){var p=(e&&e.payload!=null)?e.payload:e
 })();
 
 
+document.addEventListener('click',event=>{
+  const control=event.target instanceof Element?event.target.closest('[data-action]'):null;
+  if(control){
+    switch(control.dataset.action){
+      case 'scan':doScan();break;
+      case 'toggle':toggle();break;
+      case 'close':closeWindow();break;
+      case 'toggle-skin-panel':toggleSkinPanel();break;
+      case 'reset-accent':resetAccent();break;
+      case 'save-budget':saveBudget();break;
+      case 'clear-budget':clearBudget();break;
+    }
+    return;
+  }
+  const skinChoice=event.target instanceof Element?event.target.closest('[data-skin-choice]'):null;
+  if(skinChoice){selectSkin(skinChoice.dataset.skinChoice);return;}
+  const themeMode=event.target instanceof Element?event.target.closest('[data-theme-mode]'):null;
+  if(themeMode)selectThemeMode(themeMode.dataset.themeMode);
+});
+document.getElementById('accentpicker').addEventListener('input',event=>{
+  const picker=event.currentTarget;
+  if(picker instanceof HTMLInputElement)selectAccent(picker.value,true);
+});
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');R=t.dataset.r;render();loadDetails()}));
 document.getElementById('alerts').addEventListener('click',e=>{const button=e.target.closest('[data-alert-id]');if(button)dismissAlert(Number(button.dataset.alertId))});
 document.getElementById('dt').addEventListener('change',e=>{const select=e.target.closest('.catpick');if(select)changeActivityCategory(select)});
