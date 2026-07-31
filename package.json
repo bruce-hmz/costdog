@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc && node scripts/copy-web-assets.mjs",
-    "test:ts": "tsx --test tests/**/*.test.ts",
+    "test:ts": "tsx --test tests/*.test.ts",
     "test:web": "npm run build && node scripts/web-smoke.mjs",
     "dev": "tsx src/cli/index.ts",
     "dev:web": "tsx src/cli/index.ts web",
