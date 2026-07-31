@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html data-skin="classic" data-theme-mode="system" data-theme="dark">
+<html lang="en" data-skin="classic" data-theme-mode="system" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <title>CostDog</title>
@@ -119,9 +119,16 @@ body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color
 .theme-controls{display:flex;align-items:center;gap:6px;margin-top:7px;padding-top:7px;border-top:1px solid var(--border)}
 .theme-label{color:var(--dim);font-size:8px;letter-spacing:.7px;text-transform:uppercase}
 .theme-modes{display:flex;gap:2px}.theme-mode{height:24px;padding:0 7px;border:1px solid var(--border);border-radius:3px;background:var(--choice);color:var(--dim);font:inherit;font-size:9px;cursor:pointer}.theme-mode:hover,.theme-mode:focus-visible{color:var(--text);outline:none}.theme-mode[aria-pressed="true"]{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
+.accent-hint{margin-top:6px;color:var(--dim);font-size:8px;line-height:1.5}
+.unpriced-note{margin-top:6px;padding-top:6px;border-top:1px solid var(--border);color:var(--dim);font-size:9px;line-height:1.6}
+.unpriced-note code{color:var(--yellow);font-family:inherit}
+.unpriced-note button{margin-top:5px;padding:3px 7px;border:1px solid var(--accent);border-radius:4px;background:var(--accent-soft);color:var(--accent);font:inherit;font-size:9px;cursor:pointer}
+.unpriced-note button:disabled{opacity:.55;cursor:wait}
 .accent-control{display:flex;align-items:center;gap:4px;margin-left:auto;color:var(--dim);font-size:8px}.accent-picker{width:27px;height:24px;padding:2px;border:1px solid var(--border);border-radius:4px;background:var(--choice);cursor:pointer}.accent-picker::-webkit-color-swatch-wrapper{padding:0}.accent-picker::-webkit-color-swatch{border:0;border-radius:2px}.accent-reset{height:24px;padding:0 6px;border:1px solid var(--border);border-radius:3px;background:transparent;color:var(--dim);font:inherit;font-size:9px;cursor:pointer}.accent-reset:hover,.accent-reset:focus-visible{color:var(--accent);border-color:var(--accent);outline:none}
 .tabs{display:flex;gap:2px;margin-bottom:10px}
 .tab{padding:4px 10px;background:transparent;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--dim);font-size:10px;font-family:inherit}
+.tab:hover{color:var(--text)}
+.tab:focus-visible{outline:1px solid var(--accent);outline-offset:1px}
 .tab.on{background:var(--card);color:var(--accent);border-color:var(--accent)}
 .alert{padding:6px 10px;border-radius:4px;margin-bottom:6px;font-size:11px}
 .aw{background:rgba(249,226,175,.08);border:1px solid rgba(249,226,175,.2);color:var(--yellow)}
@@ -129,6 +136,11 @@ body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color
 .alert-dismiss{float:right;border:0;background:transparent;color:inherit;cursor:pointer;font:inherit}
 .insight{margin-bottom:8px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card)}
 .insight-title{color:var(--dim);font-size:9px;text-transform:uppercase;letter-spacing:.5px}
+#analysis>summary{cursor:pointer}
+#analysis[open]>summary{margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.analysis-block{margin-top:10px}
+.analysis-block:first-of-type{margin-top:0}
+details.analysis-block>summary{cursor:pointer}
 .quality-line,.budget-line{display:flex;justify-content:space-between;gap:8px;margin-top:5px;font-size:10px}
 .budget-controls{display:flex;gap:5px;margin-top:7px}.budget-controls input{min-width:0;flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--panel);color:var(--text);font:inherit}.budget-controls button{padding:4px 7px;border:1px solid var(--accent);border-radius:4px;background:var(--accent-soft);color:var(--accent);font:inherit;cursor:pointer}
 .trend-svg{display:block;width:100%;height:92px;margin-top:4px}.trend-line{fill:none;stroke:var(--accent);stroke-width:2}.trend-area{fill:var(--accent-soft)}
@@ -146,8 +158,11 @@ body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color
 .mr{display:flex;justify-content:space-between;align-items:center;padding:5px 8px;font-size:11px;border-radius:4px;margin-bottom:2px;background:var(--card);border:1px solid var(--border)}
 .mn{color:var(--dim);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mc{font-weight:700}.ml{color:var(--dim);font-size:10px;margin-left:6px}
+/* The table keeps all its rows but scrolls inside a fixed box; at 15 rows it was a third
+   of the panel's height and pushed everything else off the first screen. */
+.session-scroll{max-height:190px;overflow-y:auto;border:1px solid var(--border);border-radius:6px}
 table{width:100%;border-collapse:collapse;font-size:10px}
-th{text-align:left;padding:5px 6px;color:var(--dim);border-bottom:1px solid var(--border);font-size:9px;text-transform:uppercase;letter-spacing:.5px}
+th{position:sticky;top:0;z-index:1;text-align:left;padding:5px 6px;color:var(--dim);background:var(--bg);border-bottom:1px solid var(--border);font-size:9px;text-transform:uppercase;letter-spacing:.5px}
 td{padding:4px 6px;border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent)}
 tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
 .badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700}
@@ -176,64 +191,46 @@ tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
       <span class="classic-stat"><span>TOK</span><strong class="classic-token" data-bar-tokens>0</strong></span><span class="classic-sep"></span>
       <span class="classic-stat"><span>SESS</span><strong class="classic-session" data-bar-sessions>0</strong></span><span class="classic-sep"></span>
     </div>
-    <div class="face-actions"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">↻</button><button class="bbtn" onclick="toggle()" title="Details">▼</button><button class="bbtn" onclick="closeWindow()" title="Close">×</button></div>
+    <div class="face-actions"><button class="bbtn scan-btn" data-action="scan" title="Refresh" aria-label="Refresh data">↻</button><button class="bbtn" data-action="toggle" title="Details" aria-label="Toggle details">▼</button><button class="bbtn" data-action="close" title="Close" aria-label="Hide CostDog">×</button></div>
   </div>
   <div class="bar-face face-night">
     <div class="night-mark"><svg class="dog-art" viewBox="0 0 64 32" aria-hidden="true"><ellipse cx="28" cy="14" rx="14" ry="6"/><circle cx="45" cy="11" r="5"/><path d="M44 7l2-6 5 7 8 3-6 5-4-1-5 4-5-1 6-7zM15 13L5 7l7 1 5 3zM20 18l-5 12h5l6-11zM35 18l4 12h5l-3-13z"/></svg></div>
     <div class="night-primary"><span data-bar-range>TODAY</span><strong data-bar-cost>$0</strong></div>
     <div class="night-radio"><span><b data-bar-tokens>0</b>tokens</span><span><b data-bar-sessions>0</b>runs</span></div>
-    <div class="face-actions"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">↻</button><button class="bbtn" onclick="toggle()" title="Details">⌄</button><button class="bbtn" onclick="closeWindow()" title="Close">×</button></div>
+    <div class="face-actions"><button class="bbtn scan-btn" data-action="scan" title="Refresh" aria-label="Refresh data">↻</button><button class="bbtn" data-action="toggle" title="Details" aria-label="Toggle details">⌄</button><button class="bbtn" data-action="close" title="Close" aria-label="Hide CostDog">×</button></div>
   </div>
   <div class="bar-face face-lcd">
     <div class="lcd-screen"><div class="lcd-pet"><svg class="dog-art" viewBox="0 0 32 20" aria-hidden="true"><path d="M3 5h5v3h3v2H8V8H3zM8 8h14v8H8zM21 5h7v8h-7zM23 3h4v3h-4zM10 15h4v5h-4zM19 15h4v5h-4z"/></svg></div><div class="lcd-main"><span data-bar-range>TODAY</span><strong data-bar-cost>$0</strong></div><div class="lcd-sub"><span><b data-bar-tokens>0</b>TOK</span><span><b data-bar-sessions>0</b>DAY</span></div></div>
-    <div class="lcd-keys"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">R</button><button class="bbtn" onclick="toggle()" title="Details">D</button><button class="bbtn" onclick="closeWindow()" title="Close">X</button></div>
+    <div class="lcd-keys"><button class="bbtn scan-btn" data-action="scan" title="Refresh" aria-label="Refresh data">R</button><button class="bbtn" data-action="toggle" title="Details" aria-label="Toggle details">D</button><button class="bbtn" data-action="close" title="Close" aria-label="Hide CostDog">X</button></div>
   </div>
   <div class="bar-face face-receipt">
     <div class="receipt-brand"><svg class="receipt-paw" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="7" r="3"/><circle cx="12" cy="4" r="3"/><circle cx="18" cy="7" r="3"/><path d="M5 17c0-5 3-8 7-8s7 3 7 8c0 3-3 4-7 2-4 2-7 1-7-2z"/></svg><span class="receipt-brand-name">COSTDOG<small>DAILY RECEIPT</small></span></div>
     <div class="receipt-total"><span data-bar-range>TODAY TOTAL</span><strong data-bar-cost>$0</strong></div>
     <div class="receipt-lines"><span><b data-bar-tokens>0</b>TOKENS</span><span><b data-bar-sessions>0</b>SESSIONS</span></div>
-    <div class="face-actions"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">R</button><button class="bbtn" onclick="toggle()" title="Details">+</button><button class="bbtn" onclick="closeWindow()" title="Close">×</button></div>
+    <div class="face-actions"><button class="bbtn scan-btn" data-action="scan" title="Refresh" aria-label="Refresh data">R</button><button class="bbtn" data-action="toggle" title="Details" aria-label="Toggle details">+</button><button class="bbtn" data-action="close" title="Close" aria-label="Hide CostDog">×</button></div>
   </div>
   <div class="bar-face face-race">
     <div class="race-runner"><svg class="dog-art" viewBox="0 0 64 32" aria-hidden="true"><ellipse cx="28" cy="14" rx="14" ry="6"/><circle cx="45" cy="11" r="5"/><path d="M44 7l2-6 5 7 8 3-6 5-4-1-5 4-5-1 6-7zM15 13L5 7l7 1 5 3zM20 18l-5 12h5l6-11zM35 18l4 12h5l-3-13z"/></svg><span class="race-bib">#<b data-bar-sessions>0</b></span></div>
     <div class="race-telemetry"><span class="race-metric cost"><span data-bar-range>LAP COST</span><strong data-bar-cost>$0</strong></span><span class="race-metric distance"><span>DIST / TOK</span><strong data-bar-tokens>0</strong></span></div><span class="race-track" aria-hidden="true"></span>
-    <div class="face-actions"><button class="bbtn scan-btn" onclick="doScan()" title="Refresh">↻</button><button class="bbtn" onclick="toggle()" title="Details">▾</button><button class="bbtn" onclick="closeWindow()" title="Close">×</button></div>
+    <div class="face-actions"><button class="bbtn scan-btn" data-action="scan" title="Refresh" aria-label="Refresh data">↻</button><button class="bbtn" data-action="toggle" title="Details" aria-label="Toggle details">▾</button><button class="bbtn" data-action="close" title="Close" aria-label="Hide CostDog">×</button></div>
   </div>
 </div>
 <div class="detail" id="detail">
-  <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><span class="edit-status" id="editstatus"></span><button class="skin-trigger" id="skinbtn" onclick="toggleSkinPanel()" aria-expanded="false" aria-controls="skinpanel" title="选择外观">◈</button><button class="xb" onclick="toggle()">&#x2715;</button></div>
-  <div class="skin-panel" id="skinpanel" aria-label="外观设置"><div class="skin-panel-head"><span>Bar wardrobe / 05</span><strong id="skinname">经典原版</strong></div><div class="skin-rail">
-    <button class="skin-choice" data-skin-choice="classic" onclick="selectSkin('classic')" aria-label="经典原版" aria-pressed="false"><span class="skin-symbol classic">🐕</span><span class="skin-choice-name">经典</span></button>
-    <button class="skin-choice" data-skin-choice="night" onclick="selectSkin('night')" aria-label="夜巡霓虹" aria-pressed="false"><span class="skin-symbol night"><svg viewBox="0 0 64 32" aria-hidden="true"><ellipse cx="28" cy="14" rx="14" ry="6"/><circle cx="45" cy="11" r="5"/><path d="M44 7l2-6 5 7 8 3-6 5-4-1-5 4-5-1 6-7zM15 13L5 7l7 1 5 3zM20 18l-5 12h5l6-11zM35 18l4 12h5l-3-13z"/></svg></span><span class="skin-choice-name">夜巡</span></button>
-    <button class="skin-choice" data-skin-choice="lcd" onclick="selectSkin('lcd')" aria-label="电子宠物" aria-pressed="false"><span class="skin-symbol lcd">▦ 12.48</span><span class="skin-choice-name">电子宠物</span></button>
-    <button class="skin-choice" data-skin-choice="receipt" onclick="selectSkin('receipt')" aria-label="CostDog 小票" aria-pressed="false"><span class="skin-symbol receipt">PAID $12</span><span class="skin-choice-name">小票</span></button>
-    <button class="skin-choice" data-skin-choice="race" onclick="selectSkin('race')" aria-label="赛犬遥测" aria-pressed="false"><span class="skin-symbol race">#09 / LAP</span><span class="skin-choice-name">赛犬</span></button>
-  </div><div class="theme-controls"><span class="theme-label">界面</span><div class="theme-modes" role="group" aria-label="界面明暗模式"><button class="theme-mode" data-theme-mode="system" onclick="selectThemeMode('system')" aria-pressed="false">跟随系统</button><button class="theme-mode" data-theme-mode="dark" onclick="selectThemeMode('dark')" aria-pressed="false">暗黑</button><button class="theme-mode" data-theme-mode="light" onclick="selectThemeMode('light')" aria-pressed="false">明亮</button></div><label class="accent-control" for="accentpicker">主题色<input class="accent-picker" id="accentpicker" type="color" value="#89b4fa" oninput="selectAccent(this.value,true)" aria-label="选择主题强调色"></label><button class="accent-reset" onclick="resetAccent()" title="恢复默认主题色">重置</button></div></div>
-  <div class="tabs">
-    <div class="tab on" data-r="today">Today</div>
-    <div class="tab" data-r="week">7D</div>
-    <div class="tab" data-r="month">30D</div>
-    <div class="tab" data-r="all">All</div>
+  <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><span class="edit-status" id="editstatus" role="status"></span><button class="skin-trigger" id="skinbtn" data-action="toggle-skin-panel" aria-expanded="false" aria-controls="skinpanel" title="Appearance" aria-label="Appearance settings">◈</button><button class="xb" data-action="toggle" title="Close details" aria-label="Close details">&#x2715;</button></div>
+  <div class="skin-panel" id="skinpanel" aria-label="Appearance settings"><div class="skin-panel-head"><span>Bar wardrobe / 05</span><strong id="skinname">Classic</strong></div><div class="skin-rail">
+    <button class="skin-choice" data-skin-choice="classic" aria-label="Classic" aria-pressed="false"><span class="skin-symbol classic">🐕</span><span class="skin-choice-name">Classic</span></button>
+    <button class="skin-choice" data-skin-choice="night" aria-label="Night patrol" aria-pressed="false"><span class="skin-symbol night"><svg viewBox="0 0 64 32" aria-hidden="true"><ellipse cx="28" cy="14" rx="14" ry="6"/><circle cx="45" cy="11" r="5"/><path d="M44 7l2-6 5 7 8 3-6 5-4-1-5 4-5-1 6-7zM15 13L5 7l7 1 5 3zM20 18l-5 12h5l6-11zM35 18l4 12h5l-3-13z"/></svg></span><span class="skin-choice-name">Night</span></button>
+    <button class="skin-choice" data-skin-choice="lcd" aria-label="Pocket LCD" aria-pressed="false"><span class="skin-symbol lcd">▦ 12.48</span><span class="skin-choice-name">LCD</span></button>
+    <button class="skin-choice" data-skin-choice="receipt" aria-label="Daily receipt" aria-pressed="false"><span class="skin-symbol receipt">PAID $12</span><span class="skin-choice-name">Receipt</span></button>
+    <button class="skin-choice" data-skin-choice="race" aria-label="Race telemetry" aria-pressed="false"><span class="skin-symbol race">#09 / LAP</span><span class="skin-choice-name">Race</span></button>
+  </div><div class="theme-controls"><span class="theme-label">Theme</span><div class="theme-modes" role="group" aria-label="Light or dark mode"><button class="theme-mode" data-theme-mode="system" aria-pressed="false">System</button><button class="theme-mode" data-theme-mode="dark" aria-pressed="false">Dark</button><button class="theme-mode" data-theme-mode="light" aria-pressed="false">Light</button></div><label class="accent-control" for="accentpicker">Accent<input class="accent-picker" id="accentpicker" type="color" value="#89b4fa" aria-label="Accent colour"></label><button class="accent-reset" data-action="reset-accent" title="Restore the default accent colour">Reset</button></div><p class="accent-hint" id="accenthint"></p></div>
+  <div class="tabs" role="tablist" aria-label="Date range">
+    <button class="tab on" data-r="today" role="tab" aria-selected="true">Today</button>
+    <button class="tab" data-r="week" role="tab" aria-selected="false" tabindex="-1">7D</button>
+    <button class="tab" data-r="month" role="tab" aria-selected="false" tabindex="-1">30D</button>
+    <button class="tab" data-r="all" role="tab" aria-selected="false" tabindex="-1">All</button>
   </div>
   <div id="alerts"></div>
-  <div class="insight">
-    <div class="insight-title">Cost quality</div>
-    <div class="quality-line" id="qualityline"><span>Actual $0</span><span>Estimated $0</span><span>Unpriced 0</span></div>
-  </div>
-  <div class="insight">
-    <div class="insight-title">Monthly budget</div>
-    <div class="budget-line"><span id="budgetused">Not set</span><span id="budgetforecast">Forecast unavailable</span></div>
-    <div class="budget-controls"><input id="budgetinput" type="number" min="0.01" max="1000000" step="1" placeholder="USD / month" aria-label="Monthly budget in USD"><button onclick="saveBudget()">Save</button><button onclick="clearBudget()">Off</button></div>
-  </div>
-  <div class="insight">
-    <div class="insight-title">Cost trend</div>
-    <svg class="trend-svg" id="trendsvg" viewBox="0 0 360 92" role="img" aria-label="Daily priced cost trend"></svg>
-  </div>
-  <div class="insight">
-    <div class="insight-title">Why cost changed</div>
-    <div id="contributions"><span style="color:var(--dim);font-size:10px">Open details to load</span></div>
-  </div>
-  <details class="insight"><summary class="insight-title">Data sources</summary><div id="sources"></div></details>
   <div class="grid">
     <div class="sc s1"><div class="sl">Sessions</div><div class="sv s" id="ds">0</div></div>
     <div class="sc s2"><div class="sl">Cost</div><div class="sv c" id="dc">$0</div></div>
@@ -242,20 +239,50 @@ tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
     <div class="sc s5"><div class="sl">Output</div><div class="sv to" id="do">0</div></div>
     <div class="sc s6"><div class="sl">Cache</div><div class="sv" id="dk" style="color:var(--dim)">0</div></div>
   </div>
-  <div class="st">消费类型</div>
-  <div class="cat">
-    <svg id="catdonut" viewBox="0 0 42 42" width="120" height="120" style="flex-shrink:0">
-      <circle cx="21" cy="21" r="15.915" fill="none" stroke="var(--card)" stroke-width="6"></circle>
-      <g id="catsegs"></g>
-      <text x="21" y="20" text-anchor="middle" font-size="6" fill="var(--dim)" id="catl">TOTAL</text>
-      <text x="21" y="28" text-anchor="middle" font-size="7" font-weight="700" fill="var(--text)" id="catv">$0</text>
-    </svg>
-    <div id="catrows" style="flex:1;min-width:0"></div>
+  <div class="insight">
+    <div class="insight-title">Monthly budget</div>
+    <div class="budget-line"><span id="budgetused">Not set</span><span id="budgetforecast">Forecast unavailable</span></div>
+    <div class="budget-controls"><input id="budgetinput" type="number" min="0.01" max="1000000" step="1" placeholder="USD / month" aria-label="Monthly budget in USD"><button data-action="save-budget">Save</button><button data-action="clear-budget">Off</button></div>
   </div>
-  <div class="st">Top Models</div>
-  <div id="dm"></div>
+  <!-- Everything below is read occasionally, not at a glance. Folding it keeps the stat
+       grid and the session table on the first screen of a 484px viewport. -->
+  <details class="insight" id="analysis">
+    <summary class="insight-title">Analysis &amp; diagnostics</summary>
+    <div class="analysis-block">
+      <div class="insight-title">Cost quality</div>
+      <div class="quality-line" id="qualityline"><span>Actual $0</span><span>Estimated $0</span><span>Unpriced 0</span></div>
+      <div class="unpriced-note" id="unpricednote" hidden></div>
+    </div>
+    <div class="analysis-block">
+      <div class="insight-title">Cost trend</div>
+      <svg class="trend-svg" id="trendsvg" viewBox="0 0 360 92" role="img" aria-label="Daily priced cost trend"></svg>
+    </div>
+    <div class="analysis-block">
+      <div class="insight-title">Why cost changed</div>
+      <div id="contributions"><span style="color:var(--dim);font-size:10px">Open details to load</span></div>
+    </div>
+    <div class="analysis-block">
+      <div class="insight-title">Spend by activity</div>
+      <div class="cat">
+        <svg id="catdonut" viewBox="0 0 42 42" width="120" height="120" style="flex-shrink:0">
+          <circle cx="21" cy="21" r="15.915" fill="none" stroke="var(--card)" stroke-width="6"></circle>
+          <g id="catsegs"></g>
+          <text x="21" y="20" text-anchor="middle" font-size="6" fill="var(--dim)" id="catl">TOTAL</text>
+          <text x="21" y="28" text-anchor="middle" font-size="7" font-weight="700" fill="var(--text)" id="catv">$0</text>
+        </svg>
+        <div id="catrows" style="flex:1;min-width:0"></div>
+      </div>
+    </div>
+    <div class="analysis-block">
+      <div class="insight-title">Top Models</div>
+      <div id="dm"></div>
+    </div>
+    <details class="analysis-block"><summary class="insight-title">Data sources</summary><div id="sources"></div></details>
+  </details>
   <div class="st">Recent Sessions</div>
-  <table><thead><tr><th>Src</th><th></th><th>Model</th><th>Proj</th><th>In</th><th>Out</th><th>$</th></tr></thead><tbody id="dt"></tbody></table>
+  <div class="session-scroll">
+    <table><thead><tr><th>Src</th><th></th><th>Model</th><th>Proj</th><th>In</th><th>Out</th><th>$</th></tr></thead><tbody id="dt"></tbody></table>
+  </div>
 </div>
 <script>
 let D=null,A=null,B=null,SRC=null,R='today',open=false;
@@ -268,7 +295,11 @@ function fD(n){return(n>=0?'+':'-')+fC(Math.abs(n))}
 function esc(value){const node=document.createElement('span');node.textContent=String(value??'');return node.innerHTML}
 let statusTimer=null;
 function editStatus(message,isError){const e=document.getElementById('editstatus');e.textContent=message||'';e.classList.toggle('error',!!isError);clearTimeout(statusTimer);if(message)statusTimer=setTimeout(()=>{e.textContent='';e.classList.remove('error')},3000)}
-const SKIN_NAMES={classic:'经典原版',night:'夜巡霓虹',lcd:'电子宠物',receipt:'CostDog 小票',race:'赛犬遥测'};
+const SKIN_NAMES={classic:'Classic',night:'Night patrol',lcd:'Pocket LCD',receipt:'Daily receipt',race:'Race telemetry'};
+// Only the classic face is drawn from --accent. The other four are art-directed against
+// fixed palettes (moonlight, LCD green, thermal paper, race yellow); recoloring them from
+// a picker would wreck them. Say so instead of leaving the control looking broken.
+const ACCENT_AWARE_SKINS=['classic'];
 const DEFAULT_ACCENT='#89b4fa';
 const systemTheme=matchMedia('(prefers-color-scheme: light)');
 function applySkin(skin,persist){
@@ -276,8 +307,10 @@ function applySkin(skin,persist){
   document.documentElement.dataset.skin=skin;
   document.querySelectorAll('[data-skin-choice]').forEach(choice=>choice.setAttribute('aria-pressed',String(choice.dataset.skinChoice===skin)));
   const skinName=document.getElementById('skinname');if(skinName)skinName.textContent=SKIN_NAMES[skin];
+  const hint=document.getElementById('accenthint');
+  if(hint)hint.textContent=ACCENT_AWARE_SKINS.includes(skin)?'The accent colour applies to the bar and this panel.':'“'+SKIN_NAMES[skin]+'” uses a fixed palette — the accent colour applies to this panel only.';
   if(persist){
-    try{localStorage.setItem('costdog.barSkin',skin)}catch(error){console.error('Unable to save the bar skin:',error);editStatus('皮肤已切换，但无法保存',true)}
+    try{localStorage.setItem('costdog.barSkin',skin)}catch(error){console.error('Unable to save the bar skin:',error);editStatus('Skin changed but could not be saved',true)}
   }
 }
 function resolvedTheme(mode){return mode==='system'?(systemTheme.matches?'light':'dark'):mode}
@@ -287,32 +320,46 @@ function applyThemeMode(mode,persist){
   document.documentElement.dataset.theme=resolvedTheme(mode);
   document.querySelectorAll('[data-theme-mode]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.themeMode===mode)));
   if(persist){
-    try{localStorage.setItem('costdog.themeMode',mode)}catch(error){console.error('Unable to save the theme mode:',error);editStatus('主题已切换，但无法保存',true)}
+    try{localStorage.setItem('costdog.themeMode',mode)}catch(error){console.error('Unable to save the theme mode:',error);editStatus('Theme changed but could not be saved',true)}
   }
 }
-function selectThemeMode(mode){applyThemeMode(mode,true);editStatus('界面模式：'+({system:'跟随系统',dark:'暗黑',light:'明亮'}[mode]||mode),false)}
+function selectThemeMode(mode){applyThemeMode(mode,true);editStatus('Theme: '+({system:'System',dark:'Dark',light:'Light'}[mode]||mode),false)}
 function selectAccent(color,persist){
   if(!/^#[0-9a-f]{6}$/i.test(color||''))return;
   document.documentElement.style.setProperty('--accent',color);
   const picker=document.getElementById('accentpicker');if(picker&&picker.value.toLowerCase()!==color.toLowerCase())picker.value=color;
   if(persist){
-    try{localStorage.setItem('costdog.accent',color)}catch(error){console.error('Unable to save the accent color:',error);editStatus('主题色已应用，但无法保存',true)}
+    try{localStorage.setItem('costdog.accent',color)}catch(error){console.error('Unable to save the accent color:',error);editStatus('Accent applied but could not be saved',true)}
   }
 }
 function resetAccent(){
   document.documentElement.style.setProperty('--accent',DEFAULT_ACCENT);
   const picker=document.getElementById('accentpicker');if(picker)picker.value=DEFAULT_ACCENT;
-  try{localStorage.removeItem('costdog.accent');editStatus('主题色已恢复默认',false)}catch(error){console.error('Unable to reset the accent color:',error);editStatus('主题色已恢复，但无法保存',true)}
+  try{localStorage.removeItem('costdog.accent');editStatus('Accent colour restored',false)}catch(error){console.error('Unable to reset the accent color:',error);editStatus('Accent restored but could not be saved',true)}
 }
 function toggleSkinPanel(force){
   const panel=document.getElementById('skinpanel'),button=document.getElementById('skinbtn');
   const show=typeof force==='boolean'?force:!panel.classList.contains('show');
   panel.classList.toggle('show',show);button.setAttribute('aria-expanded',String(show));
 }
-function selectSkin(skin){applySkin(skin,true);editStatus('已切换：'+SKIN_NAMES[skin],false)}
+function selectSkin(skin){applySkin(skin,true);editStatus('Switched to '+SKIN_NAMES[skin],false)}
 function setBarText(name,value){document.querySelectorAll('[data-bar-'+name+']').forEach(element=>{element.textContent=value})}
+function selectRange(range){
+  R=range;
+  // Roving tabindex: only the selected tab is in the tab order, arrow keys move within.
+  document.querySelectorAll('.tab').forEach(tab=>{
+    const on=tab.dataset.r===range;
+    tab.classList.toggle('on',on);
+    tab.setAttribute('aria-selected',String(on));
+    tab.tabIndex=on?0:-1;
+  });
+  render();
+}
 function toggle(){
   open=!open;
+  // Collapsing returns the bar to TODAY. A 12px total left over from the "All" tab sits
+  // next to a 9px range label and reads as today's spend long after the panel is shut.
+  if(!open&&R!=='today')selectRange('today');
   document.getElementById('detail').classList.toggle('show',open);
   document.body.style.overflow=open?'auto':'hidden';
   if(window.__TAURI_INTERNALS__){
@@ -326,7 +373,7 @@ function closeWindow(){
   }
 }
 const CATS={feature:['✨','#89b4fa'],bugfix:['🐛','#f38ba8'],refactor:['♻️','#f9e2af'],docs:['📚','#a6e3a1'],research:['🔍','#cba6f7'],debug:['🧪','#fab387'],agent:['🤖','#94e2d5'],explore:['📖','#74c7ec'],other:['⚪','#6c7086']};
-const CATNAMES={feature:'编码',bugfix:'Bug',refactor:'重构',docs:'文档',research:'调研',debug:'调试',agent:'编排',explore:'阅读',other:'其他'};
+const CATNAMES={feature:'Feature',bugfix:'Bug fix',refactor:'Refactor',docs:'Docs',research:'Research',debug:'Debug',agent:'Agent',explore:'Reading',other:'Other'};
 function renderCat(list,totalCost){
   const seg=document.getElementById('catsegs'),rows=document.getElementById('catrows');
   document.getElementById('catv').textContent=fC(totalCost);
@@ -373,10 +420,11 @@ function render(){
   document.getElementById('alerts').innerHTML=ah;
   const q=d.costQuality||{};
   document.getElementById('qualityline').innerHTML='<span>Actual '+fC(q.providerCost||0)+'</span><span>Estimated '+fC(q.estimatedCost||0)+'</span><span>Unpriced '+(q.unpricedSessions||0)+'</span>';
+  renderUnpricedNote(q);
   const ss=D.recentSessions||[];
   let th='';
   if(!ss.length) th='<tr><td colspan="7" style="color:var(--dim);text-align:center;padding:12px">No data</td></tr>';
-  else ss.slice(0,15).forEach((s,i)=>{const bc={'claude-code':'bcc','codex':'bcx','zcode':'bzc','opencode':'boc'}[s.source]||'bcx',bl={'claude-code':'CC','codex':'CX','zcode':'ZC','opencode':'OC'}[s.source]||'CX',auto=s.automaticActivityCategory||'other',manual=s.activityCategoryOverride||'';let opts='<option value=""'+(!manual?' selected':'')+'>↺ 自动 · '+(CATNAMES[auto]||'其他')+'</option>';Object.keys(CATS).forEach(k=>{opts+='<option value="'+k+'"'+(manual===k?' selected':'')+'>'+CATS[k][0]+' '+CATNAMES[k]+'</option>'});th+='<tr><td><span class="badge '+bc+'">'+bl+'</span></td><td><select class="catpick'+(manual?' manual':'')+'" data-session-index="'+i+'" title="用途：'+(CATNAMES[s.activityCategory]||'其他')+(manual?'（人工）':'（自动）')+'" aria-label="修改 Session 用途">'+opts+'</select></td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
+  else ss.slice(0,15).forEach((s,i)=>{const bc={'claude-code':'bcc','codex':'bcx','zcode':'bzc','opencode':'boc'}[s.source]||'bcx',bl={'claude-code':'CC','codex':'CX','zcode':'ZC','opencode':'OC'}[s.source]||'CX',auto=s.automaticActivityCategory||'other',manual=s.activityCategoryOverride||'';let opts='<option value=""'+(!manual?' selected':'')+'>↺ Auto · '+(CATNAMES[auto]||'Other')+'</option>';Object.keys(CATS).forEach(k=>{opts+='<option value="'+k+'"'+(manual===k?' selected':'')+'>'+CATS[k][0]+' '+CATNAMES[k]+'</option>'});th+='<tr><td><span class="badge '+bc+'">'+bl+'</span></td><td><select class="catpick'+(manual?' manual':'')+'" data-session-index="'+i+'" title="Activity: '+(CATNAMES[s.activityCategory]||'Other')+(manual?' (manual)':' (auto)')+'" aria-label="Change session activity">'+opts+'</select></td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
   document.getElementById('dt').innerHTML=th;
 }
 function renderDetails(){
@@ -414,11 +462,35 @@ async function loadDetails(){
 }
 async function saveBudget(){
   const input=document.getElementById('budgetinput'),amount=Number(input.value);
-  if(!Number.isFinite(amount)||amount<=0){editStatus('请输入有效的月预算',true);return;}
-  try{B=await window.__TAURI_INTERNALS__.invoke('set_monthly_budget',{amountUsd:amount});renderDetails();await load();editStatus('月预算已保存',false)}catch(e){editStatus(String(e),true)}
+  if(!Number.isFinite(amount)||amount<=0){editStatus('Enter a valid monthly budget',true);return;}
+  try{B=await window.__TAURI_INTERNALS__.invoke('set_monthly_budget',{amountUsd:amount});renderDetails();await load();editStatus('Monthly budget saved',false)}catch(e){editStatus(String(e),true)}
 }
 async function clearBudget(){
-  try{B=await window.__TAURI_INTERNALS__.invoke('set_monthly_budget',{amountUsd:null});renderDetails();await load();editStatus('月预算已关闭',false)}catch(e){editStatus(String(e),true)}
+  try{B=await window.__TAURI_INTERNALS__.invoke('set_monthly_budget',{amountUsd:null});renderDetails();await load();editStatus('Monthly budget turned off',false)}catch(e){editStatus(String(e),true)}
+}
+// "Unpriced 3" on its own tells the user nothing they can act on. Name the models that
+// failed to price and offer the one fix that can help: re-fetching the price list.
+function renderUnpricedNote(quality){
+  const note=document.getElementById('unpricednote');
+  const models=quality.unpricedModels||[];
+  if(!models.length){note.hidden=true;note.innerHTML='';return;}
+  note.hidden=false;
+  note.innerHTML='No price matched for '+models.map(m=>'<code>'+esc(m)+'</code>').join(', ')+
+    '. Models missing from the OpenRouter catalogue cannot be priced; otherwise the cached price list may predate them.'+
+    '<br><button data-action="refresh-pricing">Re-fetch prices</button>';
+}
+async function refreshPricing(){
+  const button=document.querySelector('[data-action="refresh-pricing"]');
+  if(!window.__TAURI_INTERNALS__){editStatus('Only available in the desktop app',true);return;}
+  if(button){button.disabled=true;button.textContent='Fetching…'}
+  try{
+    const result=await window.__TAURI_INTERNALS__.invoke('refresh_pricing');
+    await load();
+    editStatus(String(result),false);
+  }catch(e){
+    editStatus(String(e||'Could not refresh prices'),true);
+    if(button){button.disabled=false;button.textContent='Re-fetch prices'}
+  }
 }
 async function dismissAlert(id){
   if(!window.__TAURI_INTERNALS__)return;
@@ -426,29 +498,26 @@ async function dismissAlert(id){
 }
 async function changeActivityCategory(select){
   const index=Number(select.dataset.sessionIndex),s=(D&&D.recentSessions||[])[index];
-  if(!s){editStatus('找不到 Session',true);render();return;}
-  if(!window.__TAURI_INTERNALS__){editStatus('请在桌面应用中修改',true);render();return;}
+  if(!s){editStatus('Session not found',true);render();return;}
+  if(!window.__TAURI_INTERNALS__){editStatus('Only editable in the desktop app',true);render();return;}
   select.disabled=true;
   try{
     await window.__TAURI_INTERNALS__.invoke('set_activity_category_override',{sessionId:s.session_id,source:s.source,date:s.date,category:select.value||null});
     await load();
-    editStatus(select.value?'分类已保存':'已恢复自动分类',false);
+    editStatus(select.value?'Category saved':'Back to automatic category',false);
   }catch(e){
-    editStatus(String(e||'保存失败'),true);
+    editStatus(String(e||'Could not save'),true);
     render();
   }
 }
+// This file only ever runs inside Tauri (it is the bundled frontendDist), so there is no
+// fallback path to a web server here — the CLI's dashboard is a separate Express app.
 async function load(){
+  if(!window.__TAURI_INTERNALS__)return;
   try{
-    let data;
-    if(window.__TAURI_INTERNALS__){
-      const result=await window.__TAURI_INTERNALS__.invoke('get_data');
-      data=JSON.parse(result);
-    }else{
-      const r=await fetch('http://127.0.0.1:3456/api/dashboard');
-      data=await r.json();
-    }
-    D=data;render();if(open)await loadDetails();
+    D=JSON.parse(await window.__TAURI_INTERNALS__.invoke('get_data'));
+    render();
+    if(open)await loadDetails();
   }catch(e){
     setBarText('cost','--');
   }
@@ -457,11 +526,7 @@ async function doScan(){
   const buttons=[...document.querySelectorAll('.scan-btn')];
   buttons.forEach(button=>{button.disabled=true;button.textContent='…'});
   try{
-    if(window.__TAURI_INTERNALS__){
-      await window.__TAURI_INTERNALS__.invoke('scan');
-    }else{
-      await fetch('http://127.0.0.1:3456/api/scan',{method:'POST'});
-    }
+    if(window.__TAURI_INTERNALS__)await window.__TAURI_INTERNALS__.invoke('scan');
   }catch(e){}
   await load();
   buttons.forEach(button=>{button.disabled=false;button.textContent=button.closest('.face-lcd,.face-receipt')?'R':'↻'});
@@ -514,10 +579,64 @@ tauriListen('update-progress',function(e){var p=(e&&e.payload!=null)?e.payload:e
 })();
 
 
-document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');R=t.dataset.r;render();loadDetails()}));
+document.addEventListener('click',event=>{
+  const control=event.target instanceof Element?event.target.closest('[data-action]'):null;
+  if(control){
+    switch(control.dataset.action){
+      case 'scan':doScan();break;
+      case 'toggle':toggle();break;
+      case 'close':closeWindow();break;
+      case 'toggle-skin-panel':toggleSkinPanel();break;
+      case 'reset-accent':resetAccent();break;
+      case 'save-budget':saveBudget();break;
+      case 'clear-budget':clearBudget();break;
+      case 'refresh-pricing':refreshPricing();break;
+    }
+    return;
+  }
+  const skinChoice=event.target instanceof Element?event.target.closest('[data-skin-choice]'):null;
+  if(skinChoice){selectSkin(skinChoice.dataset.skinChoice);return;}
+  const themeMode=event.target instanceof Element?event.target.closest('[data-theme-mode]'):null;
+  if(themeMode)selectThemeMode(themeMode.dataset.themeMode);
+});
+document.getElementById('accentpicker').addEventListener('input',event=>{
+  const picker=event.currentTarget;
+  if(picker instanceof HTMLInputElement)selectAccent(picker.value,true);
+});
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{selectRange(t.dataset.r);loadDetails()}));
+// Arrow keys move between ranges, Home/End jump to the ends — the tablist keyboard contract.
+document.querySelector('.tabs').addEventListener('keydown',event=>{
+  const tabs=[...document.querySelectorAll('.tab')];
+  const current=tabs.indexOf(event.target.closest('.tab'));
+  if(current<0)return;
+  const step={ArrowRight:1,ArrowDown:1,ArrowLeft:-1,ArrowUp:-1}[event.key];
+  let next=null;
+  if(step)next=(current+step+tabs.length)%tabs.length;
+  else if(event.key==='Home')next=0;
+  else if(event.key==='End')next=tabs.length-1;
+  if(next===null)return;
+  event.preventDefault();
+  selectRange(tabs[next].dataset.r);
+  tabs[next].focus();
+  loadDetails();
+});
 document.getElementById('alerts').addEventListener('click',e=>{const button=e.target.closest('[data-alert-id]');if(button)dismissAlert(Number(button.dataset.alertId))});
 document.getElementById('dt').addEventListener('change',e=>{const select=e.target.closest('.catpick');if(select)changeActivityCategory(select)});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')toggleSkinPanel(false)});
+// Escape backs out one level: the skin panel first, then the detail panel itself.
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape')return;
+  if(document.getElementById('skinpanel').classList.contains('show')){toggleSkinPanel(false);return;}
+  if(open)toggle();
+});
+// Open on first run so the category donut and the trend are discovered at least once,
+// then remember whatever the user settles on.
+(function(){
+  const analysis=document.getElementById('analysis');
+  try{analysis.open=localStorage.getItem('costdog.analysisOpen')!=='0'}catch(error){console.warn('Unable to restore the analysis section:',error);analysis.open=true}
+  analysis.addEventListener('toggle',()=>{
+    try{localStorage.setItem('costdog.analysisOpen',analysis.open?'1':'0')}catch(error){console.error('Unable to save the analysis section state:',error);editStatus('Section state could not be saved',true)}
+  });
+})();
 applySkin(document.documentElement.dataset.skin,false);
 applyThemeMode(document.documentElement.dataset.themeMode,false);
 selectAccent(document.documentElement.style.getPropertyValue('--accent').trim()||DEFAULT_ACCENT,false);

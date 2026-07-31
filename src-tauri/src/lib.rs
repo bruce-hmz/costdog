@@ -7,7 +7,7 @@ use cost_ledger::{build_cost_record, ResolvedPrice};
 use source_status::SourceScanMeasurement;
 use tauri::{Manager, Emitter};
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::fs;
@@ -47,6 +47,11 @@ struct CostQualitySummary {
     unpriced_tokens: u64,
     #[serde(rename = "partialSessions")]
     partial_sessions: u64,
+    /// Which models failed to price. "3 sessions unpriced" is not actionable on its own —
+    /// the model id is what tells the user whether to wait for a pricing refresh or accept
+    /// that a local/unlisted model will never have an OpenRouter price.
+    #[serde(rename = "unpricedModels")]
+    unpriced_models: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -201,6 +206,7 @@ struct SourceScanOutcome {
     measurement: SourceScanMeasurement,
     sessions: Vec<SessionData>,
     fingerprints: Vec<source_status::FileFingerprint>,
+    watermark: Option<i64>,
 }
 
 #[derive(Default)]
@@ -209,16 +215,23 @@ struct FileScanResult {
     fingerprints: Vec<source_status::FileFingerprint>,
     skipped_files: u64,
     malformed_lines: u64,
+    /// Highest source-row timestamp read this pass; committed only if the scan succeeds.
+    watermark: Option<i64>,
 }
 
-impl FileScanResult {
-    fn from_sessions(sessions: Vec<SessionData>) -> Self {
-        Self {
-            sessions,
-            ..Self::default()
-        }
-    }
-}
+/// A row can land in the source DB after the timestamp it carries — a request that starts
+/// before a scan and finishes after it. A strict watermark would skip such rows forever,
+/// so every scan re-reads the last day. The work stays bounded and nothing is lost.
+const INCREMENTAL_LOOKBACK_MS: i64 = 24 * 60 * 60 * 1000;
+
+const SCAN_TICK_SECONDS: u64 = 30;
+/// Ticks to skip while the bar is hidden, i.e. one scan every 5 minutes.
+const HIDDEN_SCAN_TICKS: u32 = 10;
+
+/// Mirrors the bar's visibility for the scan thread. Every show/hide goes through
+/// show_bar/hide_bar, so this stays in sync without the scan thread calling a window API —
+/// those dispatch to the main thread and block, which is a poor fit for a background loop.
+static BAR_VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 fn scan_source<F>(
     source: &str,
@@ -269,6 +282,7 @@ where
         },
         sessions: scan_result.sessions,
         fingerprints: scan_result.fingerprints,
+        watermark: scan_result.watermark,
     }
 }
 
@@ -1180,11 +1194,23 @@ fn scan_codex_sessions(conn: &rusqlite::Connection) -> Result<FileScanResult, St
 // Aggregated by (session_id, LOCAL date of started_at) so a session spanning midnight
 // splits across days — same rule as the Claude Code parser. input_tokens excludes cache,
 // so calculate_cost (which bills cache read/creation separately) is correct as-is.
-fn scan_zcode_sessions() -> Vec<SessionData> {
-    let db_path = get_zcode_db_path();
-    let conn = match open_readonly_db(&db_path, "model_usage") {
+// Incremental: the watermark selects *sessions* with at least one recent usage row, and
+// every row those sessions own is then re-aggregated. Filtering the usage rows themselves
+// would emit a bucket holding only part of a session's tokens, which upsert_session would
+// write over the real total. That filter happens to be safe today only because a bucket
+// spans one local date and the lookback is a full day — selecting whole sessions keeps the
+// invariant local instead of resting on that coincidence.
+fn scan_zcode_sessions(costdog: &rusqlite::Connection) -> Result<FileScanResult, String> {
+    scan_zcode_db(costdog, &get_zcode_db_path())
+}
+
+fn scan_zcode_db(
+    costdog: &rusqlite::Connection,
+    db_path: &PathBuf,
+) -> Result<FileScanResult, String> {
+    let conn = match open_readonly_db(db_path, "model_usage") {
         Some(c) => c,
-        None => return Vec::new(),
+        None => return Ok(FileScanResult::default()),
     };
     // Also need the session table for project directories.
     let has_session: i64 = conn
@@ -1195,8 +1221,10 @@ fn scan_zcode_sessions() -> Vec<SessionData> {
         )
         .unwrap_or(0);
     if has_session == 0 {
-        return Vec::new();
+        return Ok(FileScanResult::default());
     }
+
+    let since = source_status::load_watermark(costdog, "zcode")? - INCREMENTAL_LOOKBACK_MS;
 
     // Bucket key "session_id\u{0}date" -> (bucket). project dir tracked separately.
     use std::collections::HashMap;
@@ -1213,19 +1241,26 @@ fn scan_zcode_sessions() -> Vec<SessionData> {
     let mut buckets: HashMap<String, Bucket> = HashMap::new();
     let mut projects: HashMap<String, String> = HashMap::new();
 
+    // The IN subquery runs inside ZCode's DB, so the session set never becomes a bind
+    // parameter list — a first full scan would otherwise blow SQLite's variable limit.
     let sql = "SELECT m.session_id, s.directory, m.started_at, m.model_id, \
                m.input_tokens, m.output_tokens, m.reasoning_tokens, \
                m.cache_creation_input_tokens, m.cache_read_input_tokens \
                FROM model_usage m JOIN session s ON s.id = m.session_id \
-               WHERE m.status IN ('completed','error','cancelled') AND m.started_at IS NOT NULL";
+               WHERE m.status IN ('completed','error','cancelled') AND m.started_at IS NOT NULL \
+                 AND m.session_id IN ( \
+                   SELECT session_id FROM model_usage \
+                   WHERE status IN ('completed','error','cancelled') \
+                     AND started_at IS NOT NULL AND started_at > ?1 \
+                 )";
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("[CostDog] ZCode query failed: {}", e);
-            return Vec::new();
+            return Ok(FileScanResult::default());
         }
     };
-    let rows = match stmt.query_map([], |row| {
+    let rows = match stmt.query_map(rusqlite::params![since], |row| {
         Ok((
             row.get::<_, String>(0)?,        // session_id
             row.get::<_, Option<String>>(1)?, // directory
@@ -1241,15 +1276,17 @@ fn scan_zcode_sessions() -> Vec<SessionData> {
         Ok(r) => r,
         Err(e) => {
             eprintln!("[CostDog] ZCode query_map failed: {}", e);
-            return Vec::new();
+            return Ok(FileScanResult::default());
         }
     };
 
+    let mut watermark: Option<i64> = None;
     for r in rows {
         let (sid, dir, started, model, input, output, reasoning, cc, cr) = match r {
             Ok(v) => v,
             Err(_) => continue,
         };
+        watermark = Some(watermark.map_or(started, |w: i64| w.max(started)));
         let date = local_date_from_ms(started);
         if date.is_empty() {
             continue;
@@ -1306,29 +1343,41 @@ fn scan_zcode_sessions() -> Vec<SessionData> {
             user_intent: String::new(),
         });
     }
-    eprintln!("[CostDog] ZCode scan: {} sessions", out.len());
-    out
+    eprintln!("[CostDog] ZCode scan: {} sessions since {}", out.len(), since);
+    Ok(FileScanResult {
+        sessions: out,
+        watermark,
+        ..FileScanResult::default()
+    })
 }
 
 // OpenCode (v1.14+) stores everything in ~/.local/share/opencode/opencode.db.
 // The session table carries pre-aggregated cost + token columns written by the app.
 // Older DBs may lack some columns — detected via PRAGMA table_info and defaulted to 0.
-fn scan_opencode_sessions() -> Vec<SessionData> {
-    let db_path = get_opencode_db_path();
-    let conn = match open_readonly_db(&db_path, "session") {
+// Incremental: one row IS one session here (OpenCode pre-aggregates), so filtering rows
+// by their update time cannot produce a partial session the way ZCode's usage rows would.
+fn scan_opencode_sessions(costdog: &rusqlite::Connection) -> Result<FileScanResult, String> {
+    scan_opencode_db(costdog, &get_opencode_db_path())
+}
+
+fn scan_opencode_db(
+    costdog: &rusqlite::Connection,
+    db_path: &PathBuf,
+) -> Result<FileScanResult, String> {
+    let conn = match open_readonly_db(db_path, "session") {
         Some(c) => c,
-        None => return Vec::new(),
+        None => return Ok(FileScanResult::default()),
     };
 
     // Detect columns so older schemas degrade gracefully.
     let col_names: Vec<String> = {
         let mut stmt = match conn.prepare("PRAGMA table_info(session)") {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(_) => return Ok(FileScanResult::default()),
         };
         let rows = match stmt.query_map([], |row| row.get::<_, String>(1)) {
             Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Err(_) => return Ok(FileScanResult::default()),
         };
         rows.filter_map(|r| r.ok()).collect()
     };
@@ -1341,18 +1390,20 @@ fn scan_opencode_sessions() -> Vec<SessionData> {
     let crr_col = if has("tokens_cache_read") { "tokens_cache_read" } else { "0" };
     let cw_col = if has("tokens_cache_write") { "tokens_cache_write" } else { "0" };
 
+    let since = source_status::load_watermark(costdog, "opencode")? - INCREMENTAL_LOOKBACK_MS;
     let sql = format!(
-        "SELECT id, directory, model, {}, {}, {}, {}, {}, {}, time_created, time_updated FROM session",
+        "SELECT id, directory, model, {}, {}, {}, {}, {}, {}, time_created, time_updated \
+         FROM session WHERE COALESCE(time_updated, time_created, 0) > ?1",
         cost_col, ti_col, to_col, tr_col, crr_col, cw_col
     );
     let mut stmt = match conn.prepare(&sql) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("[CostDog] OpenCode query failed: {}", e);
-            return Vec::new();
+            return Ok(FileScanResult::default());
         }
     };
-    let rows = match stmt.query_map([], |row| {
+    let rows = match stmt.query_map(rusqlite::params![since], |row| {
         Ok((
             row.get::<_, String>(0)?,                  // id
             row.get::<_, Option<String>>(1)?,          // directory
@@ -1370,16 +1421,19 @@ fn scan_opencode_sessions() -> Vec<SessionData> {
         Ok(r) => r,
         Err(e) => {
             eprintln!("[CostDog] OpenCode query_map failed: {}", e);
-            return Vec::new();
+            return Ok(FileScanResult::default());
         }
     };
 
     let mut out = Vec::new();
+    let mut watermark: Option<i64> = None;
     for r in rows {
         let (id, dir, model_json, cost, ti, to, tr, crr, cw, tc, tu) = match r {
             Ok(v) => v,
             Err(_) => continue,
         };
+        let touched_at = tu.or(tc).unwrap_or(0);
+        watermark = Some(watermark.map_or(touched_at, |w: i64| w.max(touched_at)));
         let started = tc.or(tu).unwrap_or(0);
         let date = local_date_from_ms(started);
         // Parse model id out of the JSON column (tolerate plain string / null).
@@ -1424,8 +1478,12 @@ fn scan_opencode_sessions() -> Vec<SessionData> {
             user_intent: String::new(),
         });
     }
-    eprintln!("[CostDog] OpenCode scan: {} sessions", out.len());
-    out
+    eprintln!("[CostDog] OpenCode scan: {} sessions since {}", out.len(), since);
+    Ok(FileScanResult {
+        sessions: out,
+        watermark,
+        ..FileScanResult::default()
+    })
 }
 
 // ---- Pricing ----
@@ -1731,13 +1789,13 @@ fn full_scan() -> Result<usize, String> {
             "zcode",
             &get_zcode_db_path(),
             Some("model_usage"),
-            || Ok(FileScanResult::from_sessions(scan_zcode_sessions())),
+            || scan_zcode_sessions(&conn),
         ),
         scan_source(
             "opencode",
             &get_opencode_db_path(),
             Some("session"),
-            || Ok(FileScanResult::from_sessions(scan_opencode_sessions())),
+            || scan_opencode_sessions(&conn),
         ),
     ];
     let mut scanned_sessions = Vec::new();
@@ -1792,9 +1850,20 @@ fn full_scan() -> Result<usize, String> {
     }
     tx.commit().map_err(|e| e.to_string())?;
 
+    // Fingerprints and watermarks advance only here, after the session rows above are
+    // committed — a failed scan must be retried from the same starting point, not skipped.
     let metadata_tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     for outcome in &mut outcomes {
         source_status::save_fingerprints(&metadata_tx, &outcome.fingerprints)?;
+        if outcome.measurement.error.is_none() {
+            if let Some(watermark) = outcome.watermark {
+                source_status::save_watermark(
+                    &metadata_tx,
+                    &outcome.measurement.source,
+                    watermark,
+                )?;
+            }
+        }
         source_status::refresh_measurement_counts(
             &metadata_tx,
             &mut outcome.measurement,
@@ -1897,12 +1966,30 @@ fn get_cost_quality(
             .map_err(|e| e.to_string())
     };
 
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT COALESCE(NULLIF(s.model,''), 'unknown')
+             FROM sessions s
+             JOIN session_costs sc
+               ON sc.session_id = s.session_id AND sc.source = s.source AND sc.date = s.date
+             WHERE s.date >= ?1 AND s.date <= ?2 AND sc.cost_basis = 'unpriced'
+             ORDER BY 1
+             LIMIT 6",
+        )
+        .map_err(|e| e.to_string())?;
+    let unpriced_models = stmt
+        .query_map(rusqlite::params![start, end], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|row| row.ok())
+        .collect();
+
     Ok(CostQualitySummary {
         provider_cost,
         estimated_cost,
         unpriced_sessions: count_distinct("sc.cost_basis = 'unpriced'")?,
         unpriced_tokens,
         partial_sessions: count_distinct("sc.usage_completeness = 'partial'")?,
+        unpriced_models,
     })
 }
 
@@ -2169,6 +2256,109 @@ fn scan() -> Result<String, String> {
     Ok(format!("Scanned {} sessions", count))
 }
 
+/// Drop the pricing cache and re-price stored sessions, so rows that were unpriced because
+/// the 24h cache predated a model's listing get a second chance. Models OpenRouter does not
+/// carry at all stay unpriced — the UI lists them so the user can tell the cases apart.
+///
+/// Re-prices from the sessions table rather than by rescanning: scans are incremental now,
+/// so a rescan would only revisit the last day of source rows and would leave older
+/// unpriced sessions untouched. Every token count needed is already stored.
+#[tauri::command]
+fn refresh_pricing() -> Result<String, String> {
+    match fs::remove_file(get_pricing_cache_path()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Cannot clear the pricing cache: {error}")),
+    }
+    let prices = load_pricing();
+    if prices.is_empty() {
+        return Err("Could not load prices from OpenRouter".to_string());
+    }
+    let conn = get_db_connection()?;
+    reprice_unpriced_sessions(&conn, &prices)
+}
+
+fn reprice_unpriced_sessions(
+    conn: &rusqlite::Connection,
+    prices: &[PricedModel],
+) -> Result<String, String> {
+    struct Unpriced {
+        session_id: String,
+        source: String,
+        date: String,
+        model: String,
+        input: u64,
+        output: u64,
+        cache_read: u64,
+        cache_creation: u64,
+        reasoning: u64,
+        usage_complete: bool,
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT s.session_id, s.source, s.date, COALESCE(NULLIF(s.model,''),'unknown'),
+                    s.input_tokens, s.output_tokens, s.cache_read_tokens,
+                    s.cache_creation_tokens, s.reasoning_output_tokens,
+                    sc.usage_completeness
+             FROM sessions s
+             JOIN session_costs sc
+               ON sc.session_id = s.session_id AND sc.source = s.source AND sc.date = s.date
+             WHERE sc.cost_basis = 'unpriced'",
+        )
+        .map_err(|e| e.to_string())?;
+    let pending: Vec<Unpriced> = stmt
+        .query_map([], |row| {
+            Ok(Unpriced {
+                session_id: row.get(0)?,
+                source: row.get(1)?,
+                date: row.get(2)?,
+                model: row.get(3)?,
+                input: row.get(4)?,
+                output: row.get(5)?,
+                cache_read: row.get(6)?,
+                cache_creation: row.get(7)?,
+                reasoning: row.get(8)?,
+                usage_complete: row.get::<_, String>(9)? != "partial",
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|row| row.ok())
+        .collect();
+
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let mut repriced = 0;
+    for session in &pending {
+        // provider_cost_amount is None by construction: a row carrying a provider cost
+        // would have cost_basis 'provider', not 'unpriced'.
+        let record = build_cost_record(
+            &session.model,
+            session.input,
+            session.output,
+            session.cache_read,
+            session.cache_creation,
+            session.reasoning,
+            None,
+            session.usage_complete,
+            find_model_price(&session.model, prices),
+        );
+        if record.cost_basis == "unpriced" {
+            continue;
+        }
+        cost_ledger::upsert(&tx, &session.session_id, &session.source, &session.date, &record)?;
+        tx.execute(
+            "UPDATE sessions SET cost = ?1
+             WHERE session_id = ?2 AND source = ?3 AND date = ?4",
+            rusqlite::params![record.cost, session.session_id, session.source, session.date],
+        )
+        .map_err(|e| e.to_string())?;
+        repriced += 1;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(format!("Priced {} of {} sessions", repriced, pending.len()))
+}
+
 #[tauri::command]
 fn dismiss_alert(alert_id: i64) -> Result<(), String> {
     let conn = ensure_db_exists()?;
@@ -2233,17 +2423,29 @@ fn set_monthly_budget(amount_usd: Option<f64>) -> Result<budget::BudgetStatus, S
     Ok(status)
 }
 
+// The bar's × hides the window on every platform. Closing it would destroy the webview,
+// after which the tray's "Show CostDog" can no longer find a "main" window and the app
+// becomes unreachable without a restart. Quitting is the tray's job.
 #[tauri::command]
 fn close_window(app: tauri::AppHandle) {
+    hide_bar(&app);
+}
+
+fn show_bar(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        #[cfg(target_os = "macos")]
-        {
-            window.hide().ok();
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            window.close().ok();
-        }
+        let _ = window.show();
+        let _ = window.set_focus();
+        BAR_VISIBLE.store(true, std::sync::atomic::Ordering::Relaxed);
+        // Scans are throttled while hidden, so the bar can be showing numbers up to five
+        // minutes old. Re-reading the DB is cheap and makes it current on reappearance.
+        let _ = app.emit("refresh-data", ());
+    }
+}
+
+fn hide_bar(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+        BAR_VISIBLE.store(false, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -2258,17 +2460,39 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let quit_i = MenuItem::with_id(app, "quit", "Quit CostDog", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&version_i, &show_i, &update_i, &quit_i])?;
 
-    TrayIconBuilder::with_id("main-tray")
+    // macOS recolors template images to match the light/dark menu bar and ignores their
+    // color channels, so the opaque app icon would render as a solid blob. Other platforms
+    // draw the tray icon as-is and keep the full-color app icon.
+    #[cfg(target_os = "macos")]
+    let icon = tauri::image::Image::new(include_bytes!("../icons/tray-template.rgba"), 44, 44);
+    #[cfg(not(target_os = "macos"))]
+    let icon = app.default_window_icon().expect("default window icon missing").clone();
+
+    let builder = TrayIconBuilder::with_id("main-tray")
         .tooltip(format!("CostDog v{}", version))
-        .icon(app.default_window_icon().expect("default window icon missing").clone())
+        .icon(icon)
         .menu(&menu)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+        // Left click toggles the bar, right click opens the menu — the convention for
+        // menu-bar utilities. Without this, left click would only reopen the menu.
+        .show_menu_on_left_click(false)
+        .on_tray_icon_event(|tray, event| {
+            let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            else {
+                return;
+            };
+            let app = tray.app_handle();
+            if BAR_VISIBLE.load(std::sync::atomic::Ordering::Relaxed) {
+                hide_bar(app);
+            } else {
+                show_bar(app);
             }
+        })
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => show_bar(app),
             "check-update" => {
                 let handle = app.clone();
                 tauri::async_runtime::spawn(async move {
@@ -2279,8 +2503,12 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
             "quit" => app.exit(0),
             _ => {}
-        })
-        .build(app)?;
+        });
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.icon_as_template(true);
+
+    builder.build(app)?;
 
     Ok(())
 }
@@ -2290,6 +2518,14 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 /// delayed auto-check on launch.
 #[tauri::command]
 async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
+    run_update_check(app, false).await
+}
+
+/// `silent` suppresses the "already up to date" and "check failed" dialogs. The launch
+/// auto-check runs silent so an unattended start never interrupts the user; only the tray
+/// menu item, where the user asked for an answer, reports those two outcomes. A found
+/// update always prompts, silent or not.
+async fn run_update_check(app: tauri::AppHandle, silent: bool) -> Result<String, String> {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
     use tauri_plugin_updater::UpdaterExt;
 
@@ -2302,19 +2538,23 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
     {
         Ok(Some(u)) => u,
         Ok(None) => {
-            let _ = app
-                .dialog()
-                .message(format!("CostDog {} 已是最新版本。", current))
-                .title("CostDog")
-                .blocking_show();
+            if !silent {
+                let _ = app
+                    .dialog()
+                    .message(format!("CostDog {} 已是最新版本。", current))
+                    .title("CostDog")
+                    .blocking_show();
+            }
             return Ok("up-to-date".to_string());
         }
         Err(e) => {
-            let _ = app
-                .dialog()
-                .message(format!("检查更新失败: {}", e))
-                .title("CostDog")
-                .blocking_show();
+            if !silent {
+                let _ = app
+                    .dialog()
+                    .message(format!("检查更新失败: {}", e))
+                    .title("CostDog")
+                    .blocking_show();
+            }
             return Err(e.to_string());
         }
     };
@@ -2369,8 +2609,21 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, close_window, check_for_updates])
+        // POSITION only: the bar's height is driven by the collapsed/expanded state
+        // (36 vs 520), so restoring a saved SIZE would reopen the app as a 520px-tall
+        // window with the detail panel hidden.
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
+                .build(),
+        )
+        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates])
         .setup(|app| {
+            // A 36px always-on-top bar is an accessory, not an app: drop the Dock icon
+            // and the app menu so CostDog lives entirely in the menu bar.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             let window = app.get_webview_window("main").unwrap();
             window.set_always_on_top(true).ok();
             window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: 410.0, height: 36.0 })).ok();
@@ -2386,11 +2639,22 @@ pub fn run() {
                 eprintln!("Initial scan failed: {}", e);
             }
 
-            // Start auto-refresh timer (every 30 seconds)
+            // Auto-refresh: every 30s while the bar is on screen, every 10th tick (5 min)
+            // while it is hidden — nobody is reading the numbers then. Ticking at a fixed
+            // 30s rather than sleeping longer keeps the delay after the bar reappears
+            // bounded by one tick.
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
+                let mut ticks_since_scan = 0;
                 loop {
-                    std::thread::sleep(std::time::Duration::from_secs(30));
+                    std::thread::sleep(std::time::Duration::from_secs(SCAN_TICK_SECONDS));
+                    ticks_since_scan += 1;
+                    let visible = BAR_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
+                    let ticks_needed = if visible { 1 } else { HIDDEN_SCAN_TICKS };
+                    if ticks_since_scan < ticks_needed {
+                        continue;
+                    }
+                    ticks_since_scan = 0;
                     if let Err(e) = full_scan() {
                         eprintln!("Auto scan failed: {}", e);
                     }
@@ -2405,7 +2669,7 @@ pub fn run() {
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 let h = update_handle;
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = check_for_updates(h).await {
+                    if let Err(e) = run_update_check(h, true).await {
                         eprintln!("[CostDog] update check failed: {}", e);
                     }
                 });
@@ -2531,6 +2795,213 @@ fn classify(tool_calls: &HashMap<String, u64>, git_branch: Option<&str>, source:
 mod tests {
     use super::*;
 
+    fn temp_db_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "costdog_{}_{}_{}.sqlite",
+            name,
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ))
+    }
+
+    fn write_zcode_fixture(path: &PathBuf, rows: &[(&str, i64, u64)]) {
+        let source = rusqlite::Connection::open(path).unwrap();
+        source
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS session (id TEXT PRIMARY KEY, directory TEXT);
+                 CREATE TABLE IF NOT EXISTS model_usage (
+                   session_id TEXT, started_at INTEGER, model_id TEXT, status TEXT,
+                   input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER,
+                   cache_creation_input_tokens INTEGER, cache_read_input_tokens INTEGER);",
+            )
+            .unwrap();
+        for (session_id, started_at, input) in rows {
+            source
+                .execute(
+                    "INSERT OR IGNORE INTO session(id, directory) VALUES (?1, '/tmp/proj')",
+                    rusqlite::params![session_id],
+                )
+                .unwrap();
+            source
+                .execute(
+                    "INSERT INTO model_usage(session_id, started_at, model_id, status,
+                       input_tokens, output_tokens, reasoning_tokens,
+                       cache_creation_input_tokens, cache_read_input_tokens)
+                     VALUES (?1, ?2, 'glm-4', 'completed', ?3, 0, 0, 0, 0)",
+                    rusqlite::params![session_id, started_at, *input as i64],
+                )
+                .unwrap();
+        }
+    }
+
+    // Pins both halves of the incremental contract: history outside the lookback window
+    // stops being re-read, and a session that gains a row still comes back with its full
+    // token total rather than just the increment.
+    #[test]
+    fn zcode_rescan_reaggregates_whole_sessions_not_just_new_rows() {
+        let costdog = rusqlite::Connection::open_in_memory().unwrap();
+        source_status::ensure_schema(&costdog).unwrap();
+        let db_path = temp_db_path("zcode_incremental");
+        let now = chrono::Utc::now().timestamp_millis();
+        let ten_days_ago = now - 10 * 24 * 60 * 60 * 1000;
+
+        write_zcode_fixture(
+            &db_path,
+            &[
+                ("old", ten_days_ago, 500),
+                ("live", now - 2 * 60 * 60 * 1000, 100),
+                ("live", now - 60 * 60 * 1000, 30),
+            ],
+        );
+
+        let first = scan_zcode_db(&costdog, &db_path).unwrap();
+        let live_first: u64 = first
+            .sessions
+            .iter()
+            .filter(|s| s.session_id == "live")
+            .map(|s| s.input_tokens)
+            .sum();
+        assert_eq!(live_first, 130, "first scan reads the full history");
+        assert!(first.sessions.iter().any(|s| s.session_id == "old"));
+        source_status::save_watermark(&costdog, "zcode", first.watermark.unwrap()).unwrap();
+
+        // A new usage row lands on the same session, on the same local date.
+        write_zcode_fixture(&db_path, &[("live", now - 60 * 1000, 7)]);
+
+        let second = scan_zcode_db(&costdog, &db_path).unwrap();
+        let live_second: u64 = second
+            .sessions
+            .iter()
+            .filter(|s| s.session_id == "live")
+            .map(|s| s.input_tokens)
+            .sum();
+        assert_eq!(
+            live_second, 137,
+            "rescan must re-sum all rows of a touched session, not only the new one"
+        );
+        assert!(
+            !second.sessions.iter().any(|s| s.session_id == "old"),
+            "sessions untouched since the watermark must not be re-read"
+        );
+
+        let _ = fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn opencode_rescan_skips_sessions_untouched_since_the_watermark() {
+        let costdog = rusqlite::Connection::open_in_memory().unwrap();
+        source_status::ensure_schema(&costdog).unwrap();
+        let db_path = temp_db_path("opencode_incremental");
+        let now = chrono::Utc::now().timestamp_millis();
+        let ten_days_ago = now - 10 * 24 * 60 * 60 * 1000;
+
+        let source = rusqlite::Connection::open(&db_path).unwrap();
+        source
+            .execute_batch(
+                "CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, model TEXT,
+                   cost REAL, tokens_input INTEGER, tokens_output INTEGER,
+                   tokens_reasoning INTEGER, tokens_cache_read INTEGER,
+                   tokens_cache_write INTEGER, time_created INTEGER, time_updated INTEGER);",
+            )
+            .unwrap();
+        let insert = |id: &str, created: i64, updated: i64, input: i64| {
+            source
+                .execute(
+                    "INSERT INTO session VALUES (?1,'/tmp/proj','{\"id\":\"gpt\"}',0.5,?2,0,0,0,0,?3,?4)",
+                    rusqlite::params![id, input, created, updated],
+                )
+                .unwrap();
+        };
+        insert("old", ten_days_ago, ten_days_ago, 500);
+        insert("live", now - 60 * 60 * 1000, now - 60 * 60 * 1000, 100);
+
+        let first = scan_opencode_db(&costdog, &db_path).unwrap();
+        assert_eq!(first.sessions.len(), 2, "first scan reads the full history");
+        source_status::save_watermark(&costdog, "opencode", first.watermark.unwrap()).unwrap();
+
+        let second = scan_opencode_db(&costdog, &db_path).unwrap();
+        assert_eq!(
+            second.sessions.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(),
+            vec!["live"],
+            "only rows updated inside the lookback window are re-read"
+        );
+
+        let _ = fs::remove_file(&db_path);
+    }
+
+    // Re-pricing reads the sessions table, not the source logs, precisely because scans are
+    // incremental: an old session that never gets rescanned still has to leave the unpriced
+    // state once its model appears in the catalog.
+    #[test]
+    fn repricing_lifts_old_unpriced_sessions_and_leaves_unlisted_models_alone() {
+        let db_path = temp_db_path("reprice");
+        let conn = ensure_db_exists_at(&db_path).unwrap();
+        let old_date = "2020-01-05";
+
+        for (session_id, model) in [("listed", "gpt-5-codex"), ("unlisted", "my-local-model")] {
+            let session = SessionData {
+                session_id: session_id.to_string(),
+                source: "claude-code".to_string(),
+                date: old_date.to_string(),
+                model: model.to_string(),
+                project: "proj".to_string(),
+                start_time: format!("{old_date}T01:00:00Z"),
+                end_time: format!("{old_date}T01:05:00Z"),
+                input_tokens: 1_000_000,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
+                reasoning_tokens: 0,
+                disk_write_bytes: 0,
+                cost: 0.0,
+                provider_cost_amount: None,
+                usage_complete: true,
+                tool_calls: HashMap::new(),
+                git_branch: None,
+                activity_category: "other".to_string(),
+                user_intent: String::new(),
+            };
+            upsert_session(&conn, &session).unwrap();
+            // No prices available yet -> both land in the ledger as unpriced.
+            let record = build_cost_record(model, 1_000_000, 0, 0, 0, 0, None, true, None);
+            assert_eq!(record.cost_basis, "unpriced");
+            cost_ledger::upsert(&conn, session_id, "claude-code", old_date, &record).unwrap();
+        }
+
+        let prices = vec![PricedModel {
+            model_id: "gpt-5-codex".to_string(),
+            input: 2.0,
+            output: 8.0,
+        }];
+        let summary = reprice_unpriced_sessions(&conn, &prices).unwrap();
+        assert_eq!(summary, "Priced 1 of 2 sessions");
+
+        let basis = |session_id: &str| -> (String, f64) {
+            conn.query_row(
+                "SELECT cost_basis, cost FROM session_costs WHERE session_id=?1",
+                rusqlite::params![session_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
+        };
+        let (listed_basis, listed_cost) = basis("listed");
+        assert_eq!(listed_basis, "estimated");
+        assert!((listed_cost - 2.0).abs() < 1e-9, "1M input tokens at $2/M");
+        assert_eq!(basis("unlisted").0, "unpriced", "model not in the catalog stays unpriced");
+
+        // sessions.cost is kept in step with the ledger so both reads agree.
+        let stored: f64 = conn
+            .query_row(
+                "SELECT cost FROM sessions WHERE session_id='listed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!((stored - 2.0).abs() < 1e-9);
+
+        let _ = fs::remove_file(&db_path);
+    }
+
     #[test]
     fn test_dashboard_json_keys() {
         let empty_quality = || CostQualitySummary {
@@ -2539,6 +3010,7 @@ mod tests {
             unpriced_sessions: 0,
             unpriced_tokens: 0,
             partial_sessions: 0,
+            unpriced_models: vec![],
         };
         let data = DashboardData {
             today: DailySummary {

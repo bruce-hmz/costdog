@@ -61,6 +61,11 @@ pub fn ensure_schema(conn: &Connection) -> Result<(), String> {
             modified_at_ms INTEGER NOT NULL,
             last_scanned_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS scan_watermarks (
+            source TEXT PRIMARY KEY,
+            value_ms INTEGER NOT NULL,
+            updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS source_scan_status (
             source TEXT PRIMARY KEY,
             detected INTEGER NOT NULL DEFAULT 0,
@@ -261,6 +266,35 @@ pub fn save_fingerprints(
     Ok(())
 }
 
+/// Highest source-row timestamp already folded into the CostDog DB, in epoch ms.
+/// 0 means "never scanned", which makes the first scan read the full history.
+pub fn load_watermark(conn: &Connection, source: &str) -> Result<i64, String> {
+    match conn.query_row(
+        "SELECT value_ms FROM scan_watermarks WHERE source=?1",
+        params![source],
+        |row| row.get(0),
+    ) {
+        Ok(value) => Ok(value),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Never moves a watermark backwards: a source DB that loses rows (reset, rollback)
+/// must not make CostDog re-import history it already has.
+pub fn save_watermark(conn: &Connection, source: &str, value_ms: i64) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO scan_watermarks(source, value_ms, updated_at)
+         VALUES (?1, ?2, datetime('now','localtime'))
+         ON CONFLICT(source) DO UPDATE SET
+           value_ms = MAX(scan_watermarks.value_ms, excluded.value_ms),
+           updated_at = excluded.updated_at",
+        params![source, value_ms],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 pub fn refresh_measurement_counts(
     conn: &Connection,
     measurement: &mut SourceScanMeasurement,
@@ -345,6 +379,24 @@ mod tests {
         assert_eq!(error, None);
         assert!(success.is_some());
         assert_eq!(records, 3);
+    }
+
+    #[test]
+    fn watermark_starts_at_zero_and_never_moves_backwards() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        assert_eq!(load_watermark(&conn, "zcode").unwrap(), 0);
+
+        save_watermark(&conn, "zcode", 1_700_000_000_000).unwrap();
+        assert_eq!(load_watermark(&conn, "zcode").unwrap(), 1_700_000_000_000);
+
+        // A source DB that lost rows reports a lower max; keep the higher watermark.
+        save_watermark(&conn, "zcode", 1_600_000_000_000).unwrap();
+        assert_eq!(load_watermark(&conn, "zcode").unwrap(), 1_700_000_000_000);
+
+        // Watermarks are per source.
+        assert_eq!(load_watermark(&conn, "opencode").unwrap(), 0);
     }
 
     #[test]
