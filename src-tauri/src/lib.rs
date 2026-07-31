@@ -7,7 +7,7 @@ use cost_ledger::{build_cost_record, ResolvedPrice};
 use source_status::SourceScanMeasurement;
 use tauri::{Manager, Emitter};
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::fs;
@@ -2297,17 +2297,29 @@ fn set_monthly_budget(amount_usd: Option<f64>) -> Result<budget::BudgetStatus, S
     Ok(status)
 }
 
+// The bar's × hides the window on every platform. Closing it would destroy the webview,
+// after which the tray's "Show CostDog" can no longer find a "main" window and the app
+// becomes unreachable without a restart. Quitting is the tray's job.
 #[tauri::command]
 fn close_window(app: tauri::AppHandle) {
+    hide_bar(&app);
+}
+
+fn show_bar(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        #[cfg(target_os = "macos")]
-        {
-            window.hide().ok();
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            window.close().ok();
-        }
+        let _ = window.show();
+        let _ = window.set_focus();
+        BAR_VISIBLE.store(true, std::sync::atomic::Ordering::Relaxed);
+        // Scans are throttled while hidden, so the bar can be showing numbers up to five
+        // minutes old. Re-reading the DB is cheap and makes it current on reappearance.
+        let _ = app.emit("refresh-data", ());
+    }
+}
+
+fn hide_bar(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+        BAR_VISIBLE.store(false, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -2322,17 +2334,39 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let quit_i = MenuItem::with_id(app, "quit", "Quit CostDog", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&version_i, &show_i, &update_i, &quit_i])?;
 
-    TrayIconBuilder::with_id("main-tray")
+    // macOS recolors template images to match the light/dark menu bar and ignores their
+    // color channels, so the opaque app icon would render as a solid blob. Other platforms
+    // draw the tray icon as-is and keep the full-color app icon.
+    #[cfg(target_os = "macos")]
+    let icon = tauri::image::Image::new(include_bytes!("../icons/tray-template.rgba"), 44, 44);
+    #[cfg(not(target_os = "macos"))]
+    let icon = app.default_window_icon().expect("default window icon missing").clone();
+
+    let builder = TrayIconBuilder::with_id("main-tray")
         .tooltip(format!("CostDog v{}", version))
-        .icon(app.default_window_icon().expect("default window icon missing").clone())
+        .icon(icon)
         .menu(&menu)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+        // Left click toggles the bar, right click opens the menu — the convention for
+        // menu-bar utilities. Without this, left click would only reopen the menu.
+        .show_menu_on_left_click(false)
+        .on_tray_icon_event(|tray, event| {
+            let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            else {
+                return;
+            };
+            let app = tray.app_handle();
+            if BAR_VISIBLE.load(std::sync::atomic::Ordering::Relaxed) {
+                hide_bar(app);
+            } else {
+                show_bar(app);
             }
+        })
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => show_bar(app),
             "check-update" => {
                 let handle = app.clone();
                 tauri::async_runtime::spawn(async move {
@@ -2343,8 +2377,12 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
             "quit" => app.exit(0),
             _ => {}
-        })
-        .build(app)?;
+        });
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.icon_as_template(true);
+
+    builder.build(app)?;
 
     Ok(())
 }
@@ -2354,6 +2392,14 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 /// delayed auto-check on launch.
 #[tauri::command]
 async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
+    run_update_check(app, false).await
+}
+
+/// `silent` suppresses the "already up to date" and "check failed" dialogs. The launch
+/// auto-check runs silent so an unattended start never interrupts the user; only the tray
+/// menu item, where the user asked for an answer, reports those two outcomes. A found
+/// update always prompts, silent or not.
+async fn run_update_check(app: tauri::AppHandle, silent: bool) -> Result<String, String> {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
     use tauri_plugin_updater::UpdaterExt;
 
@@ -2366,19 +2412,23 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
     {
         Ok(Some(u)) => u,
         Ok(None) => {
-            let _ = app
-                .dialog()
-                .message(format!("CostDog {} 已是最新版本。", current))
-                .title("CostDog")
-                .blocking_show();
+            if !silent {
+                let _ = app
+                    .dialog()
+                    .message(format!("CostDog {} 已是最新版本。", current))
+                    .title("CostDog")
+                    .blocking_show();
+            }
             return Ok("up-to-date".to_string());
         }
         Err(e) => {
-            let _ = app
-                .dialog()
-                .message(format!("检查更新失败: {}", e))
-                .title("CostDog")
-                .blocking_show();
+            if !silent {
+                let _ = app
+                    .dialog()
+                    .message(format!("检查更新失败: {}", e))
+                    .title("CostDog")
+                    .blocking_show();
+            }
             return Err(e.to_string());
         }
     };
@@ -2433,8 +2483,21 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
+        // POSITION only: the bar's height is driven by the collapsed/expanded state
+        // (36 vs 520), so restoring a saved SIZE would reopen the app as a 520px-tall
+        // window with the detail panel hidden.
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, close_window, check_for_updates])
         .setup(|app| {
+            // A 36px always-on-top bar is an accessory, not an app: drop the Dock icon
+            // and the app menu so CostDog lives entirely in the menu bar.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             let window = app.get_webview_window("main").unwrap();
             window.set_always_on_top(true).ok();
             window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: 410.0, height: 36.0 })).ok();
@@ -2480,7 +2543,7 @@ pub fn run() {
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 let h = update_handle;
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = check_for_updates(h).await {
+                    if let Err(e) = run_update_check(h, true).await {
                         eprintln!("[CostDog] update check failed: {}", e);
                     }
                 });

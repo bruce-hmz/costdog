@@ -14,7 +14,7 @@
         "title": "CostDog",
         "width": 410,
         "height": 36,
-        "resizable": true,
+        "resizable": false,
         "alwaysOnTop": true,
         "decorations": false,
         "transparent": false,

@@ -90,6 +90,60 @@ function createDogIcon(size) {
   return pixels;
 }
 
+// macOS menu-bar template icon: a dog-head silhouette drawn in black with alpha only.
+// The system recolors template images for light/dark menu bars and discards any color,
+// so the app icon (an opaque rounded square) would render as a solid blob here.
+function createTrayTemplate(size) {
+  const pixels = Buffer.alloc(size * size * 4);
+  const s = size / 22; // shapes below are authored on a 22pt menu-bar grid
+  const SAMPLES = 4;
+
+  function inEllipse(x, y, cx, cy, rx, ry) {
+    const dx = (x - cx) / rx, dy = (y - cy) / ry;
+    return dx * dx + dy * dy <= 1;
+  }
+
+  function inTriangle(x, y, ax, ay, bx, by, cx, cy) {
+    const d1 = (x - bx) * (ay - by) - (ax - bx) * (y - by);
+    const d2 = (x - cx) * (by - cy) - (bx - cx) * (y - cy);
+    const d3 = (x - ax) * (cy - ay) - (cx - ax) * (y - ay);
+    const hasNeg = d1 < 0 || d2 < 0 || d3 < 0;
+    const hasPos = d1 > 0 || d2 > 0 || d3 > 0;
+    return !(hasNeg && hasPos);
+  }
+
+  function covered(x, y) {
+    const body =
+      inEllipse(x, y, 11, 13.5, 7.6, 6.8) ||
+      inTriangle(x, y, 2.6, 1.4, 9.2, 7.6, 3.2, 11.4) ||
+      inTriangle(x, y, 19.4, 1.4, 12.8, 7.6, 18.8, 11.4);
+    if (!body) return false;
+    // Knocked-out features keep the silhouette readable at 22pt.
+    if (inEllipse(x, y, 8.2, 12.2, 1.3, 1.5)) return false;
+    if (inEllipse(x, y, 13.8, 12.2, 1.3, 1.5)) return false;
+    if (inEllipse(x, y, 11, 16.4, 1.9, 1.4)) return false;
+    return true;
+  }
+
+  for (let py = 0; py < size; py++) {
+    for (let px = 0; px < size; px++) {
+      let hits = 0;
+      for (let sy = 0; sy < SAMPLES; sy++) {
+        for (let sx = 0; sx < SAMPLES; sx++) {
+          const x = (px + (sx + 0.5) / SAMPLES) / s;
+          const y = (py + (sy + 0.5) / SAMPLES) / s;
+          if (covered(x, y)) hits++;
+        }
+      }
+      const i = (py * size + px) * 4;
+      pixels[i] = 0; pixels[i + 1] = 0; pixels[i + 2] = 0;
+      pixels[i + 3] = Math.round((hits / (SAMPLES * SAMPLES)) * 255);
+    }
+  }
+
+  return pixels;
+}
+
 function createPNG(width, height, pixels) {
   const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
   const ihdr = Buffer.alloc(13);
@@ -130,6 +184,15 @@ for (const size of [32, 128, 256]) {
   fs.writeFileSync(path.join(iconsDir, `${size}x${size}.png`), png);
   console.log(`${size}x${size}.png`);
 }
+
+// Menu-bar template icon at @2x (44px downscales cleanly to the 22pt menu bar).
+// The .rgba file is what the tray embeds — Tauri's Image::new takes raw RGBA, so
+// shipping it pre-decoded avoids pulling a PNG codec in just for this icon. The .png
+// is the reviewable copy: it is the only form a human can actually look at.
+const trayPixels = createTrayTemplate(44);
+fs.writeFileSync(path.join(iconsDir, 'tray-template.rgba'), trayPixels);
+fs.writeFileSync(path.join(iconsDir, 'tray-template.png'), createPNG(44, 44, trayPixels));
+console.log('tray-template.rgba + tray-template.png');
 
 // ICO
 const png32 = fs.readFileSync(path.join(iconsDir, '32x32.png'));

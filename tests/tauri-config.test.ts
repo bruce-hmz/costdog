@@ -27,6 +27,21 @@ test('desktop CSP allows Tauri IPC commands', () => {
   assert.match(desktopHtml, /data-action="toggle"/);
 });
 
+// The bar is laid out at a fixed 410px (five skins are drawn against that width), and
+// setup() re-applies 410x36 on every launch. Leaving the window resizable let the user
+// drag it wider than the bar, exposing a strip of empty background on the right.
+test('bar window is not resizable while its layout is fixed-width', () => {
+  const [mainWindow] = tauriConfig.app.windows;
+  const capabilities = JSON.parse(
+    readFileSync(new URL('../src-tauri/capabilities/default.json', import.meta.url), 'utf8'),
+  );
+
+  assert.match(desktopHtml, /\.bar\{[^}]*width:410px/);
+  assert.equal(mainWindow.width, 410);
+  assert.equal(mainWindow.resizable, false);
+  assert.ok(!capabilities.permissions.includes('core:window:allow-start-resize-dragging'));
+});
+
 test('desktop release versions stay aligned', () => {
   const cargoVersion = cargoManifest.match(/^version = "([^"]+)"$/m)?.[1];
 
