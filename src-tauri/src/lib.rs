@@ -47,6 +47,11 @@ struct CostQualitySummary {
     unpriced_tokens: u64,
     #[serde(rename = "partialSessions")]
     partial_sessions: u64,
+    /// Which models failed to price. "3 sessions unpriced" is not actionable on its own —
+    /// the model id is what tells the user whether to wait for a pricing refresh or accept
+    /// that a local/unlisted model will never have an OpenRouter price.
+    #[serde(rename = "unpricedModels")]
+    unpriced_models: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1961,12 +1966,30 @@ fn get_cost_quality(
             .map_err(|e| e.to_string())
     };
 
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT COALESCE(NULLIF(s.model,''), 'unknown')
+             FROM sessions s
+             JOIN session_costs sc
+               ON sc.session_id = s.session_id AND sc.source = s.source AND sc.date = s.date
+             WHERE s.date >= ?1 AND s.date <= ?2 AND sc.cost_basis = 'unpriced'
+             ORDER BY 1
+             LIMIT 6",
+        )
+        .map_err(|e| e.to_string())?;
+    let unpriced_models = stmt
+        .query_map(rusqlite::params![start, end], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|row| row.ok())
+        .collect();
+
     Ok(CostQualitySummary {
         provider_cost,
         estimated_cost,
         unpriced_sessions: count_distinct("sc.cost_basis = 'unpriced'")?,
         unpriced_tokens,
         partial_sessions: count_distinct("sc.usage_completeness = 'partial'")?,
+        unpriced_models,
     })
 }
 
@@ -2233,6 +2256,109 @@ fn scan() -> Result<String, String> {
     Ok(format!("Scanned {} sessions", count))
 }
 
+/// Drop the pricing cache and re-price stored sessions, so rows that were unpriced because
+/// the 24h cache predated a model's listing get a second chance. Models OpenRouter does not
+/// carry at all stay unpriced — the UI lists them so the user can tell the cases apart.
+///
+/// Re-prices from the sessions table rather than by rescanning: scans are incremental now,
+/// so a rescan would only revisit the last day of source rows and would leave older
+/// unpriced sessions untouched. Every token count needed is already stored.
+#[tauri::command]
+fn refresh_pricing() -> Result<String, String> {
+    match fs::remove_file(get_pricing_cache_path()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Cannot clear the pricing cache: {error}")),
+    }
+    let prices = load_pricing();
+    if prices.is_empty() {
+        return Err("Could not load prices from OpenRouter".to_string());
+    }
+    let conn = get_db_connection()?;
+    reprice_unpriced_sessions(&conn, &prices)
+}
+
+fn reprice_unpriced_sessions(
+    conn: &rusqlite::Connection,
+    prices: &[PricedModel],
+) -> Result<String, String> {
+    struct Unpriced {
+        session_id: String,
+        source: String,
+        date: String,
+        model: String,
+        input: u64,
+        output: u64,
+        cache_read: u64,
+        cache_creation: u64,
+        reasoning: u64,
+        usage_complete: bool,
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT s.session_id, s.source, s.date, COALESCE(NULLIF(s.model,''),'unknown'),
+                    s.input_tokens, s.output_tokens, s.cache_read_tokens,
+                    s.cache_creation_tokens, s.reasoning_output_tokens,
+                    sc.usage_completeness
+             FROM sessions s
+             JOIN session_costs sc
+               ON sc.session_id = s.session_id AND sc.source = s.source AND sc.date = s.date
+             WHERE sc.cost_basis = 'unpriced'",
+        )
+        .map_err(|e| e.to_string())?;
+    let pending: Vec<Unpriced> = stmt
+        .query_map([], |row| {
+            Ok(Unpriced {
+                session_id: row.get(0)?,
+                source: row.get(1)?,
+                date: row.get(2)?,
+                model: row.get(3)?,
+                input: row.get(4)?,
+                output: row.get(5)?,
+                cache_read: row.get(6)?,
+                cache_creation: row.get(7)?,
+                reasoning: row.get(8)?,
+                usage_complete: row.get::<_, String>(9)? != "partial",
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|row| row.ok())
+        .collect();
+
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let mut repriced = 0;
+    for session in &pending {
+        // provider_cost_amount is None by construction: a row carrying a provider cost
+        // would have cost_basis 'provider', not 'unpriced'.
+        let record = build_cost_record(
+            &session.model,
+            session.input,
+            session.output,
+            session.cache_read,
+            session.cache_creation,
+            session.reasoning,
+            None,
+            session.usage_complete,
+            find_model_price(&session.model, prices),
+        );
+        if record.cost_basis == "unpriced" {
+            continue;
+        }
+        cost_ledger::upsert(&tx, &session.session_id, &session.source, &session.date, &record)?;
+        tx.execute(
+            "UPDATE sessions SET cost = ?1
+             WHERE session_id = ?2 AND source = ?3 AND date = ?4",
+            rusqlite::params![record.cost, session.session_id, session.source, session.date],
+        )
+        .map_err(|e| e.to_string())?;
+        repriced += 1;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(format!("Priced {} of {} sessions", repriced, pending.len()))
+}
+
 #[tauri::command]
 fn dismiss_alert(alert_id: i64) -> Result<(), String> {
     let conn = ensure_db_exists()?;
@@ -2491,7 +2617,7 @@ pub fn run() {
                 .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, close_window, check_for_updates])
+        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates])
         .setup(|app| {
             // A 36px always-on-top bar is an accessory, not an app: drop the Dock icon
             // and the app menu so CostDog lives entirely in the menu bar.
@@ -2803,6 +2929,79 @@ mod tests {
         let _ = fs::remove_file(&db_path);
     }
 
+    // Re-pricing reads the sessions table, not the source logs, precisely because scans are
+    // incremental: an old session that never gets rescanned still has to leave the unpriced
+    // state once its model appears in the catalog.
+    #[test]
+    fn repricing_lifts_old_unpriced_sessions_and_leaves_unlisted_models_alone() {
+        let db_path = temp_db_path("reprice");
+        let conn = ensure_db_exists_at(&db_path).unwrap();
+        let old_date = "2020-01-05";
+
+        for (session_id, model) in [("listed", "gpt-5-codex"), ("unlisted", "my-local-model")] {
+            let session = SessionData {
+                session_id: session_id.to_string(),
+                source: "claude-code".to_string(),
+                date: old_date.to_string(),
+                model: model.to_string(),
+                project: "proj".to_string(),
+                start_time: format!("{old_date}T01:00:00Z"),
+                end_time: format!("{old_date}T01:05:00Z"),
+                input_tokens: 1_000_000,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
+                reasoning_tokens: 0,
+                disk_write_bytes: 0,
+                cost: 0.0,
+                provider_cost_amount: None,
+                usage_complete: true,
+                tool_calls: HashMap::new(),
+                git_branch: None,
+                activity_category: "other".to_string(),
+                user_intent: String::new(),
+            };
+            upsert_session(&conn, &session).unwrap();
+            // No prices available yet -> both land in the ledger as unpriced.
+            let record = build_cost_record(model, 1_000_000, 0, 0, 0, 0, None, true, None);
+            assert_eq!(record.cost_basis, "unpriced");
+            cost_ledger::upsert(&conn, session_id, "claude-code", old_date, &record).unwrap();
+        }
+
+        let prices = vec![PricedModel {
+            model_id: "gpt-5-codex".to_string(),
+            input: 2.0,
+            output: 8.0,
+        }];
+        let summary = reprice_unpriced_sessions(&conn, &prices).unwrap();
+        assert_eq!(summary, "Priced 1 of 2 sessions");
+
+        let basis = |session_id: &str| -> (String, f64) {
+            conn.query_row(
+                "SELECT cost_basis, cost FROM session_costs WHERE session_id=?1",
+                rusqlite::params![session_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
+        };
+        let (listed_basis, listed_cost) = basis("listed");
+        assert_eq!(listed_basis, "estimated");
+        assert!((listed_cost - 2.0).abs() < 1e-9, "1M input tokens at $2/M");
+        assert_eq!(basis("unlisted").0, "unpriced", "model not in the catalog stays unpriced");
+
+        // sessions.cost is kept in step with the ledger so both reads agree.
+        let stored: f64 = conn
+            .query_row(
+                "SELECT cost FROM sessions WHERE session_id='listed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!((stored - 2.0).abs() < 1e-9);
+
+        let _ = fs::remove_file(&db_path);
+    }
+
     #[test]
     fn test_dashboard_json_keys() {
         let empty_quality = || CostQualitySummary {
@@ -2811,6 +3010,7 @@ mod tests {
             unpriced_sessions: 0,
             unpriced_tokens: 0,
             partial_sessions: 0,
+            unpriced_models: vec![],
         };
         let data = DashboardData {
             today: DailySummary {
