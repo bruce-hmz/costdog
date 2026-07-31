@@ -201,6 +201,7 @@ struct SourceScanOutcome {
     measurement: SourceScanMeasurement,
     sessions: Vec<SessionData>,
     fingerprints: Vec<source_status::FileFingerprint>,
+    watermark: Option<i64>,
 }
 
 #[derive(Default)]
@@ -209,16 +210,23 @@ struct FileScanResult {
     fingerprints: Vec<source_status::FileFingerprint>,
     skipped_files: u64,
     malformed_lines: u64,
+    /// Highest source-row timestamp read this pass; committed only if the scan succeeds.
+    watermark: Option<i64>,
 }
 
-impl FileScanResult {
-    fn from_sessions(sessions: Vec<SessionData>) -> Self {
-        Self {
-            sessions,
-            ..Self::default()
-        }
-    }
-}
+/// A row can land in the source DB after the timestamp it carries — a request that starts
+/// before a scan and finishes after it. A strict watermark would skip such rows forever,
+/// so every scan re-reads the last day. The work stays bounded and nothing is lost.
+const INCREMENTAL_LOOKBACK_MS: i64 = 24 * 60 * 60 * 1000;
+
+const SCAN_TICK_SECONDS: u64 = 30;
+/// Ticks to skip while the bar is hidden, i.e. one scan every 5 minutes.
+const HIDDEN_SCAN_TICKS: u32 = 10;
+
+/// Mirrors the bar's visibility for the scan thread. Every show/hide goes through
+/// show_bar/hide_bar, so this stays in sync without the scan thread calling a window API —
+/// those dispatch to the main thread and block, which is a poor fit for a background loop.
+static BAR_VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 fn scan_source<F>(
     source: &str,
@@ -269,6 +277,7 @@ where
         },
         sessions: scan_result.sessions,
         fingerprints: scan_result.fingerprints,
+        watermark: scan_result.watermark,
     }
 }
 
@@ -1180,11 +1189,23 @@ fn scan_codex_sessions(conn: &rusqlite::Connection) -> Result<FileScanResult, St
 // Aggregated by (session_id, LOCAL date of started_at) so a session spanning midnight
 // splits across days — same rule as the Claude Code parser. input_tokens excludes cache,
 // so calculate_cost (which bills cache read/creation separately) is correct as-is.
-fn scan_zcode_sessions() -> Vec<SessionData> {
-    let db_path = get_zcode_db_path();
-    let conn = match open_readonly_db(&db_path, "model_usage") {
+// Incremental: the watermark selects *sessions* with at least one recent usage row, and
+// every row those sessions own is then re-aggregated. Filtering the usage rows themselves
+// would emit a bucket holding only part of a session's tokens, which upsert_session would
+// write over the real total. That filter happens to be safe today only because a bucket
+// spans one local date and the lookback is a full day — selecting whole sessions keeps the
+// invariant local instead of resting on that coincidence.
+fn scan_zcode_sessions(costdog: &rusqlite::Connection) -> Result<FileScanResult, String> {
+    scan_zcode_db(costdog, &get_zcode_db_path())
+}
+
+fn scan_zcode_db(
+    costdog: &rusqlite::Connection,
+    db_path: &PathBuf,
+) -> Result<FileScanResult, String> {
+    let conn = match open_readonly_db(db_path, "model_usage") {
         Some(c) => c,
-        None => return Vec::new(),
+        None => return Ok(FileScanResult::default()),
     };
     // Also need the session table for project directories.
     let has_session: i64 = conn
@@ -1195,8 +1216,10 @@ fn scan_zcode_sessions() -> Vec<SessionData> {
         )
         .unwrap_or(0);
     if has_session == 0 {
-        return Vec::new();
+        return Ok(FileScanResult::default());
     }
+
+    let since = source_status::load_watermark(costdog, "zcode")? - INCREMENTAL_LOOKBACK_MS;
 
     // Bucket key "session_id\u{0}date" -> (bucket). project dir tracked separately.
     use std::collections::HashMap;
@@ -1213,19 +1236,26 @@ fn scan_zcode_sessions() -> Vec<SessionData> {
     let mut buckets: HashMap<String, Bucket> = HashMap::new();
     let mut projects: HashMap<String, String> = HashMap::new();
 
+    // The IN subquery runs inside ZCode's DB, so the session set never becomes a bind
+    // parameter list — a first full scan would otherwise blow SQLite's variable limit.
     let sql = "SELECT m.session_id, s.directory, m.started_at, m.model_id, \
                m.input_tokens, m.output_tokens, m.reasoning_tokens, \
                m.cache_creation_input_tokens, m.cache_read_input_tokens \
                FROM model_usage m JOIN session s ON s.id = m.session_id \
-               WHERE m.status IN ('completed','error','cancelled') AND m.started_at IS NOT NULL";
+               WHERE m.status IN ('completed','error','cancelled') AND m.started_at IS NOT NULL \
+                 AND m.session_id IN ( \
+                   SELECT session_id FROM model_usage \
+                   WHERE status IN ('completed','error','cancelled') \
+                     AND started_at IS NOT NULL AND started_at > ?1 \
+                 )";
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("[CostDog] ZCode query failed: {}", e);
-            return Vec::new();
+            return Ok(FileScanResult::default());
         }
     };
-    let rows = match stmt.query_map([], |row| {
+    let rows = match stmt.query_map(rusqlite::params![since], |row| {
         Ok((
             row.get::<_, String>(0)?,        // session_id
             row.get::<_, Option<String>>(1)?, // directory
@@ -1241,15 +1271,17 @@ fn scan_zcode_sessions() -> Vec<SessionData> {
         Ok(r) => r,
         Err(e) => {
             eprintln!("[CostDog] ZCode query_map failed: {}", e);
-            return Vec::new();
+            return Ok(FileScanResult::default());
         }
     };
 
+    let mut watermark: Option<i64> = None;
     for r in rows {
         let (sid, dir, started, model, input, output, reasoning, cc, cr) = match r {
             Ok(v) => v,
             Err(_) => continue,
         };
+        watermark = Some(watermark.map_or(started, |w: i64| w.max(started)));
         let date = local_date_from_ms(started);
         if date.is_empty() {
             continue;
@@ -1306,29 +1338,41 @@ fn scan_zcode_sessions() -> Vec<SessionData> {
             user_intent: String::new(),
         });
     }
-    eprintln!("[CostDog] ZCode scan: {} sessions", out.len());
-    out
+    eprintln!("[CostDog] ZCode scan: {} sessions since {}", out.len(), since);
+    Ok(FileScanResult {
+        sessions: out,
+        watermark,
+        ..FileScanResult::default()
+    })
 }
 
 // OpenCode (v1.14+) stores everything in ~/.local/share/opencode/opencode.db.
 // The session table carries pre-aggregated cost + token columns written by the app.
 // Older DBs may lack some columns — detected via PRAGMA table_info and defaulted to 0.
-fn scan_opencode_sessions() -> Vec<SessionData> {
-    let db_path = get_opencode_db_path();
-    let conn = match open_readonly_db(&db_path, "session") {
+// Incremental: one row IS one session here (OpenCode pre-aggregates), so filtering rows
+// by their update time cannot produce a partial session the way ZCode's usage rows would.
+fn scan_opencode_sessions(costdog: &rusqlite::Connection) -> Result<FileScanResult, String> {
+    scan_opencode_db(costdog, &get_opencode_db_path())
+}
+
+fn scan_opencode_db(
+    costdog: &rusqlite::Connection,
+    db_path: &PathBuf,
+) -> Result<FileScanResult, String> {
+    let conn = match open_readonly_db(db_path, "session") {
         Some(c) => c,
-        None => return Vec::new(),
+        None => return Ok(FileScanResult::default()),
     };
 
     // Detect columns so older schemas degrade gracefully.
     let col_names: Vec<String> = {
         let mut stmt = match conn.prepare("PRAGMA table_info(session)") {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(_) => return Ok(FileScanResult::default()),
         };
         let rows = match stmt.query_map([], |row| row.get::<_, String>(1)) {
             Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Err(_) => return Ok(FileScanResult::default()),
         };
         rows.filter_map(|r| r.ok()).collect()
     };
@@ -1341,18 +1385,20 @@ fn scan_opencode_sessions() -> Vec<SessionData> {
     let crr_col = if has("tokens_cache_read") { "tokens_cache_read" } else { "0" };
     let cw_col = if has("tokens_cache_write") { "tokens_cache_write" } else { "0" };
 
+    let since = source_status::load_watermark(costdog, "opencode")? - INCREMENTAL_LOOKBACK_MS;
     let sql = format!(
-        "SELECT id, directory, model, {}, {}, {}, {}, {}, {}, time_created, time_updated FROM session",
+        "SELECT id, directory, model, {}, {}, {}, {}, {}, {}, time_created, time_updated \
+         FROM session WHERE COALESCE(time_updated, time_created, 0) > ?1",
         cost_col, ti_col, to_col, tr_col, crr_col, cw_col
     );
     let mut stmt = match conn.prepare(&sql) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("[CostDog] OpenCode query failed: {}", e);
-            return Vec::new();
+            return Ok(FileScanResult::default());
         }
     };
-    let rows = match stmt.query_map([], |row| {
+    let rows = match stmt.query_map(rusqlite::params![since], |row| {
         Ok((
             row.get::<_, String>(0)?,                  // id
             row.get::<_, Option<String>>(1)?,          // directory
@@ -1370,16 +1416,19 @@ fn scan_opencode_sessions() -> Vec<SessionData> {
         Ok(r) => r,
         Err(e) => {
             eprintln!("[CostDog] OpenCode query_map failed: {}", e);
-            return Vec::new();
+            return Ok(FileScanResult::default());
         }
     };
 
     let mut out = Vec::new();
+    let mut watermark: Option<i64> = None;
     for r in rows {
         let (id, dir, model_json, cost, ti, to, tr, crr, cw, tc, tu) = match r {
             Ok(v) => v,
             Err(_) => continue,
         };
+        let touched_at = tu.or(tc).unwrap_or(0);
+        watermark = Some(watermark.map_or(touched_at, |w: i64| w.max(touched_at)));
         let started = tc.or(tu).unwrap_or(0);
         let date = local_date_from_ms(started);
         // Parse model id out of the JSON column (tolerate plain string / null).
@@ -1424,8 +1473,12 @@ fn scan_opencode_sessions() -> Vec<SessionData> {
             user_intent: String::new(),
         });
     }
-    eprintln!("[CostDog] OpenCode scan: {} sessions", out.len());
-    out
+    eprintln!("[CostDog] OpenCode scan: {} sessions since {}", out.len(), since);
+    Ok(FileScanResult {
+        sessions: out,
+        watermark,
+        ..FileScanResult::default()
+    })
 }
 
 // ---- Pricing ----
@@ -1731,13 +1784,13 @@ fn full_scan() -> Result<usize, String> {
             "zcode",
             &get_zcode_db_path(),
             Some("model_usage"),
-            || Ok(FileScanResult::from_sessions(scan_zcode_sessions())),
+            || scan_zcode_sessions(&conn),
         ),
         scan_source(
             "opencode",
             &get_opencode_db_path(),
             Some("session"),
-            || Ok(FileScanResult::from_sessions(scan_opencode_sessions())),
+            || scan_opencode_sessions(&conn),
         ),
     ];
     let mut scanned_sessions = Vec::new();
@@ -1792,9 +1845,20 @@ fn full_scan() -> Result<usize, String> {
     }
     tx.commit().map_err(|e| e.to_string())?;
 
+    // Fingerprints and watermarks advance only here, after the session rows above are
+    // committed — a failed scan must be retried from the same starting point, not skipped.
     let metadata_tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     for outcome in &mut outcomes {
         source_status::save_fingerprints(&metadata_tx, &outcome.fingerprints)?;
+        if outcome.measurement.error.is_none() {
+            if let Some(watermark) = outcome.watermark {
+                source_status::save_watermark(
+                    &metadata_tx,
+                    &outcome.measurement.source,
+                    watermark,
+                )?;
+            }
+        }
         source_status::refresh_measurement_counts(
             &metadata_tx,
             &mut outcome.measurement,
@@ -2386,11 +2450,22 @@ pub fn run() {
                 eprintln!("Initial scan failed: {}", e);
             }
 
-            // Start auto-refresh timer (every 30 seconds)
+            // Auto-refresh: every 30s while the bar is on screen, every 10th tick (5 min)
+            // while it is hidden — nobody is reading the numbers then. Ticking at a fixed
+            // 30s rather than sleeping longer keeps the delay after the bar reappears
+            // bounded by one tick.
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
+                let mut ticks_since_scan = 0;
                 loop {
-                    std::thread::sleep(std::time::Duration::from_secs(30));
+                    std::thread::sleep(std::time::Duration::from_secs(SCAN_TICK_SECONDS));
+                    ticks_since_scan += 1;
+                    let visible = BAR_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
+                    let ticks_needed = if visible { 1 } else { HIDDEN_SCAN_TICKS };
+                    if ticks_since_scan < ticks_needed {
+                        continue;
+                    }
+                    ticks_since_scan = 0;
                     if let Err(e) = full_scan() {
                         eprintln!("Auto scan failed: {}", e);
                     }
@@ -2530,6 +2605,140 @@ fn classify(tool_calls: &HashMap<String, u64>, git_branch: Option<&str>, source:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_db_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "costdog_{}_{}_{}.sqlite",
+            name,
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ))
+    }
+
+    fn write_zcode_fixture(path: &PathBuf, rows: &[(&str, i64, u64)]) {
+        let source = rusqlite::Connection::open(path).unwrap();
+        source
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS session (id TEXT PRIMARY KEY, directory TEXT);
+                 CREATE TABLE IF NOT EXISTS model_usage (
+                   session_id TEXT, started_at INTEGER, model_id TEXT, status TEXT,
+                   input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER,
+                   cache_creation_input_tokens INTEGER, cache_read_input_tokens INTEGER);",
+            )
+            .unwrap();
+        for (session_id, started_at, input) in rows {
+            source
+                .execute(
+                    "INSERT OR IGNORE INTO session(id, directory) VALUES (?1, '/tmp/proj')",
+                    rusqlite::params![session_id],
+                )
+                .unwrap();
+            source
+                .execute(
+                    "INSERT INTO model_usage(session_id, started_at, model_id, status,
+                       input_tokens, output_tokens, reasoning_tokens,
+                       cache_creation_input_tokens, cache_read_input_tokens)
+                     VALUES (?1, ?2, 'glm-4', 'completed', ?3, 0, 0, 0, 0)",
+                    rusqlite::params![session_id, started_at, *input as i64],
+                )
+                .unwrap();
+        }
+    }
+
+    // Pins both halves of the incremental contract: history outside the lookback window
+    // stops being re-read, and a session that gains a row still comes back with its full
+    // token total rather than just the increment.
+    #[test]
+    fn zcode_rescan_reaggregates_whole_sessions_not_just_new_rows() {
+        let costdog = rusqlite::Connection::open_in_memory().unwrap();
+        source_status::ensure_schema(&costdog).unwrap();
+        let db_path = temp_db_path("zcode_incremental");
+        let now = chrono::Utc::now().timestamp_millis();
+        let ten_days_ago = now - 10 * 24 * 60 * 60 * 1000;
+
+        write_zcode_fixture(
+            &db_path,
+            &[
+                ("old", ten_days_ago, 500),
+                ("live", now - 2 * 60 * 60 * 1000, 100),
+                ("live", now - 60 * 60 * 1000, 30),
+            ],
+        );
+
+        let first = scan_zcode_db(&costdog, &db_path).unwrap();
+        let live_first: u64 = first
+            .sessions
+            .iter()
+            .filter(|s| s.session_id == "live")
+            .map(|s| s.input_tokens)
+            .sum();
+        assert_eq!(live_first, 130, "first scan reads the full history");
+        assert!(first.sessions.iter().any(|s| s.session_id == "old"));
+        source_status::save_watermark(&costdog, "zcode", first.watermark.unwrap()).unwrap();
+
+        // A new usage row lands on the same session, on the same local date.
+        write_zcode_fixture(&db_path, &[("live", now - 60 * 1000, 7)]);
+
+        let second = scan_zcode_db(&costdog, &db_path).unwrap();
+        let live_second: u64 = second
+            .sessions
+            .iter()
+            .filter(|s| s.session_id == "live")
+            .map(|s| s.input_tokens)
+            .sum();
+        assert_eq!(
+            live_second, 137,
+            "rescan must re-sum all rows of a touched session, not only the new one"
+        );
+        assert!(
+            !second.sessions.iter().any(|s| s.session_id == "old"),
+            "sessions untouched since the watermark must not be re-read"
+        );
+
+        let _ = fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn opencode_rescan_skips_sessions_untouched_since_the_watermark() {
+        let costdog = rusqlite::Connection::open_in_memory().unwrap();
+        source_status::ensure_schema(&costdog).unwrap();
+        let db_path = temp_db_path("opencode_incremental");
+        let now = chrono::Utc::now().timestamp_millis();
+        let ten_days_ago = now - 10 * 24 * 60 * 60 * 1000;
+
+        let source = rusqlite::Connection::open(&db_path).unwrap();
+        source
+            .execute_batch(
+                "CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, model TEXT,
+                   cost REAL, tokens_input INTEGER, tokens_output INTEGER,
+                   tokens_reasoning INTEGER, tokens_cache_read INTEGER,
+                   tokens_cache_write INTEGER, time_created INTEGER, time_updated INTEGER);",
+            )
+            .unwrap();
+        let insert = |id: &str, created: i64, updated: i64, input: i64| {
+            source
+                .execute(
+                    "INSERT INTO session VALUES (?1,'/tmp/proj','{\"id\":\"gpt\"}',0.5,?2,0,0,0,0,?3,?4)",
+                    rusqlite::params![id, input, created, updated],
+                )
+                .unwrap();
+        };
+        insert("old", ten_days_ago, ten_days_ago, 500);
+        insert("live", now - 60 * 60 * 1000, now - 60 * 60 * 1000, 100);
+
+        let first = scan_opencode_db(&costdog, &db_path).unwrap();
+        assert_eq!(first.sessions.len(), 2, "first scan reads the full history");
+        source_status::save_watermark(&costdog, "opencode", first.watermark.unwrap()).unwrap();
+
+        let second = scan_opencode_db(&costdog, &db_path).unwrap();
+        assert_eq!(
+            second.sessions.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(),
+            vec!["live"],
+            "only rows updated inside the lookback window are re-read"
+        );
+
+        let _ = fs::remove_file(&db_path);
+    }
 
     #[test]
     fn test_dashboard_json_keys() {
