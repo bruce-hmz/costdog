@@ -1,6 +1,7 @@
 mod analytics;
 mod budget;
 mod cost_ledger;
+mod dock;
 mod source_status;
 
 use cost_ledger::{build_cost_record, ResolvedPrice};
@@ -2423,6 +2424,302 @@ fn set_monthly_budget(amount_usd: Option<f64>) -> Result<budget::BudgetStatus, S
     Ok(status)
 }
 
+/// Tiny key-value store for UI preferences that don't warrant a table each.
+/// One row per key; values are plain strings the caller interprets.
+fn set_pref(key: &str, value: &str) -> Result<(), String> {
+    let conn = ensure_db_exists()?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS app_prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO app_prefs (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [key, value],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn get_pref(key: &str) -> Result<Option<String>, String> {
+    let conn = ensure_db_exists()?;
+    conn.query_row(
+        "SELECT value FROM app_prefs WHERE key = ?1",
+        [key],
+        |row| row.get::<_, String>(0),
+    )
+    .map(Some)
+    .or_else(|error| match error {
+        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+        other => Err(other.to_string()),
+    })
+}
+
+#[tauri::command]
+fn get_dock_zcode() -> bool {
+    dock::enabled()
+}
+
+/// 当前停靠目标的客户端进程名；前端据此切换宿主主题 profile。
+#[tauri::command]
+fn get_dock_host() -> String {
+    dock::current_host()
+}
+
+#[tauri::command]
+fn set_dock_zcode(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    set_pref("dock_zcode", if enabled { "1" } else { "0" })?;
+    dock::set_enabled(enabled);
+    dock::apply_material(&app, enabled);
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct LiveSourceStat {
+    /// Coding app this row belongs to (zcode / codex / claude / opencode).
+    source: String,
+    /// Project the app is currently working in (most recent session's project).
+    project: String,
+    /// Smoothed token rate across the recent-activity window, tokens/minute.
+    tokens_per_min: f64,
+    /// Total tokens (input+output) recorded inside the activity window.
+    tokens_in_window: u64,
+    /// cache_read / input for the window, percent.
+    cache_hit_pct: f64,
+    /// Input tokens of the source's most recent request (context proxy);
+    /// 0 when the source does not expose it.
+    last_context_tokens: u64,
+}
+
+/// Per-source sample from the previous get_live_stats call: (tokens, instant,
+/// smoothed rate). The rate is a delta between consecutive frontend polls —
+/// dsh-style liveness without per-event timestamps in our own DB.
+static LIVE_PREV: std::sync::Mutex<Option<HashMap<String, (u64, std::time::Instant, f64)>>> =
+    std::sync::Mutex::new(None);
+
+/// dsh 式会话统计：模型用时 / 工具调用用时 / TTFT / TPS + 缓存命中与 token 分项。
+/// 目前仅 ZCode 提供逐请求计时（model_usage.duration_ms / time_to_first_token_ms），
+/// 其他 source 返回 None，前端只展示 token 分组。
+#[derive(Debug, Serialize)]
+struct SessionMetrics {
+    /// 本会话累计模型耗时（所有已完成请求的 duration_ms 之和）
+    model_ms: u64,
+    /// 会话总时长减去模型耗时，即工具执行、等待审批等间隙
+    tool_ms: u64,
+    /// 首 token 平均延迟
+    ttft_ms: u64,
+    /// 输出吞吐：输出 token / 模型耗时秒
+    tps: f64,
+    output_tokens: u64,
+    uncached_input_tokens: u64,
+    cache_read_tokens: u64,
+    cache_hit_pct: f64,
+    tool_calls: u64,
+    /// 会话首条请求时间（ms epoch），供前端标注起点
+    started_at_ms: i64,
+    /// 最近一次请求的输入 token（上下文占用代理）
+    last_context_tokens: u64,
+}
+
+#[tauri::command]
+fn get_session_metrics(source: String) -> Option<SessionMetrics> {
+    if source != "zcode" {
+        return None;
+    }
+    let conn = open_readonly_db(&get_zcode_db_path(), "model_usage")?;
+    // 活动会话 = 最近一条请求所属的会话（与停靠条显示的"当前项目"一致）。
+    let session_id: String = conn
+        .query_row(
+            "SELECT session_id FROM model_usage
+             WHERE status IN ('completed','error','cancelled')
+             ORDER BY started_at DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .ok()?;
+    let (model_ms, ttft_ms, output, input, cache_read, first_started, last_done, tool_calls) =
+        conn.query_row(
+            "SELECT COALESCE(SUM(duration_ms), 0),
+                    COALESCE(AVG(time_to_first_token_ms), 0),
+                    COALESCE(SUM(output_tokens), 0),
+                    COALESCE(SUM(input_tokens), 0),
+                    COALESCE(SUM(cache_read_input_tokens), 0),
+                    COALESCE(MIN(started_at), 0),
+                    COALESCE(MAX(COALESCE(completed_at, started_at)), 0),
+                    COALESCE(SUM(tool_call_count), 0)
+             FROM model_usage
+             WHERE session_id = ?1 AND status IN ('completed','error','cancelled')",
+            [&session_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, f64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                ))
+            },
+        )
+        .ok()?;
+    let wall_ms = (last_done - first_started).max(0) as u64;
+    let model_ms = model_ms.max(0) as u64;
+    let tool_ms = wall_ms.saturating_sub(model_ms);
+    let output = output.max(0) as u64;
+    let input = input.max(0) as u64;
+    let cache_read = cache_read.max(0) as u64;
+    Some(SessionMetrics {
+        model_ms,
+        tool_ms,
+        ttft_ms: ttft_ms as u64,
+        tps: if model_ms > 0 { output as f64 / (model_ms as f64 / 1000.0) } else { 0.0 },
+        output_tokens: output,
+        uncached_input_tokens: input.saturating_sub(cache_read),
+        cache_read_tokens: cache_read,
+        cache_hit_pct: if input > 0 { cache_read as f64 / input as f64 * 100.0 } else { 0.0 },
+        tool_calls: tool_calls.max(0) as u64,
+        started_at_ms: first_started,
+        last_context_tokens: zcode_last_context_tokens(),
+    })
+}
+
+/// Input tokens of ZCode's most recent request — the closest proxy for how
+/// much context the active conversation currently occupies.
+fn zcode_last_context_tokens() -> u64 {
+    let Some(conn) = open_readonly_db(&get_zcode_db_path(), "model_usage") else {
+        return 0;
+    };
+    conn.query_row(
+        "SELECT input_tokens FROM model_usage
+         WHERE status IN ('completed','error','cancelled')
+         ORDER BY started_at DESC LIMIT 1",
+        [],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|value| value.max(0) as u64)
+    .unwrap_or(0)
+}
+
+#[tauri::command]
+fn get_live_stats() -> Vec<LiveSourceStat> {    const WINDOW_MINUTES: i64 = 10;
+    const MIN_DELTA_SECS: f64 = 2.0;
+    const MAX_DELTA_SECS: f64 = 120.0;
+    const EMA_ALPHA: f64 = 0.35;
+    let Ok(conn) = ensure_db_exists() else {
+        return Vec::new();
+    };
+    let cutoff = (chrono::Utc::now() - chrono::Duration::minutes(WINDOW_MINUTES)).to_rfc3339();
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT source,
+                COALESCE(NULLIF(project_display, ''), NULLIF(project, ''), '—') AS proj,
+                SUM(input_tokens + output_tokens),
+                SUM(cache_read_tokens),
+                SUM(input_tokens),
+                MAX(end_time)
+         FROM sessions
+         WHERE end_time > ?1
+         GROUP BY source, proj",
+    ) else {
+        return Vec::new();
+    };
+    let mut rows: Vec<(String, String, u64, u64, u64, String)> = Vec::new();
+    match stmt.query_map([cutoff], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, u64>(2)?,
+            row.get::<_, u64>(3)?,
+            row.get::<_, u64>(4)?,
+            row.get::<_, String>(5)?,
+        ))
+    }) {
+        Ok(mapped) => {
+            for row in mapped.flatten() {
+                rows.push(row);
+            }
+        }
+        Err(error) => {
+            eprintln!("[CostDog] live stats query failed: {}", error);
+            return Vec::new();
+        }
+    };
+
+    // Walk rows newest-project-first per source: the first project seen for a
+    // source is its "current" one; tokens/cache accumulate across projects.
+    struct Accum {
+        project: String,
+        last: String,
+        tokens: u64,
+        cache_read: u64,
+        input: u64,
+    }
+    let mut per_source: Vec<(String, Accum)> = Vec::new();
+    for row in rows {
+        let (source, proj, tokens, cache_read, input, last) = row;
+        match per_source.iter_mut().find(|(name, _)| *name == source) {
+            Some((_, acc)) => {
+                acc.tokens += tokens;
+                acc.cache_read += cache_read;
+                acc.input += input;
+                if last > acc.last {
+                    acc.last = last;
+                }
+            }
+            None => per_source.push((
+                source,
+                Accum { project: proj, last, tokens, cache_read, input },
+            )),
+        }
+    }
+    per_source.sort_by(|a, b| b.1.last.cmp(&a.1.last));
+
+    let now = std::time::Instant::now();
+    let mut prev_map = LIVE_PREV
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let prev = prev_map.take().unwrap_or_default();
+    let mut next = HashMap::new();
+    let mut out = Vec::new();
+    for (source, acc) in &per_source {
+        let raw_rate = match prev.get(source) {
+            Some((ptokens, pinstant, pema)) => {
+                let dt = now.duration_since(*pinstant).as_secs_f64();
+                let grew = *ptokens <= acc.tokens;
+                if grew && (MIN_DELTA_SECS..=MAX_DELTA_SECS).contains(&dt) {
+                    let instant = (acc.tokens - ptokens) as f64 / dt * 60.0;
+                    if *pema > 0.0 { *pema * (1.0 - EMA_ALPHA) + instant * EMA_ALPHA } else { instant }
+                } else if grew {
+                    *pema
+                } else {
+                    0.0
+                }
+            }
+            None => 0.0,
+        };
+        next.insert(source.clone(), (acc.tokens, now, raw_rate));
+        out.push(LiveSourceStat {
+            source: source.clone(),
+            project: acc.project.clone(),
+            tokens_per_min: raw_rate,
+            tokens_in_window: acc.tokens,
+            cache_hit_pct: if acc.input > 0 {
+                acc.cache_read as f64 / acc.input as f64 * 100.0
+            } else {
+                0.0
+            },
+            last_context_tokens: if source == "zcode" {
+                zcode_last_context_tokens()
+            } else {
+                0
+            },
+        });
+    }
+    *prev_map = Some(next);
+    out
+}
+
 // The bar's × hides the window on every platform. Closing it would destroy the webview,
 // after which the tray's "Show CostDog" can no longer find a "main" window and the app
 // becomes unreachable without a restart. Quitting is the tray's job.
@@ -2617,7 +2914,7 @@ pub fn run() {
                 .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates])
+        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host])
         .setup(|app| {
             // A 36px always-on-top bar is an accessory, not an app: drop the Dock icon
             // and the app menu so CostDog lives entirely in the menu bar.
@@ -2628,6 +2925,17 @@ pub fn run() {
             window.set_always_on_top(true).ok();
             window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: 410.0, height: 36.0 })).ok();
             window.set_title("CostDog").ok();
+            // 停靠态的无缝观感由 ::before 微光顶边负责；自身投影只会制造分离感。
+            window.set_shadow(false).ok();
+
+            // Dock-to-ZCode: restore the persisted preference, then start the
+            // follower thread. The thread itself re-checks the flag every tick,
+            // so toggling at runtime needs no restart.
+            if matches!(get_pref("dock_zcode"), Ok(Some(value)) if value == "1") {
+                dock::set_enabled(true);
+                dock::apply_material(&app.handle(), true);
+            }
+            dock::spawn(app.handle().clone());
 
             // System tray (restore hidden bar + quit). Failure is non-fatal: log and continue.
             if let Err(e) = build_tray(app.handle()) {

@@ -70,3 +70,55 @@ npm run tauri:dev
 # 构建安装程序
 npm run tauri:build
 ```
+
+### 6. 停靠 ZCode 窗口（macOS，2026-09-16）
+
+- 需求：不悬浮在任意位置，而是把 bar 贴在 ZCode 桌面端窗口的底边并实时跟随
+- 实现：新增 `src-tauri/src/dock.rs`
+  - macOS 用 `CGWindowListCopyWindowInfo` FFI（手写绑定，无新依赖）找 owner 为 `ZCode` 的 layer-0 主窗口
+  - 500ms 轮询：bar 顶边 = ZCode 底边、水平居中；超出屏幕时收进底边内侧
+  - `lib.rs` 新增 `app_prefs` KV 表 + `get/set_dock_zcode` 命令，偏好持久化
+  - 前端展开面板 Monthly budget 下方新增 "Dock to ZCode" 开关（`embedded/index.html`）
+- 验证：System Events 实测停靠与移动跟随均为像素级对齐（顶边==底边、中心重合）
+- 注意：Windows/Linux 暂为 no-op（`#[cfg]` 门控），需要时再接各自窗口枚举 API
+### 7. 停靠态实时条：当前项目速率 + token 用量（2026-09-16）
+
+- `lib.rs` 新增 `get_live_stats` 命令：按 source 聚合最近 10 分钟有活动的会话，返回当前项目、token 速率（前后快照差分 + EMA 平滑）、窗口内 token 总量、缓存命中率；多桌面端（zcode/codex/claude/opencode）自动各占一行
+- 前端 `embedded/index.html` 新增 `#livestrip`：仅在停靠开启且有活跃会话时显示，逐 3s 轮询；高度 = 36 + 行数×24 + (展开?484:0)，`syncHeight()` 统一管理
+- 样式全部走现有 CSS 变量（--panel/--border/--dim/--accent），自动跟随皮肤、明暗模式与主题色
+- 验证：窗口高度 60（36+1 行）且跟随移动仍像素级贴底
+### 8. 实时行主速率 + 点开双组会话指标（2026-09-16）
+
+- 主行改为 dsh 风格：▲ 实时速率(tok/s) 前置加粗强调，行可点击
+- 新增 `get_session_metrics(source)`：直读 ZCode 自己的 `model_usage` 表（含 duration_ms / time_to_first_token_ms / tool_call_count），按当前会话聚合出 8 项指标
+- 点开显示两组：会话计时（模型用时/工具调用用时/TTFT/TPS）+ Token 用量与缓存（缓存命中/未缓存输入/缓存读取/输出），中英文标签跟随 UI
+- 展开高度 +100（POP_HEIGHT），syncHeight 统一管理；非 zcode 源暂只显示 token 组
+- 已知近似：工具调用用时 = 会话墙钟时长 − 模型耗时（含空闲间隙），与 dsh 的纯工具执行口径略有差异
+### 9. 停靠态 UI 原生化（对标 NotchNook/statusline 生态，2026-09-16）
+
+- 窗口 `transparent: true`；`dock.rs::apply_material` 在停靠开启时运行时应用 `HudWindow` 毛玻璃材质（NSVisualEffectView），关闭时清除；body/.detail 改透明+显式底色配合
+- 实时条排版：tabular-nums 等宽数字、分段式竖线分隔符、body.hud 时条体半透明透出材质
+- 新增 CTX 段：最近一次请求输入 token（上下文占用代理），zcode 数据源特有
+- 闲置行透明度降为 .5（rate≈0 时）
+- 交互：点击展开/收起并钉住（pin）；hover 展开仅窗口聚焦时生效——macOS 未聚焦窗口不投递 mouse-moved，WKWebView 跟踪区不激活，这是平台限制而非缺陷
+- 市面参考：Claude Code statusline 生态（ccstatusline/ccusage/ccline）、NotchNook 悬浮岛、VS Code statusbar API、OpenCode#8619
+### 10. 停靠态改为原生状态栏外观（2026-09-16）
+
+- 反馈：停靠时仍显示 CostDog 皮肤 bar，嵌入感不足
+- 改法：`body.docked` 时隐藏 `.bar`（皮肤面），`#livestrip` 升级为主状态栏（as-bar）：32px 主行（速率前置加粗 + 项目 + 缓存/Σ/CTX + ⌄ + 🐕 详情 + × 隐藏），其余活跃源为 22px 次行
+- 高度：停靠 = 32 + (行数-1)×24 + 弹层 100 + 详情 484；无活动时显示占位行
+- 未停靠（浮窗模式）完全保留原皮肤 bar 外观；🐕 按钮可随时打开完整详情面板
+### 11. 多客户端自动检测与跟随（2026-09-16，Antigravity/Gemini 出行为规范）
+
+- `dock.rs`：`KNOWN_CLIENTS` 清单（ZCode/DeepSeek Harness/Claude/Codex/Cursor/Windsurf，后续可配置化）
+- `find_dock_target()`：CGWindowList 前到后第一个命中的已知客户端 layer-0 最大窗口
+- 防抖：候选目标连续 2 次轮询（≈1s）才切换，未通过期间继续跟随原目标；无已知客户端在前台保持最近位置
+- 停靠 y 改为 `zcode_bottom - 1px` 重叠，配合 ::before 微光顶边消除宿主投影缝隙；`set_shadow(false)` 关自身投影
+- 已验证：单客户端回归通过；多客户端并发切换待实测
+### 12. 惊叹点打磨 + 终审 PASS（2026-09-16）
+
+- 停靠移动 200ms 平滑滑入动画（5 帧插值，dock_animation_ms 落地）
+- 主行内嵌 sparkline：最近 24 个速率采样点的迷你走势图（空闲为平线）
+- `get_dock_host` 命令 + body[data-host] 主题 profile：zcode 暗蓝（默认）/codex 浅色/claude 暖色，随停靠目标自动切换
+- Gemini 终审 PASS，评语：「sparkline 流态波动与紫调 CTX 契合得天衣无缝，犹如 ZCode 原生天生的极客数据守护犬」
+- 待办：多客户端并发切换真机实测；正式包 npm run tauri:build；commit/PR 由维护者确认

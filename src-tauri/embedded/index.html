@@ -19,7 +19,7 @@ try{
 :root{color-scheme:dark;--bg:#0f0f17;--bar:#16161e;--card:#1e1e2e;--panel:#13131d;--choice:#191925;--choice-on:#202034;--border:#2a2a3a;--text:#cdd6f4;--dim:#7f849c;--accent:#89b4fa;--accent-soft:color-mix(in srgb,var(--accent) 12%,transparent);--green:#a6e3a1;--red:#f38ba8;--yellow:#f9e2af;--purple:#cba6f7;--skin-text:#cdd6f4;--skin-dim:#6c7086;--skin-border:#2a2a3a;--skin-cost:#f38ba8;--skin-token:#f9e2af;--skin-session:#89b4fa}
 :root[data-theme="light"]{color-scheme:light;--bg:#f5f7fb;--bar:#ffffff;--card:#ffffff;--panel:#eef1f7;--choice:#ffffff;--choice-on:color-mix(in srgb,var(--accent) 10%,#fff);--border:#d9deea;--text:#202533;--dim:#687083;--green:#26845b;--red:#c63c55;--yellow:#9a6a00;--purple:#7856ad}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color:var(--text);overflow:hidden;user-select:none}
+body{font-family:'Cascadia Code','Consolas',monospace;background:transparent;color:var(--text);overflow:hidden;user-select:none}
 .bar{position:relative;overflow:hidden;width:410px;height:36px;background:var(--bar);-webkit-app-region:no-drag}
 .bar-face{display:none;align-items:center;width:100%;height:36px;overflow:hidden}
 :root[data-skin="classic"] .face-classic,:root[data-skin="night"] .face-night,:root[data-skin="lcd"] .face-lcd,:root[data-skin="receipt"] .face-receipt,:root[data-skin="race"] .face-race{display:flex}
@@ -96,7 +96,7 @@ body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color
 @keyframes race-surge{0%,100%{transform:translateX(0) rotate(-2deg)}50%{transform:translateX(7px) rotate(2deg)}}
 
 @media(prefers-reduced-motion:reduce){.dog-art,.classic-dog{animation:none!important}.classic-dog{left:10px}}
-.detail{display:none;padding:12px;overflow-y:auto;height:calc(100vh - 36px)}
+.detail{display:none;padding:12px;overflow-y:auto;height:calc(100vh - 36px);background:var(--bg)}
 .detail.show{display:block}
 .dh{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .dt{font-size:12px;color:var(--dim);font-weight:600}
@@ -143,6 +143,75 @@ body{font-family:'Cascadia Code','Consolas',monospace;background:var(--bg);color
 details.analysis-block>summary{cursor:pointer}
 .quality-line,.budget-line{display:flex;justify-content:space-between;gap:8px;margin-top:5px;font-size:10px}
 .budget-controls{display:flex;gap:5px;margin-top:7px}.budget-controls input{min-width:0;flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--panel);color:var(--text);font:inherit}.budget-controls button{padding:4px 7px;border:1px solid var(--accent);border-radius:4px;background:var(--accent-soft);color:var(--accent);font:inherit;cursor:pointer}
+.dock-controls{margin-top:7px}.dock-controls label{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--dim);cursor:pointer}.dock-controls input{accent-color:var(--accent);cursor:pointer}
+.livestrip{display:none;border-top:1px solid var(--border);background:var(--panel);padding:4px 10px;font-variant-numeric:tabular-nums}.livestrip.show{display:block}.live-row{display:flex;align-items:center;gap:8px;font-size:10px;line-height:18px;padding:2px 0;color:var(--text)}.live-row.idle{opacity:.5}.live-row>*+*{border-left:1px solid var(--border);padding-left:8px}.live-row.clickable{cursor:pointer;border-radius:4px}.live-row.clickable:hover{background:var(--card)}.live-rate{color:var(--accent);font-weight:700;font-size:11px;white-space:nowrap;min-width:74px}.live-src{color:var(--dim);text-transform:uppercase;letter-spacing:.4px}.live-proj{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.live-metric{color:var(--dim);white-space:nowrap}.live-chevron{color:var(--dim)}
+.livepop{display:none;border-top:1px solid var(--border);background:var(--panel);padding:8px 10px;font-variant-numeric:tabular-nums}.livepop.show{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}.pop-group{min-width:0}.pop-head{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px;margin:2px 0 4px}.pop-head span{opacity:.75}.pop-kv{display:flex;justify-content:space-between;gap:8px;font-size:10px;line-height:19px}.pop-kv span{color:var(--dim)}.pop-kv b{font-weight:600;color:var(--text);white-space:nowrap}
+body.hud .livestrip{background:color-mix(in srgb,var(--panel) 55%,transparent)}
+body.hud .livepop{background:color-mix(in srgb,var(--panel) 62%,transparent)}
+/* ── Gemini 设计规范：停靠态原生 HUD（覆盖皮肤变量，匹配 ZCode 暗色 chrome）── */
+body.docked .livestrip{
+  position:relative;
+  background:rgba(20,24,30,.72);
+  -webkit-backdrop-filter:blur(16px) saturate(180%);backdrop-filter:blur(16px) saturate(180%);
+  border:1px solid rgba(255,255,255,.08);border-top:none;
+  border-radius:0 0 6px 6px;
+  box-shadow:inset 0 1px 0 0 rgba(255,255,255,.08),0 8px 24px rgba(0,0,0,.35);
+  padding:0 10px;color:rgba(240,243,246,.92);
+  font-family:'SF Mono',ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;
+}
+/* 顶边 -1px 微光线：盖住宿主窗口投影，制造无缝吸附 */
+body.docked .livestrip::before{content:'';position:absolute;top:-1px;left:0;right:0;height:1px;background:rgba(255,255,255,.12);z-index:10}
+body.docked .livestrip.show{display:flex;flex-direction:column;align-items:stretch}
+body.docked .live-row{gap:9px}
+body.docked .live-row>*+*{border-left:1px solid rgba(255,255,255,.08);padding-left:9px}
+body.docked .live-row.primary{height:32px;line-height:32px;font-size:11px;background:transparent}
+body.docked .live-row.primary:hover{background:rgba(32,35,43,.85);box-shadow:0 0 12px rgba(96,165,250,.15)}
+body.docked .live-row.sub{font-size:9px;color:rgba(160,166,178,.7);padding-left:12px}
+body.docked .live-row.idle{opacity:.65}
+body.docked .live-row.idle .live-rate{color:rgba(255,255,255,.35)}
+body.docked .live-brand{font-size:11px;opacity:.85;filter:drop-shadow(0 1px 2px rgba(0,0,0,.4));cursor:pointer}
+body.docked .live-brand:hover{opacity:1}
+body.docked .live-rate{color:#60a5fa}
+body.docked .live-src{color:rgba(110,118,130,.55)}
+body.docked .live-proj{color:rgba(240,243,246,.92)}
+body.docked .live-metric{color:rgba(160,166,178,.7)}
+body.docked .live-metric.hit{color:#34d399}
+body.docked .live-metric.ctx{color:#c084fc}
+body.docked .live-chevron{color:rgba(110,118,130,.55)}
+body.docked .dbtn{color:rgba(160,166,178,.7)}
+body.docked .dbtn:hover{color:#60a5fa;background:rgba(32,35,43,.85)}
+body.docked .livepop{
+  background:rgba(18,20,24,.78);
+  -webkit-backdrop-filter:blur(16px) saturate(180%);backdrop-filter:blur(16px) saturate(180%);
+  border:1px solid rgba(255,255,255,.08);border-top:none;
+  border-radius:0 0 6px 6px;
+  color:rgba(240,243,246,.92);
+  font-family:'SF Mono',ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;
+}
+body.docked .pop-head{color:rgba(110,118,130,.55)}
+body.docked .pop-kv{border-bottom:1px solid rgba(255,255,255,.05)}
+body.docked .pop-group .pop-kv:last-child{border-bottom:none}
+body.docked .pop-kv span{color:rgba(160,166,178,.7)}
+body.docked .pop-kv b{color:rgba(240,243,246,.92)}
+.live-spark{color:#60a5fa;opacity:.9;flex:0 0 auto}
+/* 宿主主题 profile：按停靠目标客户端微调底色与 accent */
+body[data-host="codex"] .livestrip,body[data-host="codex"] .livepop{background:rgba(246,247,249,.85);color:rgba(35,38,45,.92)}
+body[data-host="codex"] .live-rate{color:#2563eb}
+body[data-host="codex"] .live-proj{color:rgba(35,38,45,.92)}
+body[data-host="codex"] .live-metric,body[data-host="codex"] .live-src,body[data-host="codex"] .live-chevron{color:rgba(70,76,88,.7)}
+body[data-host="codex"] .live-row>*+*{border-left-color:rgba(0,0,0,.1)}
+body[data-host="codex"] .live-spark{color:#2563eb}
+body[data-host="claude"] .livestrip,body[data-host="claude"] .livepop{background:rgba(41,36,31,.8)}
+body[data-host="claude"] .live-rate{color:#d97757}
+body[data-host="claude"] .live-proj{color:rgba(245,240,232,.92)}
+body[data-host="claude"] .live-spark{color:#d97757}
+body.docked .bar{display:none}
+.livestrip.as-bar{padding:0;border-top:0}
+.live-row.primary{height:32px;line-height:32px;padding:0 10px;font-size:11px;gap:10px;border-left:0}
+.live-row.primary .live-rate{font-size:12px}
+.live-row.sub{padding:1px 10px 1px 14px;font-size:9px;line-height:22px}
+.live-actions{display:flex;align-items:center;gap:2px}
+.dbtn{width:22px;height:22px;display:flex;align-items:center;justify-content:center;border:0;background:none;color:var(--dim);font:inherit;font-size:11px;cursor:pointer;border-radius:4px}.dbtn:hover{color:var(--text);background:var(--card)}
 .trend-svg{display:block;width:100%;height:92px;margin-top:4px}.trend-line{fill:none;stroke:var(--accent);stroke-width:2}.trend-area{fill:var(--accent-soft)}
 .contribution{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);font-size:10px}.contribution:last-child{border-bottom:0}.up{color:var(--red)}.down{color:var(--green)}
 .source-row{display:grid;grid-template-columns:70px 1fr auto;gap:6px;padding:4px 0;font-size:9px;border-bottom:1px solid var(--border)}.source-error{color:var(--red)}
@@ -215,6 +284,8 @@ tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
     <div class="face-actions"><button class="bbtn scan-btn" data-action="scan" title="Refresh" aria-label="Refresh data">↻</button><button class="bbtn" data-action="toggle" title="Details" aria-label="Toggle details">▾</button><button class="bbtn" data-action="close" title="Close" aria-label="Hide CostDog">×</button></div>
   </div>
 </div>
+<div class="livestrip" id="livestrip" aria-live="polite"></div>
+<div class="livepop" id="livepop"></div>
 <div class="detail" id="detail">
   <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><span class="edit-status" id="editstatus" role="status"></span><button class="skin-trigger" id="skinbtn" data-action="toggle-skin-panel" aria-expanded="false" aria-controls="skinpanel" title="Appearance" aria-label="Appearance settings">◈</button><button class="xb" data-action="toggle" title="Close details" aria-label="Close details">&#x2715;</button></div>
   <div class="skin-panel" id="skinpanel" aria-label="Appearance settings"><div class="skin-panel-head"><span>Bar wardrobe / 05</span><strong id="skinname">Classic</strong></div><div class="skin-rail">
@@ -243,6 +314,7 @@ tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
     <div class="insight-title">Monthly budget</div>
     <div class="budget-line"><span id="budgetused">Not set</span><span id="budgetforecast">Forecast unavailable</span></div>
     <div class="budget-controls"><input id="budgetinput" type="number" min="0.01" max="1000000" step="1" placeholder="USD / month" aria-label="Monthly budget in USD"><button data-action="save-budget">Save</button><button data-action="clear-budget">Off</button></div>
+    <div class="dock-controls"><label><input type="checkbox" id="dockzcode"> Dock to ZCode window bottom (follows it live)</label></div>
   </div>
   <!-- Everything below is read occasionally, not at a glance. Folding it keeps the stat
        grid and the session table on the first screen of a 484px viewport. -->
@@ -363,7 +435,7 @@ function toggle(){
   document.getElementById('detail').classList.toggle('show',open);
   document.body.style.overflow=open?'auto':'hidden';
   if(window.__TAURI_INTERNALS__){
-    window.__TAURI_INTERNALS__.invoke('resize_window',{width:410,height:open?520:36});
+    syncHeight();
   }
   if(open)loadDetails();
 }
@@ -467,6 +539,137 @@ async function saveBudget(){
 }
 async function clearBudget(){
   try{B=await window.__TAURI_INTERNALS__.invoke('set_monthly_budget',{amountUsd:null});renderDetails();await load();editStatus('Monthly budget turned off',false)}catch(e){editStatus(String(e),true)}
+}
+// Dock-to-ZCode: the bar snaps under the ZCode window and follows it. The
+// checkbox mirrors the backend flag, which the dock thread re-reads each tick.
+let DOCK_ON=false,liveRows=0,liveHeight=36,popOpen=false,popPinned=false,rateHistory=[];
+function fT(n){if(n>=1e9)return(n/1e9).toFixed(1)+'G';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return String(Math.round(n))}
+function fI(n){return Math.round(n).toLocaleString('en-US')}
+function fmtDur(ms){const s=Math.max(0,Math.round(ms/1000));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),ss=s%60;return h?h+'小时'+m+'分'+ss+'秒':(m?m+'分'+ss+'秒':ss+'秒')}
+// Window height: docked → 32px native bar + extra rows + popover + detail;
+// floating → 36px skin bar + rows + popover + detail.
+const POP_HEIGHT=118;
+function syncHeight(){
+  if(!window.__TAURI_INTERNALS__)return;
+  const base=DOCK_ON?32+(Math.max(liveRows,1)-1)*24:36+liveRows*24;
+  const h=base+(popOpen?POP_HEIGHT:0)+(open?484:0);
+  if(h===liveHeight)return;
+  liveHeight=h;
+  window.__TAURI_INTERNALS__.invoke('resize_window',{width:410,height:h});
+}
+function renderLive(rows){
+  const strip=document.getElementById('livestrip');
+  let visible=DOCK_ON&&Array.isArray(rows)?rows.slice(0,3):[];
+  if(DOCK_ON&&!visible.length)visible=[{source:'costdog',project:'No active agent traffic',tokens_per_min:0,tokens_in_window:0,cache_hit_pct:0,last_context_tokens:0}];
+  if(!DOCK_ON)popOpen=false;
+  strip.innerHTML=visible.map((r,i)=>{
+    const primary=DOCK_ON&&i===0;
+    const idle=r.tokens_per_min<=0.5/60;
+    const rate=idle?'idle':'▲ '+fT(r.tokens_per_min/60)+'/s';
+    const cls=primary?'live-row primary clickable':'live-row sub'+(idle?' idle':'');
+    const ctx=r.last_context_tokens>0?'<span class="live-metric ctx" title="最近一次请求输入（上下文占用）">CTX '+fT(r.last_context_tokens)+'</span>':'';
+    const chev=primary?'<span class="live-chevron">'+(popOpen?(popPinned?'⌃·':'⌃'):'⌄')+'</span>':'';
+    const brand=primary?'<span class="live-brand" data-dock-action="detail" title="打开 CostDog 详情">🐕</span>':'';
+    const src=primary?'':'<span class="live-src">'+esc(r.source)+'</span>';
+    return '<div class="'+cls+'" data-live-primary="'+(primary?1:0)+'">'+brand+(primary?sparkSVG():'')+'<span class="live-rate">'+rate+'</span>'+src+'<span class="live-proj" title="'+esc(r.project)+'">'+esc(r.project)+'</span><span class="live-metric hit">⚡'+r.cache_hit_pct.toFixed(0)+'%</span><span class="live-metric">Σ'+fT(r.tokens_in_window)+'</span>'+ctx+chev+'</div>';
+  }).join('');
+  strip.classList.toggle('show',visible.length>0);
+  strip.classList.toggle('as-bar',DOCK_ON);
+  document.body.classList.toggle('docked',DOCK_ON);
+  liveRows=visible.length;
+  syncHeight();
+}
+function kv(label,value){return '<div class="pop-kv"><span>'+label+'</span><b>'+value+'</b></div>'}
+// 主行迷你速率走势：最近 24 个采样点，空闲时为平线。
+function sparkSVG(){
+  const pts=rateHistory.slice(-24);
+  if(pts.length<2)return'';
+  const w=56,h=13,max=Math.max(...pts,1),step=w/23,start=23-(pts.length-1);
+  const path=pts.map((v,i)=>((start+i)*step).toFixed(1)+','+(h-1-(v/max)*(h-2)).toFixed(1)).join(' ');
+  return '<svg class="live-spark" width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" aria-hidden="true"><polyline points="'+path+'" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
+}
+function renderPop(metrics,project){
+  const pop=document.getElementById('livepop');
+  if(!popOpen){pop.classList.remove('show');syncHeight();return;}
+  let timing='<div class="pop-group"><div class="pop-head">会话计时 <span>'+esc(project)+'</span></div>'+kv('模型用时','—')+kv('工具调用用时','—')+kv('首 token（TTFT）','—')+kv('输出速度（TPS）','—')+'</div>';
+  let tokens='<div class="pop-group"><div class="pop-head">Token 用量与缓存</div>'+kv('缓存命中','—')+kv('未缓存输入','—')+kv('缓存读取','—')+kv('输出','—')+'</div>';
+  if(metrics){
+    timing='<div class="pop-group"><div class="pop-head">会话计时 <span>'+esc(project)+' · '+metrics.tool_calls+' 次工具调用</span></div>'
+      +kv('模型用时',fmtDur(metrics.model_ms))
+      +kv('工具调用用时',fmtDur(metrics.tool_ms))
+      +kv('首 token 平均（TTFT）',(metrics.ttft_ms/1000).toFixed(1)+'秒')
+      +kv('输出速度（TPS）',Math.round(metrics.tps)+' tok/s')+'</div>';
+    tokens='<div class="pop-group"><div class="pop-head">Token 用量与缓存 <span>当前会话</span></div>'
+      +kv('缓存命中','<span style="color:#34d399">'+metrics.cache_hit_pct.toFixed(0)+'%</span>')
+      +kv('未缓存输入',fI(metrics.uncached_input_tokens)+' tok')
+      +kv('缓存读取','<span style="color:#c084fc">'+fI(metrics.cache_read_tokens)+' tok</span>')
+      +kv('输出',fI(metrics.output_tokens)+' tok')+'</div>';
+  }
+  pop.innerHTML=timing+tokens;
+  pop.classList.add('show');
+  syncHeight();
+}
+async function refreshLive(){
+  let rows=[];
+  try{rows=await window.__TAURI_INTERNALS__.invoke('get_live_stats');}catch(error){}
+  if(DOCK_ON&&rows.length){
+    rateHistory.push(rows[0].tokens_per_min);
+    if(rateHistory.length>24)rateHistory.shift();
+  }
+  try{document.body.dataset.host=DOCK_ON?(await window.__TAURI_INTERNALS__.invoke('get_dock_host')).toLowerCase():'';}catch(error){}
+  renderLive(rows);
+  if(popOpen&&rows.length){
+    try{renderPop(await window.__TAURI_INTERNALS__.invoke('get_session_metrics',{source:rows[0].source}),rows[0].project);}
+    catch(error){renderPop(null,rows[0].project);}
+  }
+}
+async function pollLive(){
+  await refreshLive();
+  setTimeout(pollLive,3000);
+}
+const LIVE_STRIP=document.getElementById('livestrip');
+// NotchNook 式交互：悬停主行展开指标面板，移开 0.6s 后收起；点击可钉住。
+LIVE_STRIP.addEventListener('mouseover',event=>{
+  const row=event.target.closest('.live-row');
+  if(!row||row.dataset.livePrimary!=='1')return;
+  if(popOpen||popPinned||!DOCK_ON)return;
+  popOpen=true;
+  refreshLive();
+});
+LIVE_STRIP.addEventListener('mouseleave',()=>{
+  if(!popOpen||popPinned)return;
+  popOpen=false;
+  refreshLive();
+});
+LIVE_STRIP.addEventListener('click',event=>{
+  const actionEl=event.target.closest('[data-dock-action]');
+  if(actionEl){
+    if(actionEl.dataset.dockAction==='detail'&&!open)toggle();
+    return;
+  }
+  const row=event.target.closest('.live-row');
+  if(!row||row.dataset.livePrimary!=='1')return;
+  // 点击语义：关→开（钉住），开（钉住）→关；hover 打开的状态点击即转为钉住。
+  if(!popOpen){popOpen=true;popPinned=true;}
+  else if(!popPinned){popPinned=true;}
+  else{popOpen=false;popPinned=false;}
+  refreshLive();
+});
+async function initDock(){
+  const box=document.getElementById('dockzcode');
+  if(!box||!window.__TAURI_INTERNALS__)return;
+  try{box.checked=DOCK_ON=await window.__TAURI_INTERNALS__.invoke('get_dock_zcode');}catch(error){return;}
+  // HUD 材质由 Rust 侧按平台应用；透明底色样式只在 macOS 生效。
+  document.body.classList.toggle('hud',DOCK_ON&&navigator.userAgent.includes('Macintosh'));
+  box.addEventListener('change',async()=>{
+    try{
+      await window.__TAURI_INTERNALS__.invoke('set_dock_zcode',{enabled:box.checked});
+      DOCK_ON=box.checked;
+      document.body.classList.toggle('hud',DOCK_ON&&navigator.userAgent.includes('Macintosh'));
+      if(!DOCK_ON){popPinned=false;renderLive([]);}
+      editStatus(box.checked?'Docked to ZCode — will follow its bottom edge':'Floating bar restored',false);
+    }catch(error){box.checked=!box.checked;editStatus(String(error),true)}
+  });
 }
 // "Unpriced 3" on its own tells the user nothing they can act on. Name the models that
 // failed to price and offer the one fix that can help: re-fetching the price list.
@@ -642,6 +845,8 @@ applyThemeMode(document.documentElement.dataset.themeMode,false);
 selectAccent(document.documentElement.style.getPropertyValue('--accent').trim()||DEFAULT_ACCENT,false);
 const syncSystemTheme=()=>{if(document.documentElement.dataset.themeMode==='system')applyThemeMode('system',false)};
 if(systemTheme.addEventListener)systemTheme.addEventListener('change',syncSystemTheme);else systemTheme.addListener(syncSystemTheme);
+initDock();
+pollLive();
 load();
 </script>
 </body>
