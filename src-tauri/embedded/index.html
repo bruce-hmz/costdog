@@ -197,6 +197,11 @@ body.docked .pop-kv{border-bottom:1px solid rgba(255,255,255,.06)}
 body.docked .pop-group .pop-kv:last-child{border-bottom:none}
 body.docked .pop-kv span{color:rgba(212,212,212,.55)}
 body.docked .pop-kv b{color:#d4d4d4}
+.pop-sessions{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px;margin:0 0 6px}
+.psess{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 8px;border:1px solid #444;border-radius:10px;background:transparent;color:rgba(212,212,212,.6);font:inherit;font-size:9px;cursor:pointer}
+.psess:hover{color:#d4d4d4;border-color:#666}
+.psess.on{color:#f97316;border-color:#f97316;background:rgba(249,115,22,.08)}
+.psess .dot{color:#4ade80;font-size:8px;vertical-align:1px}
 .live-spark{color:#60a5fa;opacity:.9;flex:0 0 auto}
 /* 宿主主题 profile：按停靠目标客户端微调底色与 accent */
 body[data-host="codex"] .livestrip,body[data-host="codex"] .livepop{background:rgba(246,247,249,.85);color:rgba(35,38,45,.92)}
@@ -546,13 +551,13 @@ async function clearBudget(){
 }
 // Dock-to-ZCode: the bar snaps under the ZCode window and follows it. The
 // checkbox mirrors the backend flag, which the dock thread re-reads each tick.
-let DOCK_ON=false,liveRows=0,liveHeight=36,popOpen=false,popPinned=false,rateHistory=[];
+let DOCK_ON=false,liveRows=0,liveHeight=36,popOpen=false,popPinned=false,rateHistory=[],SESSIONS=[],selectedSession=null;
 function fT(n){if(n>=1e9)return(n/1e9).toFixed(1)+'G';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return String(Math.round(n))}
 function fI(n){return Math.round(n).toLocaleString('en-US')}
 function fmtDur(ms){const s=Math.max(0,Math.round(ms/1000));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),ss=s%60;return h?h+'小时'+m+'分'+ss+'秒':(m?m+'分'+ss+'秒':ss+'秒')}
 // Window height: docked → 32px native bar + extra rows + popover + detail;
 // floating → 36px skin bar + rows + popover + detail.
-const POP_HEIGHT=118;
+const POP_HEIGHT=148;
 function syncHeight(){
   if(!window.__TAURI_INTERNALS__)return;
   const base=DOCK_ON?Math.max(liveRows,1)*24:36+liveRows*24;
@@ -615,7 +620,11 @@ function renderPop(metrics,project){
       +kv('缓存读取','<span style="color:#c084fc">'+fI(metrics.cache_read_tokens)+' tok</span>')
       +kv('输出',fI(metrics.output_tokens)+' tok')+'</div>';
   }
-  pop.innerHTML=timing+tokens;
+  const sessRow=SESSIONS.length?'<div class="pop-sessions" role="tablist" aria-label="会话切换">'+SESSIONS.map(x=>{
+    const cur=metrics&&x.session_id===metrics.session_id;
+    return '<button class="psess'+(cur?' on':'')+'" data-sess="'+esc(x.session_id)+'" title="'+esc(x.project)+' · '+(x.active?'活跃中':'最近使用')+'">'+(x.active?'<span class="dot">●</span> ':'')+esc(x.project)+'</button>';
+  }).join('')+'</div>':'';
+  pop.innerHTML=sessRow+timing+tokens;
   pop.classList.add('show');
   syncHeight();
 }
@@ -632,8 +641,14 @@ async function refreshLive(){
   }
   renderLive(rows);
   if(popOpen&&focus){
-    try{renderPop(await window.__TAURI_INTERNALS__.invoke('get_session_metrics',{source:focus.source}),focus.project);}
-    catch(error){renderPop(null,focus.project);}
+    try{
+      const [metrics,sessions]=await Promise.all([
+        window.__TAURI_INTERNALS__.invoke('get_session_metrics',{source:focus.source,sessionId:selectedSession}),
+        window.__TAURI_INTERNALS__.invoke('list_recent_sessions',{source:focus.source}).catch(()=>[]),
+      ]);
+      SESSIONS=sessions||[];
+      renderPop(metrics,focus.project);
+    }catch(error){renderPop(null,focus.project);}
   }
 }
 async function pollLive(){
@@ -648,6 +663,12 @@ const LIVE_STRIP=document.getElementById('livestrip');
 // 失焦自动收起未钉住的展开，避免挂着无人看的面板。
 window.addEventListener('blur',()=>{
   if(popOpen&&!popPinned){popOpen=false;refreshLive();}
+});
+document.getElementById('livepop').addEventListener('click',event=>{
+  const chip=event.target.closest('.psess');
+  if(!chip)return;
+  selectedSession=chip.dataset.sess===selectedSession?null:chip.dataset.sess;
+  refreshLive();
 });
 LIVE_STRIP.addEventListener('click',event=>{
   const actionEl=event.target.closest('[data-dock-action]');

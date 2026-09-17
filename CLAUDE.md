@@ -179,3 +179,12 @@ npm run tauri:build
 - 修复：frontmost_owner() 检测前台 layer-0 窗口 owner；前台非已知客户端时隐藏胶囊，
   宿主回前台自动重现；CostDog 自身获得焦点时豁免（点击胶囊/面板不消失）
 - 实测：ZCode前台显示/切Chrome隐藏/回ZCode重现位置精确/胶囊自身焦点保持
+### 21. 会话切换：指标面板可查看任意最近对话（2026-09-17）
+
+- 用户反馈：8 项指标只能看当前活跃对话，无法查看其他对话
+- 新增 list_recent_sessions(source)：最近 5 个会话（项目名/最后活跃/token总量/活跃标记）
+- get_session_metrics 增加 sessionId 参数（空=跟随活跃会话）
+- 展开面板顶部会话芯片行（跨双栏）：● 绿点=10 分钟内活跃，点击切换查看该会话的
+  8 项指标，再点取消回到自动跟随；POP_HEIGHT 118→148
+- 实测：AX 列出 5 个会话芯片（ZCodeProject●/ai-live-intelligence●/muse-voice-transcribe/
+  gawr-gura-quest-for-bread/pixvael），切换渲染正常

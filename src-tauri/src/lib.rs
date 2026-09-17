@@ -2519,24 +2519,29 @@ struct SessionMetrics {
     started_at_ms: i64,
     /// 最近一次请求的输入 token（上下文占用代理）
     last_context_tokens: u64,
+    /// 本组指标所属会话 id（前端据此高亮切换芯片）
+    session_id: String,
 }
 
 #[tauri::command]
-fn get_session_metrics(source: String) -> Option<SessionMetrics> {
+fn get_session_metrics(source: String, session_id: Option<String>) -> Option<SessionMetrics> {
     if source != "zcode" {
         return None;
     }
     let conn = open_readonly_db(&get_zcode_db_path(), "model_usage")?;
-    // 活动会话 = 最近一条请求所属的会话（与停靠条显示的"当前项目"一致）。
-    let session_id: String = conn
-        .query_row(
-            "SELECT session_id FROM model_usage
-             WHERE status IN ('completed','error','cancelled')
-             ORDER BY started_at DESC LIMIT 1",
-            [],
-            |row| row.get(0),
-        )
-        .ok()?;
+    // 指定会话则直接用之；否则活动会话 = 最近一条请求所属的会话。
+    let session_id: String = match session_id {
+        Some(id) if !id.is_empty() => id,
+        _ => conn
+            .query_row(
+                "SELECT session_id FROM model_usage
+                 WHERE status IN ('completed','error','cancelled')
+                 ORDER BY started_at DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .ok()?,
+    };
     let (model_ms, ttft_ms, output, input, cache_read, first_started, last_done, tool_calls) =
         conn.query_row(
             "SELECT COALESCE(SUM(duration_ms), 0),
@@ -2582,7 +2587,66 @@ fn get_session_metrics(source: String) -> Option<SessionMetrics> {
         tool_calls: tool_calls.max(0) as u64,
         started_at_ms: first_started,
         last_context_tokens: zcode_last_context_tokens(),
+        session_id,
     })
+}
+
+/// 最近会话清单（前端展开面板的会话切换芯片）。
+#[derive(Debug, Serialize)]
+struct SessionSummary {
+    session_id: String,
+    /// 项目显示名 = 会话目录 basename
+    project: String,
+    last_active_ms: i64,
+    total_tokens: u64,
+    /// 最近 10 分钟内有请求 → 活跃（芯片上标 ●）
+    active: bool,
+}
+
+#[tauri::command]
+fn list_recent_sessions(source: String) -> Vec<SessionSummary> {
+    if source != "zcode" {
+        return Vec::new();
+    }
+    let Some(conn) = open_readonly_db(&get_zcode_db_path(), "model_usage") else {
+        return Vec::new();
+    };
+    let sql = "SELECT s.id, COALESCE(s.directory, ''), MAX(m.started_at), \
+               COALESCE(SUM(m.input_tokens + m.output_tokens), 0) \
+               FROM model_usage m JOIN session s ON s.id = m.session_id \
+               WHERE m.status IN ('completed','error','cancelled') \
+               GROUP BY s.id ORDER BY 3 DESC LIMIT 5";
+    let Ok(mut stmt) = conn.prepare(sql) else {
+        return Vec::new();
+    };
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, i64>(3)?,
+        ))
+    });
+    let mut out = Vec::new();
+    if let Ok(rows) = rows {
+        for row in rows.flatten() {
+            let (id, dir, last, tokens) = row;
+            let project = std::path::Path::new(&dir)
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| "未命名".to_string());
+            out.push(SessionSummary {
+                session_id: id,
+                project,
+                last_active_ms: last,
+                total_tokens: tokens.max(0) as u64,
+                active: now_ms - last < 600_000,
+            });
+        }
+    }
+    out
 }
 
 /// Input tokens of ZCode's most recent request — the closest proxy for how
@@ -2914,7 +2978,7 @@ pub fn run() {
                 .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host])
+        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions])
         .setup(|app| {
             // A 36px always-on-top bar is an accessory, not an app: drop the Dock icon
             // and the app menu so CostDog lives entirely in the menu bar.
