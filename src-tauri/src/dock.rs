@@ -123,19 +123,16 @@ fn dock_loop(app: tauri::AppHandle) {
         let dog_height = window.outer_size().map_or(36.0, |s| s.height as f64 / scale);
 
         // Attach just below ZCode's bottom edge with a 1px overlap so the bar's
-        // glow line swallows the host window's drop-shadow seam; when that runs
-        // off the display (maximized window), tuck the bar inside instead.
-        // 嵌入模式：直接放进宿主窗口内部底边（权限/模型选择器之间的底部
-        // 区域），水平居中、距宿主底边 12px；展开内容在宿主内放不下时向
-        // 宿主顶部方向收，始终不越出宿主窗口边界。
-        let mut x = (zx + (zw - dog_width) / 2.0).max(zx);
-        let mut y = zy + zh - dog_height - 12.0;
+        // 嵌入模式：放进宿主底部输入栏「权限/模型选择器之间的空白区域」。
+        // 偏移按当前 ZCode 布局标定（Gemini 截图测量）：距宿主左缘 730px、
+        // 距底边 47px；越出宿主时向内收，始终不越出宿主窗口边界。
+        let mut x = zx + 730.0;
+        let mut y = zy + zh - dog_height - 47.0;
+        if x + dog_width > zx + zw {
+            x = zx + zw - dog_width;
+        }
         if y < zy {
             y = zy;
-        }
-        let right = zx + zw;
-        if x + dog_width > right {
-            x = right - dog_width;
         }
         if last_applied == Some((x, y)) {
             continue;
