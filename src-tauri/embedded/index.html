@@ -563,7 +563,13 @@ function syncHeight(){
 }
 function renderLive(rows){
   const strip=document.getElementById('livestrip');
-  let visible=DOCK_ON&&Array.isArray(rows)?rows.slice(0,3):[];
+  // 嵌入态只显示一行：宿主客户端自己的用量（在 ZCode 里就看 zcode 的数据），
+  // 其他工具的数据收进展开面板——芯片行不堆叠多行、不超出工具栏行范围。
+  let visible=[];
+  if(DOCK_ON&&Array.isArray(rows)){
+    const hostRow=rows.find(r=>document.body.dataset.host&&r.source===document.body.dataset.host.toLowerCase());
+    visible=[hostRow||rows[0]];
+  }
   if(DOCK_ON&&!visible.length)visible=[{source:'costdog',project:'No active agent traffic',tokens_per_min:0,tokens_in_window:0,cache_hit_pct:0,last_context_tokens:0}];
   if(!DOCK_ON)popOpen=false;
   strip.innerHTML=visible.map((r,i)=>{
@@ -616,15 +622,18 @@ function renderPop(metrics,project){
 async function refreshLive(){
   let rows=[];
   try{rows=await window.__TAURI_INTERNALS__.invoke('get_live_stats');}catch(error){}
-  if(DOCK_ON&&rows.length){
-    rateHistory.push(rows[0].tokens_per_min);
+  try{document.body.dataset.host=DOCK_ON?(await window.__TAURI_INTERNALS__.invoke('get_dock_host')).toLowerCase():'';}catch(error){}
+  // 主行与展开面板都锚定宿主客户端的数据源；速率走势同样跟随宿主行。
+  const hostSource=document.body.dataset.host;
+  const focus=rows.find(r=>hostSource&&r.source===hostSource)||rows[0];
+  if(DOCK_ON&&focus){
+    rateHistory.push(focus.tokens_per_min);
     if(rateHistory.length>24)rateHistory.shift();
   }
-  try{document.body.dataset.host=DOCK_ON?(await window.__TAURI_INTERNALS__.invoke('get_dock_host')).toLowerCase():'';}catch(error){}
   renderLive(rows);
-  if(popOpen&&rows.length){
-    try{renderPop(await window.__TAURI_INTERNALS__.invoke('get_session_metrics',{source:rows[0].source}),rows[0].project);}
-    catch(error){renderPop(null,rows[0].project);}
+  if(popOpen&&focus){
+    try{renderPop(await window.__TAURI_INTERNALS__.invoke('get_session_metrics',{source:focus.source}),focus.project);}
+    catch(error){renderPop(null,focus.project);}
   }
 }
 async function pollLive(){
