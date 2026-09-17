@@ -181,13 +181,21 @@ fn dock_loop(app: tauri::AppHandle) {
         }
         // 两侧各留 ~20px 呼吸空间（旧值 16 在窄窗下贴着模型选择器）。
         let target_w = (gap_w - 40.0).clamp(300.0, 410.0);
+        // 用户红框标定（2026-09-17）：胶囊左缘 = 左芯片右缘 + 46px，固定间距、
+        // 不做空隙等分居中（等分居中会因左侧留白大而显得偏右）。
+        let mut anchor_x = zx + gap_left + 46.0;
+        // 防与右侧芯片重叠：右缘至少留 20px。
+        let max_left = zx + gap_right - 20.0 - target_w;
+        if anchor_x > max_left {
+            anchor_x = max_left;
+        }
         if (dog_width - target_w).abs() > 1.0 {
             let cur_h = window.outer_size().map_or(24.0, |sz| sz.height as f64 / scale);
             window
                 .set_size(tauri::Size::Logical(tauri::LogicalSize { width: target_w, height: cur_h }))
                 .ok();
         }
-        let x = zx + 0.5 * zw - 19.5 - target_w / 2.0;
+        let x = anchor_x;
         // 锚定主行（首行 24px）：文字中心与芯片文字中心一致（距底 48px）。
         let mut y = zy + zh - 24.0 - 36.0;
         if y < zy {
