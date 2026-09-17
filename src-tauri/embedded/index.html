@@ -152,52 +152,51 @@ body.docked .live-row.open .live-chevron{transform:rotate(180deg);color:#60a5fa}
 @keyframes livepop-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}.pop-group{min-width:0}.pop-head{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px;margin:2px 0 4px}.pop-head span{opacity:.75}.pop-kv{display:flex;justify-content:space-between;gap:8px;font-size:10px;line-height:19px}.pop-kv span{color:var(--dim)}.pop-kv b{font-weight:600;color:var(--text);white-space:nowrap}
 body.hud .livestrip{background:color-mix(in srgb,var(--panel) 55%,transparent)}
 body.hud .livepop{background:color-mix(in srgb,var(--panel) 62%,transparent)}
-/* ── 嵌入胶囊 v3：浅色底栏上的深色高对比胶囊（实测底色 #F7F7F7，白叠白不可读）── */
+/* ── 嵌入胶囊 v4：克隆 ZCode 输入框材质（#2b2b2b/#444/#d4d4d4）+ 宿主橙强调 #f97316 ── */
 body.docked .livestrip{
-  background:rgba(30,30,30,.85);
-  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
-  border:1px solid rgba(255,255,255,.15);
-  border-radius:4px;
-  box-shadow:0 2px 6px rgba(0,0,0,.25);
-  padding:0 8px;color:rgba(255,255,255,.95);
+  background:rgba(43,43,43,.92);
+  border:1px solid #444;
+  border-bottom:none;
+  border-radius:6px;
+  box-shadow:none;
+  padding:0 10px 0 8px;color:#d4d4d4;
   font-family:'SFMono-Regular',ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;
 }
 body.docked .livestrip.show{display:flex;flex-direction:column;align-items:stretch}
 body.docked .live-row{gap:10px;min-height:24px}
-body.docked .live-row>*+*{border-left:1px solid rgba(255,255,255,.1);padding-left:10px}
+body.docked .live-row>*+*{border-left:1px solid rgba(255,255,255,.08);padding-left:10px}
 body.docked .live-row.primary{font-size:11px;background:transparent;padding:0 2px}
-body.docked .live-row.primary:hover{background:rgba(255,255,255,.08)}
-body.docked .live-row.sub{font-size:10px;color:rgba(255,255,255,.6);padding:0 2px 0 12px;min-height:22px;line-height:22px}
+body.docked .live-row.primary:hover{background:rgba(255,255,255,.06)}
+body.docked .live-row.sub{font-size:10px;color:rgba(212,212,212,.55);padding:0 2px 0 12px;min-height:22px;line-height:22px}
 body.docked .live-row.idle{opacity:.65}
-body.docked .live-row.idle .live-rate{color:rgba(255,255,255,.35)}
-body.docked .live-row.open{background:rgba(96,165,250,.12)}
-body.docked .live-brand{height:24px;padding:0 2px;display:flex;align-items:center;flex:0 0 auto;font-size:10px;color:rgba(255,255,255,.6);cursor:pointer}
-body.docked .live-brand:hover{color:#fff}
-body.docked .live-brand.open-brand{width:auto;color:#60a5fa;font-size:10px;white-space:nowrap}
-body.docked .live-rate{color:#60a5fa;font-weight:600}
-body.docked .live-src{color:rgba(255,255,255,.45)}
-body.docked .live-proj{color:rgba(255,255,255,.95)}
-body.docked .live-metric{color:rgba(255,255,255,.6)}
+body.docked .live-row.idle .live-rate{color:rgba(212,212,212,.35)}
+body.docked .live-row.open{background:rgba(249,115,22,.10)}
+body.docked .live-brand{height:24px;padding:0 2px;display:flex;align-items:center;flex:0 0 auto;font-size:10px;color:rgba(212,212,212,.6);cursor:pointer}
+body.docked .live-brand:hover{color:#d4d4d4}
+body.docked .live-brand.open-brand{width:auto;color:#f97316;font-size:10px;white-space:nowrap}
+body.docked .live-rate{color:#f97316;font-weight:600}
+body.docked .live-src{color:rgba(212,212,212,.45)}
+body.docked .live-proj{color:#d4d4d4}
+body.docked .live-metric{color:rgba(212,212,212,.6)}
 body.docked .live-metric.hit{color:#4ade80}
 body.docked .live-metric.ctx{color:#c084fc}
-body.docked .live-chevron{color:rgba(255,255,255,.5);display:inline-flex;transition:transform .18s ease}
-body.docked .live-row.open .live-chevron{transform:rotate(180deg);color:#60a5fa}
-body.docked .dbtn{color:rgba(255,255,255,.6)}
-body.docked .dbtn:hover{color:#fff;background:rgba(255,255,255,.08)}
+body.docked .live-chevron{color:rgba(212,212,212,.5);display:inline-flex;transition:transform .18s ease}
+body.docked .live-row.open .live-chevron{transform:rotate(180deg);color:#f97316}
+body.docked .dbtn{color:rgba(212,212,212,.6)}
+body.docked .dbtn:hover{color:#d4d4d4;background:rgba(255,255,255,.06)}
 body.docked .livepop{
-  background:rgba(30,30,30,.95);
-  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
-  border:1px solid rgba(255,255,255,.12);
+  background:rgba(43,43,43,.96);
+  border:1px solid #444;
   border-radius:6px;
-  box-shadow:0 8px 24px rgba(0,0,0,.35);
-  color:rgba(255,255,255,.95);
+  box-shadow:none;
+  color:#d4d4d4;
   font-family:'SFMono-Regular',ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;
 }
-body.docked .pop-head{color:rgba(255,255,255,.45)}
-body.docked .pop-kv{border-bottom:1px solid rgba(255,255,255,.08)}
+body.docked .pop-head{color:rgba(212,212,212,.45)}
+body.docked .pop-kv{border-bottom:1px solid rgba(255,255,255,.06)}
 body.docked .pop-group .pop-kv:last-child{border-bottom:none}
-body.docked .pop-kv span{color:rgba(255,255,255,.55)}
-body.docked .pop-kv b{color:rgba(255,255,255,.95)}
+body.docked .pop-kv span{color:rgba(212,212,212,.55)}
+body.docked .pop-kv b{color:#d4d4d4}
 .live-spark{color:#60a5fa;opacity:.9;flex:0 0 auto}
 /* 宿主主题 profile：按停靠目标客户端微调底色与 accent */
 body[data-host="codex"] .livestrip,body[data-host="codex"] .livepop{background:rgba(246,247,249,.85);color:rgba(35,38,45,.92)}
