@@ -179,7 +179,8 @@ fn dock_loop(app: tauri::AppHandle) {
             window.show().ok();
             hidden = false;
         }
-        let target_w = (gap_w - 16.0).clamp(300.0, 410.0);
+        // 两侧各留 ~20px 呼吸空间（旧值 16 在窄窗下贴着模型选择器）。
+        let target_w = (gap_w - 40.0).clamp(300.0, 410.0);
         if (dog_width - target_w).abs() > 1.0 {
             let cur_h = window.outer_size().map_or(24.0, |sz| sz.height as f64 / scale);
             window

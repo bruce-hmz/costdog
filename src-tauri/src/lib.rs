@@ -2466,6 +2466,20 @@ fn get_dock_host() -> String {
     dock::current_host()
 }
 
+/// 记住用户手动选择的会话（展开面板默认高亮；空串=自动跟随最近活跃）。
+#[tauri::command]
+fn get_live_session() -> Option<String> {
+    match get_pref("live_session") {
+        Ok(Some(value)) if !value.is_empty() => Some(value),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+fn set_live_session(session_id: Option<String>) -> Result<(), String> {
+    set_pref("live_session", session_id.as_deref().unwrap_or(""))
+}
+
 #[tauri::command]
 fn set_dock_zcode(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     set_pref("dock_zcode", if enabled { "1" } else { "0" })?;
@@ -2978,7 +2992,7 @@ pub fn run() {
                 .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions])
+        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions, get_live_session, set_live_session])
         .setup(|app| {
             // A 36px always-on-top bar is an accessory, not an app: drop the Dock icon
             // and the app menu so CostDog lives entirely in the menu bar.

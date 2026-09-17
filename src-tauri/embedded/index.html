@@ -684,6 +684,7 @@ document.getElementById('livepop').addEventListener('click',event=>{
   const chip=event.target.closest('.psess');
   if(!chip)return;
   selectedSession=chip.dataset.sess===selectedSession?null:chip.dataset.sess;
+  window.__TAURI_INTERNALS__.invoke('set_live_session',{sessionId:selectedSession}).catch(()=>{});
   refreshLive();
 });
 LIVE_STRIP.addEventListener('click',event=>{
@@ -889,6 +890,7 @@ selectAccent(document.documentElement.style.getPropertyValue('--accent').trim()|
 const syncSystemTheme=()=>{if(document.documentElement.dataset.themeMode==='system')applyThemeMode('system',false)};
 if(systemTheme.addEventListener)systemTheme.addEventListener('change',syncSystemTheme);else systemTheme.addListener(syncSystemTheme);
 initDock();
+(async()=>{try{selectedSession=await window.__TAURI_INTERNALS__.invoke('get_live_session');}catch(error){}})();
 pollLive();
 load();
 </script>
