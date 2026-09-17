@@ -124,13 +124,27 @@ fn dock_loop(app: tauri::AppHandle) {
 
         // Attach just below ZCode's bottom edge with a 1px overlap so the bar's
         // 嵌入模式：放进宿主底部输入栏「权限/模型选择器之间的空白区域」。
-        // 偏移按当前 ZCode 布局标定（Gemini 截图测量）：距宿主左缘 730px、
-        // 距底边 47px；越出宿主时向内收，始终不越出宿主窗口边界。
-        let mut x = zx + 730.0;
-        let mut y = zy + zh - dog_height - 47.0;
-        if x + dog_width > zx + zw {
-            x = zx + zw - dog_width;
+        // 线性标定模型（w=1820/1200 两点实测，Gemini 截图测量）：
+        //   空隙左缘 = 0.3774w + 23.1，右缘 = 1.2742w − 752.1，
+        //   中心 = 0.8258w − 364.5；Electron flexbox 布局下随宽度线性伸缩。
+        // 容纳性校验：空隙放不下 410px 胶囊（+16px 余量）时冻结在最近有效
+        // 位置，避免压住两侧芯片。
+        let gap_left = 0.3774 * zw + 23.1;
+        let gap_right = 1.2742 * zw - 752.1;
+        let gap_center = 0.8258 * zw - 364.5;
+        if gap_right - gap_left < dog_width + 16.0 {
+            continue;
         }
+        let mut x = zx + gap_center - dog_width / 2.0;
+        let min_x = gap_left + 8.0;
+        let max_x = gap_right - dog_width - 8.0;
+        if x < min_x {
+            x = min_x;
+        }
+        if x > max_x {
+            x = max_x;
+        }
+        let mut y = zy + zh - dog_height - 8.0;
         if y < zy {
             y = zy;
         }
