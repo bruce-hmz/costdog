@@ -159,7 +159,7 @@ body.docked .livestrip{
   border-bottom:none;
   border-radius:6px;
   box-shadow:none;
-  padding:0 10px 0 8px;color:#d4d4d4;
+  padding:0 12px 0 8px;color:#d4d4d4;
   font-family:'SFMono-Regular',ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;
 }
 body.docked .livestrip.show{display:flex;flex-direction:column;align-items:stretch}
@@ -180,11 +180,12 @@ body.docked .live-proj{color:#d4d4d4}
 body.docked .live-metric{color:rgba(212,212,212,.6)}
 body.docked .live-metric.hit{color:#4ade80}
 body.docked .live-metric.ctx{color:#c084fc}
-body.docked .live-chevron{color:rgba(212,212,212,.5);display:inline-flex;transition:transform .18s ease}
+body.docked .live-chevron{color:rgba(212,212,212,.5);display:inline-flex;transition:transform .18s ease;margin-right:2px}
 body.docked .live-row.open .live-chevron{transform:rotate(180deg);color:#f97316}
 body.docked .dbtn{color:rgba(212,212,212,.6)}
 body.docked .dbtn:hover{color:#d4d4d4;background:rgba(255,255,255,.06)}
 body.docked .livepop{
+  overflow-y:auto;max-height:280px;
   background:rgba(43,43,43,.96);
   border:1px solid #444;
   border-radius:6px;
@@ -195,8 +196,8 @@ body.docked .livepop{
 body.docked .pop-head{color:rgba(212,212,212,.45)}
 body.docked .pop-kv{border-bottom:1px solid rgba(255,255,255,.06)}
 body.docked .pop-group .pop-kv:last-child{border-bottom:none}
-body.docked .pop-kv span{color:rgba(212,212,212,.55)}
-body.docked .pop-kv b{color:#d4d4d4}
+body.docked .pop-kv span{color:rgba(212,212,212,.55);flex-shrink:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+body.docked .pop-kv b{color:#d4d4d4;flex-shrink:0}
 /* 宽度响应：窄窗隐藏低优先级段，保证右侧 ⌄ 与速率/项目/⚡ 完整可见 */
 body.docked.narrow .live-spark{display:none}
 body.docked.narrow .live-metric.ctx{display:none}
@@ -562,7 +563,7 @@ function fI(n){return Math.round(n).toLocaleString('en-US')}
 function fmtDur(ms){const s=Math.max(0,Math.round(ms/1000));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),ss=s%60;return h?h+'小时'+m+'分'+ss+'秒':(m?m+'分'+ss+'秒':ss+'秒')}
 // Window height: docked → 32px native bar + extra rows + popover + detail;
 // floating → 36px skin bar + rows + popover + detail.
-let popH=148; // 面板高度：renderPop 后按内容实测更新
+let popH=205; // 面板高度：双列 205 / 窄窗单列 260（确定性值），实测仅作下限
 function syncHeight(){
   if(!window.__TAURI_INTERNALS__)return;
   const h=DOCK_ON?Math.max(liveRows,1)*24+(popOpen?popH:0)+(open?484:0):36+liveRows*24+(popOpen?popH:0)+(open?484:0);
@@ -633,8 +634,10 @@ function renderPop(metrics,project){
   pop.innerHTML=sessRow+timing+tokens;
   pop.classList.add('show');
   // 按真实内容高度更新窗口预算（双列/单列、会话行数不同都能装下）。
-  const measured=Math.ceil(pop.getBoundingClientRect().height)+2;
-  if(measured>60&&Math.abs(measured-popH)>1){popH=measured;}
+  // 确定性高度（内容 8 项+会话行已知），实测只升不降兜底。
+  const fixed=document.body.classList.contains('narrow')?260:205;
+  const measured=Math.ceil(pop.getBoundingClientRect().height)+10;
+  popH=Math.max(fixed,measured);
   syncHeight();
 }
 async function refreshLive(){
