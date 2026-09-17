@@ -125,17 +125,17 @@ fn dock_loop(app: tauri::AppHandle) {
         // Attach just below ZCode's bottom edge with a 1px overlap so the bar's
         // glow line swallows the host window's drop-shadow seam; when that runs
         // off the display (maximized window), tuck the bar inside instead.
+        // 嵌入模式：直接放进宿主窗口内部底边（权限/模型选择器之间的底部
+        // 区域），水平居中、距宿主底边 12px；展开内容在宿主内放不下时向
+        // 宿主顶部方向收，始终不越出宿主窗口边界。
         let mut x = (zx + (zw - dog_width) / 2.0).max(zx);
-        let mut y = zy + zh - 1.0;
-        if let Some(display) = display_at(zx + zw / 2.0, zy + zh) {
-            let bottom = display.origin.y + display.size.height;
-            if y + dog_height > bottom {
-                y = zy + zh - dog_height;
-            }
-            let right = display.origin.x + display.size.width;
-            if x + dog_width > right {
-                x = right - dog_width;
-            }
+        let mut y = zy + zh - dog_height - 12.0;
+        if y < zy {
+            y = zy;
+        }
+        let right = zx + zw;
+        if x + dog_width > right {
+            x = right - dog_width;
         }
         if last_applied == Some((x, y)) {
             continue;
@@ -232,29 +232,6 @@ fn find_dock_target() -> Option<(String, f64, f64, f64, f64)> {
     }
 }
 
-/// The active display whose frame contains the given global point.
-#[cfg(target_os = "macos")]
-fn display_at(x: f64, y: f64) -> Option<ffi::CGRect> {
-    unsafe {
-        let mut displays = [0u32; 8];
-        let mut count = 0u32;
-        if ffi::CGGetActiveDisplayList(8, displays.as_mut_ptr(), &mut count) != 0 {
-            return None;
-        }
-        for display in &displays[..count as usize] {
-            let frame = ffi::CGDisplayBounds(*display);
-            let inside = x >= frame.origin.x
-                && x < frame.origin.x + frame.size.width
-                && y >= frame.origin.y
-                && y < frame.origin.y + frame.size.height;
-            if inside {
-                return Some(frame);
-            }
-        }
-        None
-    }
-}
-
 #[cfg(target_os = "macos")]
 fn cf_string(reference: ffi::CFTypeRef) -> Option<String> {
     let mut buffer = [0u8; 256];
@@ -287,30 +264,9 @@ fn number_value(reference: ffi::CFTypeRef) -> Option<f64> {
 /// binding crates: the surface used here is a dozen stable C functions.
 #[cfg(target_os = "macos")]
 mod ffi {
-    use std::os::raw::{c_double, c_int, c_void};
+    use std::os::raw::{c_double, c_void};
 
     pub type CFTypeRef = *const c_void;
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    pub struct CGPoint {
-        pub x: c_double,
-        pub y: c_double,
-    }
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    pub struct CGSize {
-        pub width: c_double,
-        pub height: c_double,
-    }
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    pub struct CGRect {
-        pub origin: CGPoint,
-        pub size: CGSize,
-    }
 
     pub const ON_SCREEN_ONLY: u32 = 1; // kCGWindowListOptionOnScreenOnly
     pub const K_CF_UTF8: u32 = 0x0800_0100; // kCFStringEncodingUTF8
@@ -329,12 +285,6 @@ mod ffi {
         ) -> u8;
         pub fn CFNumberGetValue(number: CFTypeRef, theType: i32, valuePtr: *mut c_double) -> u8;
         pub fn CFRelease(reference: CFTypeRef);
-        pub fn CGGetActiveDisplayList(
-            maxDisplays: u32,
-            displays: *mut u32,
-            displayCount: *mut u32,
-        ) -> c_int;
-        pub fn CGDisplayBounds(display: u32) -> CGRect;
 
         // Exported CFString constants; read as raw pointers, never dereferenced in Rust.
         pub static kCGWindowOwnerName: CFTypeRef;

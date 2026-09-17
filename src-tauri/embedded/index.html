@@ -175,6 +175,7 @@ body.docked .live-row.idle{opacity:.65}
 body.docked .live-row.idle .live-rate{color:rgba(255,255,255,.35)}
 body.docked .live-brand{width:26px;height:28px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;font-size:11px;opacity:.85;filter:drop-shadow(0 1px 2px rgba(0,0,0,.4));cursor:pointer}
 body.docked .live-brand:hover{opacity:1}
+body.docked .live-brand.open-brand{width:auto;padding:0 8px;color:#60a5fa;font-size:10px;opacity:1;filter:none;white-space:nowrap}
 body.docked .live-rate{color:#60a5fa}
 body.docked .live-src{color:rgba(110,118,130,.55)}
 body.docked .live-proj{color:rgba(240,243,246,.92)}
@@ -573,7 +574,7 @@ function renderLive(rows){
     const cls=(primary?'live-row primary clickable':'live-row sub'+(idle?' idle':''))+(primary&&popOpen?' open':'');
     const ctx=r.last_context_tokens>0?'<span class="live-metric ctx" title="最近一次请求输入（上下文占用）">CTX '+fT(r.last_context_tokens)+'</span>':'';
     const chev=primary?'<span class="live-chevron" title="点击展开/收起指标">⌄</span>':'';
-    const brand=primary?'<span class="live-brand" data-dock-action="detail" title="打开/收起 CostDog 详情">🐕</span>':'';
+    const brand=primary?(open?'<span class="live-brand open-brand" data-dock-action="detail" title="收起 CostDog 详情">⌃ 收起</span>':'<span class="live-brand" data-dock-action="detail" title="打开 CostDog 详情">🐕</span>'):'';
     const src=primary?'':'<span class="live-src">'+esc(r.source)+'</span>';
     return '<div class="'+cls+'" data-live-primary="'+(primary?1:0)+'">'+brand+(primary?sparkSVG():'')+'<span class="live-rate">'+rate+'</span>'+src+'<span class="live-proj" title="'+esc(r.project)+'">'+esc(r.project)+'</span><span class="live-metric hit">⚡'+r.cache_hit_pct.toFixed(0)+'%</span><span class="live-metric">Σ'+fT(r.tokens_in_window)+'</span>'+ctx+chev+'</div>';
   }).join('');
