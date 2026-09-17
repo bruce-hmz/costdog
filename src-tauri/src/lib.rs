@@ -2991,6 +2991,9 @@ pub fn run() {
             window.set_title("CostDog").ok();
             // 停靠态的无缝观感由 ::before 微光顶边负责；自身投影只会制造分离感。
             window.set_shadow(false).ok();
+            // non-activating panel：点击直达内容，不抢 ZCode 焦点。
+            #[cfg(target_os = "macos")]
+            dock::make_non_activating(app.handle());
 
             // Dock-to-ZCode: restore the persisted preference, then start the
             // follower thread. The thread itself re-checks the flag every tick,

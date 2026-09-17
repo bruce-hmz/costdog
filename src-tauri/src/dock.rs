@@ -12,7 +12,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static DOCK_ENABLED: AtomicBool = AtomicBool::new(false);
 
-/// 当前停靠目标的客户端进程名（无目标/未启用时为空），供前端按宿主适配主题。
+/// 把窗口变为 non-activating panel：点击内容不激活应用、事件直达 webview，
+/// 消除"第一次点击只用于激活窗口"的 macOS 默认行为（悬浮 HUD 的通行做法）。
+#[cfg(target_os = "macos")]
+pub fn make_non_activating(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let Some(window) = app.get_webview_window("main") else { return };
+    let Ok(ns_window) = window.ns_window() else { return };
+    unsafe {
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        let obj = ns_window as *mut AnyObject;
+        let mask: usize = msg_send![obj, styleMask];
+        // NSNonactivatingPanelMask = 1 << 7
+        let _: () = msg_send![obj, setStyleMask: mask | (1 << 7)];
+    }
+}
+
 static CURRENT_HOST: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
 pub fn set_enabled(enabled: bool) {

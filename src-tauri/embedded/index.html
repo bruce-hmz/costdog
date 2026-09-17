@@ -560,10 +560,11 @@ function fmtDur(ms){const s=Math.max(0,Math.round(ms/1000));const h=Math.floor(s
 const POP_HEIGHT=148;
 function syncHeight(){
   if(!window.__TAURI_INTERNALS__)return;
-  const base=DOCK_ON?Math.max(liveRows,1)*24:36+liveRows*24;
-  const h=base+(popOpen?POP_HEIGHT:0)+(open?484:0);
-  if(h===liveHeight)return;
+  const h=DOCK_ON?Math.max(liveRows,1)*24+(popOpen?POP_HEIGHT:0)+(open?484:0):36+liveRows*24+(popOpen?POP_HEIGHT:0)+(open?484:0);
   liveHeight=h;
+  // 以真实视口高度为准：窗口 hide→show 会恢复旧 frame 尺寸，绕过本地缓存；
+  // 每次对比 innerHeight，不符即强制纠正（3s 轮询内自愈）。
+  if(Math.abs(window.innerHeight-h)<2)return;
   window.__TAURI_INTERNALS__.invoke('resize_window',{width:410,height:h});
 }
 function renderLive(rows){

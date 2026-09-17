@@ -188,3 +188,10 @@ npm run tauri:build
   8 项指标，再点取消回到自动跟随；POP_HEIGHT 118→148
 - 实测：AX 列出 5 个会话芯片（ZCodeProject●/ai-live-intelligence●/muse-voice-transcribe/
   gawr-gura-quest-for-bread/pixvael），切换渲染正常
+### 22. 点击直达 + 高度自愈（2026-09-17）
+
+- 痛点：macOS 默认"首击只激活窗口"，胶囊点第一下没反应（用户抱怨"点了效果不太好"的根源）
+- 修复：objc2 给窗口加 NSNonactivatingPanelMask（non-activating panel），点击直达 webview
+  不抢 ZCode 焦点；实测第 1 击即展开、第 2 击收起
+- 高度卡死修复：面板展开时 hide→show 会恢复旧 frame 绕过高度缓存，syncHeight 改为
+  对比真实 innerHeight 不符即纠正（3s 轮询自愈），实测 172→24 自愈正常
