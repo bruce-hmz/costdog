@@ -144,8 +144,12 @@ details.analysis-block>summary{cursor:pointer}
 .quality-line,.budget-line{display:flex;justify-content:space-between;gap:8px;margin-top:5px;font-size:10px}
 .budget-controls{display:flex;gap:5px;margin-top:7px}.budget-controls input{min-width:0;flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--panel);color:var(--text);font:inherit}.budget-controls button{padding:4px 7px;border:1px solid var(--accent);border-radius:4px;background:var(--accent-soft);color:var(--accent);font:inherit;cursor:pointer}
 .dock-controls{margin-top:7px}.dock-controls label{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--dim);cursor:pointer}.dock-controls input{accent-color:var(--accent);cursor:pointer}
-.livestrip{display:none;border-top:1px solid var(--border);background:var(--panel);padding:4px 10px;font-variant-numeric:tabular-nums}.livestrip.show{display:block}.live-row{display:flex;align-items:center;gap:8px;font-size:10px;line-height:18px;padding:2px 0;color:var(--text)}.live-row.idle{opacity:.5}.live-row>*+*{border-left:1px solid var(--border);padding-left:8px}.live-row.clickable{cursor:pointer;border-radius:4px}.live-row.clickable:hover{background:var(--card)}.live-rate{color:var(--accent);font-weight:700;font-size:11px;white-space:nowrap;min-width:74px}.live-src{color:var(--dim);text-transform:uppercase;letter-spacing:.4px}.live-proj{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.live-metric{color:var(--dim);white-space:nowrap}.live-chevron{color:var(--dim)}
-.livepop{display:none;border-top:1px solid var(--border);background:var(--panel);padding:8px 10px;font-variant-numeric:tabular-nums}.livepop.show{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}.pop-group{min-width:0}.pop-head{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px;margin:2px 0 4px}.pop-head span{opacity:.75}.pop-kv{display:flex;justify-content:space-between;gap:8px;font-size:10px;line-height:19px}.pop-kv span{color:var(--dim)}.pop-kv b{font-weight:600;color:var(--text);white-space:nowrap}
+.livestrip{display:none;border-top:1px solid var(--border);background:var(--panel);padding:4px 10px;font-variant-numeric:tabular-nums}.livestrip.show{display:block}.live-row{display:flex;align-items:center;gap:8px;font-size:10px;line-height:18px;padding:2px 0;color:var(--text)}.live-row.idle{opacity:.5}.live-row>*+*{border-left:1px solid var(--border);padding-left:8px}.live-row.clickable{cursor:pointer;border-radius:4px}.live-row.clickable:hover{background:var(--card)}.live-rate{color:var(--accent);font-weight:700;font-size:11px;white-space:nowrap;min-width:74px}.live-src{color:var(--dim);text-transform:uppercase;letter-spacing:.4px}.live-proj{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.live-metric{color:var(--dim);white-space:nowrap}.live-chevron{color:rgba(110,118,130,.55);display:inline-flex;transition:transform .18s ease,color .18s ease;transform:rotate(0deg)}
+body.docked .live-row.open{background:rgba(96,165,250,.10)}
+body.docked .live-row.open .live-chevron{transform:rotate(180deg);color:#60a5fa}
+.livepop{display:none;border-top:1px solid var(--border);background:var(--panel);padding:8px 10px;font-variant-numeric:tabular-nums}
+.livepop.show{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;animation:livepop-in .18s ease-out}
+@keyframes livepop-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}.pop-group{min-width:0}.pop-head{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px;margin:2px 0 4px}.pop-head span{opacity:.75}.pop-kv{display:flex;justify-content:space-between;gap:8px;font-size:10px;line-height:19px}.pop-kv span{color:var(--dim)}.pop-kv b{font-weight:600;color:var(--text);white-space:nowrap}
 body.hud .livestrip{background:color-mix(in srgb,var(--panel) 55%,transparent)}
 body.hud .livepop{background:color-mix(in srgb,var(--panel) 62%,transparent)}
 /* ── Gemini 设计规范：停靠态原生 HUD（覆盖皮肤变量，匹配 ZCode 暗色 chrome）── */
@@ -566,9 +570,9 @@ function renderLive(rows){
     const primary=DOCK_ON&&i===0;
     const idle=r.tokens_per_min<=0.5/60;
     const rate=idle?'idle':'▲ '+fT(r.tokens_per_min/60)+'/s';
-    const cls=primary?'live-row primary clickable':'live-row sub'+(idle?' idle':'');
+    const cls=(primary?'live-row primary clickable':'live-row sub'+(idle?' idle':''))+(primary&&popOpen?' open':'');
     const ctx=r.last_context_tokens>0?'<span class="live-metric ctx" title="最近一次请求输入（上下文占用）">CTX '+fT(r.last_context_tokens)+'</span>':'';
-    const chev=primary?'<span class="live-chevron">'+(popOpen?(popPinned?'⌃·':'⌃'):'⌄')+'</span>':'';
+    const chev=primary?'<span class="live-chevron" title="点击展开/收起指标">⌄</span>':'';
     const brand=primary?'<span class="live-brand" data-dock-action="detail" title="打开/收起 CostDog 详情">🐕</span>':'';
     const src=primary?'':'<span class="live-src">'+esc(r.source)+'</span>';
     return '<div class="'+cls+'" data-live-primary="'+(primary?1:0)+'">'+brand+(primary?sparkSVG():'')+'<span class="live-rate">'+rate+'</span>'+src+'<span class="live-proj" title="'+esc(r.project)+'">'+esc(r.project)+'</span><span class="live-metric hit">⚡'+r.cache_hit_pct.toFixed(0)+'%</span><span class="live-metric">Σ'+fT(r.tokens_in_window)+'</span>'+ctx+chev+'</div>';
@@ -628,32 +632,24 @@ async function pollLive(){
   setTimeout(pollLive,3000);
 }
 const LIVE_STRIP=document.getElementById('livestrip');
-// NotchNook 式交互：悬停主行展开指标面板，移开 0.6s 后收起；点击可钉住。
-LIVE_STRIP.addEventListener('mouseover',event=>{
-  const row=event.target.closest('.live-row');
-  if(!row||row.dataset.livePrimary!=='1')return;
-  if(popOpen||popPinned||!DOCK_ON)return;
-  popOpen=true;
-  refreshLive();
-});
-LIVE_STRIP.addEventListener('mouseleave',()=>{
-  if(!popOpen||popPinned)return;
-  popOpen=false;
-  refreshLive();
+// 交互语义：hover=预览展开（失焦自动收起），点击=固定展开 ⇄ 收起。
+// 交互语义（确定性）：点击主行 = 展开 ⇄ 收起（含钉住态）。
+// hover 自动展开已移除——聚焦窗口时 hover 抢先展开、随后的点击又会把它
+// 切换关闭，表现为"点了没反应"；未聚焦窗口则连 hover 事件都不投递。
+// 失焦自动收起未钉住的展开，避免挂着无人看的面板。
+window.addEventListener('blur',()=>{
+  if(popOpen&&!popPinned){popOpen=false;refreshLive();}
 });
 LIVE_STRIP.addEventListener('click',event=>{
   const actionEl=event.target.closest('[data-dock-action]');
   if(actionEl){
-    // 开/关切换：再次点击 🐕 收起详情面板，恢复停靠条。
     if(actionEl.dataset.dockAction==='detail')toggle();
     return;
   }
   const row=event.target.closest('.live-row');
   if(!row||row.dataset.livePrimary!=='1')return;
-  // 点击语义：关→开（钉住），开（钉住）→关；hover 打开的状态点击即转为钉住。
-  if(!popOpen){popOpen=true;popPinned=true;}
-  else if(!popPinned){popPinned=true;}
-  else{popOpen=false;popPinned=false;}
+  popOpen=!popOpen;
+  popPinned=popOpen;
   refreshLive();
 });
 async function initDock(){
