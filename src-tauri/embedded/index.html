@@ -197,6 +197,11 @@ body.docked .pop-kv{border-bottom:1px solid rgba(255,255,255,.06)}
 body.docked .pop-group .pop-kv:last-child{border-bottom:none}
 body.docked .pop-kv span{color:rgba(212,212,212,.55)}
 body.docked .pop-kv b{color:#d4d4d4}
+/* 宽度响应：窄窗隐藏低优先级段，保证右侧 ⌄ 与速率/项目/⚡ 完整可见 */
+body.docked.narrow .live-spark{display:none}
+body.docked.narrow .live-metric.ctx{display:none}
+body.docked.tight .live-metric:not(.hit){display:none}
+body.docked.narrow .livepop{grid-template-columns:1fr}
 .pop-sessions{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px;margin:0 0 6px}
 .psess{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 8px;border:1px solid #444;border-radius:10px;background:transparent;color:rgba(212,212,212,.6);font:inherit;font-size:9px;cursor:pointer}
 .psess:hover{color:#d4d4d4;border-color:#666}
@@ -557,10 +562,10 @@ function fI(n){return Math.round(n).toLocaleString('en-US')}
 function fmtDur(ms){const s=Math.max(0,Math.round(ms/1000));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),ss=s%60;return h?h+'小时'+m+'分'+ss+'秒':(m?m+'分'+ss+'秒':ss+'秒')}
 // Window height: docked → 32px native bar + extra rows + popover + detail;
 // floating → 36px skin bar + rows + popover + detail.
-const POP_HEIGHT=148;
+let popH=148; // 面板高度：renderPop 后按内容实测更新
 function syncHeight(){
   if(!window.__TAURI_INTERNALS__)return;
-  const h=DOCK_ON?Math.max(liveRows,1)*24+(popOpen?POP_HEIGHT:0)+(open?484:0):36+liveRows*24+(popOpen?POP_HEIGHT:0)+(open?484:0);
+  const h=DOCK_ON?Math.max(liveRows,1)*24+(popOpen?popH:0)+(open?484:0):36+liveRows*24+(popOpen?popH:0)+(open?484:0);
   liveHeight=h;
   // 以真实视口高度为准：窗口 hide→show 会恢复旧 frame 尺寸，绕过本地缓存；
   // 每次对比 innerHeight，不符即强制纠正（3s 轮询内自愈）。
@@ -627,12 +632,19 @@ function renderPop(metrics,project){
   }).join('')+'</div>':'';
   pop.innerHTML=sessRow+timing+tokens;
   pop.classList.add('show');
+  // 按真实内容高度更新窗口预算（双列/单列、会话行数不同都能装下）。
+  const measured=Math.ceil(pop.getBoundingClientRect().height)+2;
+  if(measured>60&&Math.abs(measured-popH)>1){popH=measured;}
   syncHeight();
 }
 async function refreshLive(){
   let rows=[];
   try{rows=await window.__TAURI_INTERNALS__.invoke('get_live_stats');}catch(error){}
   try{document.body.dataset.host=DOCK_ON?(await window.__TAURI_INTERNALS__.invoke('get_dock_host')).toLowerCase():'';}catch(error){}
+  // 宽度响应式：dock 态下按视口宽度挂 narrow/tight，隐藏低优先级段防右侧截断。
+  const vw=window.innerWidth;
+  document.body.classList.toggle('narrow',DOCK_ON&&vw<392);
+  document.body.classList.toggle('tight',DOCK_ON&&vw<352);
   // 主行与展开面板都锚定宿主客户端的数据源；速率走势同样跟随宿主行。
   const hostSource=document.body.dataset.host;
   const focus=rows.find(r=>hostSource&&r.source===hostSource)||rows[0];
