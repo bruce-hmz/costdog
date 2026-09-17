@@ -98,8 +98,14 @@ fn dock_loop(app: tauri::AppHandle) {
         let Some(window) = app.get_webview_window("main") else {
             continue;
         };
-        let scanned = find_dock_target();
-        // 目标窗口不在屏幕上（最小化/关闭/切到其他 Space）：隐藏胶囊，
+        // 前台应用守卫：宿主不在前台（用户切到浏览器/Finder 等）时隐藏，
+        // 置顶胶囊绝不能盖在其他应用上；CostDog 自身获得焦点时豁免。
+        let front = frontmost_owner();
+        let host_front = front.as_deref().is_some_and(|name| {
+            KNOWN_CLIENTS.contains(&name) || name.eq_ignore_ascii_case("costdog")
+        });
+        let scanned = if host_front { find_dock_target() } else { None };
+        // 目标窗口不在屏幕上（最小化/关闭/切到其他 Space/宿主非前台）：隐藏胶囊，
         // 避免残留在桌面遮挡其他应用；目标回到屏幕后自动恢复。
         if scanned.is_none() && current.is_some() {
             if !hidden {
@@ -200,6 +206,39 @@ fn dock_loop(app: tauri::AppHandle) {
             current = Some(owner.clone());
             set_current_host(&owner);
         }
+    }
+}
+
+/// 屏幕最前方 layer-0 窗口的 owner（≈前台应用）；无窗口时 None。
+/// CostDog 自身豁免：用户点开胶囊/面板时焦点转移到 CostDog，不算"离开宿主"。
+#[cfg(target_os = "macos")]
+fn frontmost_owner() -> Option<String> {
+    unsafe {
+        let list = ffi::CGWindowListCopyWindowInfo(ffi::ON_SCREEN_ONLY, 0);
+        if list.is_null() {
+            return None;
+        }
+        let count = ffi::CFArrayGetCount(list);
+        let mut front: Option<String> = None;
+        for index in 0..count {
+            let dict = ffi::CFArrayGetValueAtIndex(list, index);
+            if dict.is_null() {
+                continue;
+            }
+            if number_value(ffi::CFDictionaryGetValue(dict, ffi::kCGWindowLayer)) != Some(0.0) {
+                continue;
+            }
+            let owner_ref = ffi::CFDictionaryGetValue(dict, ffi::kCGWindowOwnerName);
+            if owner_ref.is_null() {
+                continue;
+            }
+            if let Some(owner) = cf_string(owner_ref) {
+                front = Some(owner);
+            }
+            break;
+        }
+        ffi::CFRelease(list);
+        front
     }
 }
 
