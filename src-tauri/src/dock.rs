@@ -131,11 +131,13 @@ fn dock_loop(app: tauri::AppHandle) {
         // 位置，避免压住两侧芯片。
         let gap_left = 0.3774 * zw + 23.1;
         let gap_right = 1.2742 * zw - 752.1;
-        let gap_center = 0.8258 * zw - 364.5;
         if gap_right - gap_left < dog_width + 16.0 {
             continue;
         }
-        let mut x = zx + gap_center - dog_width / 2.0;
+        // AX 精确锚定（2026-09-17）：左右芯片簇锚定两侧、宽度固定，
+        // 空隙中点 = 0.5w − 19.5；文字中心与芯片文字中心（距底 48px）对齐，
+        // 即胶囊顶距底 36px。
+        let mut x = zx + 0.5 * zw - 19.5 - dog_width / 2.0;
         let min_x = gap_left + 8.0;
         let max_x = gap_right - dog_width - 8.0;
         if x < min_x {
@@ -144,7 +146,9 @@ fn dock_loop(app: tauri::AppHandle) {
         if x > max_x {
             x = max_x;
         }
-        let mut y = zy + zh - dog_height - 8.0;
+        // 锚定主行（首行 24px）：文字中心与芯片文字中心一致（距底 48px），
+        // 次级行/展开面板向下自然延展。
+        let mut y = zy + zh - 24.0 - 36.0;
         if y < zy {
             y = zy;
         }
