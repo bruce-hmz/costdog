@@ -86,6 +86,7 @@ fn dock_loop(app: tauri::AppHandle) {
     let mut current: Option<String> = None;
     let mut candidate: Option<String> = None;
     let mut candidate_ticks: u32 = 0;
+    let mut hidden = false;
     loop {
         std::thread::sleep(std::time::Duration::from_millis(500));
         if !enabled() {
@@ -94,7 +95,24 @@ fn dock_loop(app: tauri::AppHandle) {
         }
         // 前台检测：屏幕上从前到后第一个已知客户端窗口即为候选目标；
         // 防抖通过后才切换，未通过期间继续跟随原目标（或原地等待）。
+        let Some(window) = app.get_webview_window("main") else {
+            continue;
+        };
         let scanned = find_dock_target();
+        // 目标窗口不在屏幕上（最小化/关闭/切到其他 Space）：隐藏胶囊，
+        // 避免残留在桌面遮挡其他应用；目标回到屏幕后自动恢复。
+        if scanned.is_none() && current.is_some() {
+            if !hidden {
+                window.hide().ok();
+                hidden = true;
+            }
+            last_applied = None;
+            continue;
+        }
+        if hidden && scanned.is_some() {
+            window.show().ok();
+            hidden = false;
+        }
         let owner = match &scanned {
             Some((name, ..)) => {
                 if candidate.as_deref() == Some(name.as_str()) {
@@ -115,39 +133,39 @@ fn dock_loop(app: tauri::AppHandle) {
         let Some((_, zx, zy, zw, zh)) = scanned.filter(|(name, ..)| *name == owner) else {
             continue;
         };
-        let Some(window) = app.get_webview_window("main") else {
-            continue;
-        };
         let scale = window.scale_factor().unwrap_or(1.0);
         let dog_width = window.outer_size().map_or(410.0, |s| s.width as f64 / scale);
-        let dog_height = window.outer_size().map_or(36.0, |s| s.height as f64 / scale);
 
         // Attach just below ZCode's bottom edge with a 1px overlap so the bar's
-        // 嵌入模式：放进宿主底部输入栏「权限/模型选择器之间的空白区域」。
-        // 线性标定模型（w=1820/1200 两点实测，Gemini 截图测量）：
-        //   空隙左缘 = 0.3774w + 23.1，右缘 = 1.2742w − 752.1，
-        //   中心 = 0.8258w − 364.5；Electron flexbox 布局下随宽度线性伸缩。
-        // 容纳性校验：空隙放不下 410px 胶囊（+16px 余量）时冻结在最近有效
-        // 位置，避免压住两侧芯片。
-        let gap_left = 0.3774 * zw + 23.1;
-        let gap_right = 1.2742 * zw - 752.1;
-        if gap_right - gap_left < dog_width + 16.0 {
+        // 嵌入模式几何（全部采用 AX 系统级标定，2026-09-17，w=1864 实测）：
+        //   左芯片簇右缘 = 493（常数，锚定左侧）；右芯片簇左缘 = w − 532
+        //   （锚定右侧）→ 空隙中点 = 0.5w − 19.5。
+        // 旧的图像测量线性模型与 AX 锚点差 ~260px（把输入框边缘误判为芯片），已废弃。
+        // 空隙随窗口缩放：胶囊宽度自适应收窄（300~410），过窄则隐藏。
+        let gap_left = 493.0;
+        let gap_right = zw - 532.0;
+        let gap_w = gap_right - gap_left;
+        if gap_w < 316.0 {
+            if !hidden {
+                window.hide().ok();
+                hidden = true;
+            }
+            last_applied = None;
             continue;
         }
-        // AX 精确锚定（2026-09-17）：左右芯片簇锚定两侧、宽度固定，
-        // 空隙中点 = 0.5w − 19.5；文字中心与芯片文字中心（距底 48px）对齐，
-        // 即胶囊顶距底 36px。
-        let mut x = zx + 0.5 * zw - 19.5 - dog_width / 2.0;
-        let min_x = gap_left + 8.0;
-        let max_x = gap_right - dog_width - 8.0;
-        if x < min_x {
-            x = min_x;
+        if hidden {
+            window.show().ok();
+            hidden = false;
         }
-        if x > max_x {
-            x = max_x;
+        let target_w = (gap_w - 16.0).clamp(300.0, 410.0);
+        if (dog_width - target_w).abs() > 1.0 {
+            let cur_h = window.outer_size().map_or(24.0, |sz| sz.height as f64 / scale);
+            window
+                .set_size(tauri::Size::Logical(tauri::LogicalSize { width: target_w, height: cur_h }))
+                .ok();
         }
-        // 锚定主行（首行 24px）：文字中心与芯片文字中心一致（距底 48px），
-        // 次级行/展开面板向下自然延展。
+        let x = zx + 0.5 * zw - 19.5 - target_w / 2.0;
+        // 锚定主行（首行 24px）：文字中心与芯片文字中心一致（距底 48px）。
         let mut y = zy + zh - 24.0 - 36.0;
         if y < zy {
             y = zy;
