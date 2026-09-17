@@ -2663,6 +2663,20 @@ fn list_recent_sessions(source: String) -> Vec<SessionSummary> {
     out
 }
 
+/// 当前选中的模型名（ZCode 最近一条请求的 model_id）——用于估算模型选择器
+/// 芯片宽度（名字越长芯片越宽，右侧簇占位越多）。
+pub(crate) fn current_model_name() -> Option<String> {
+    let conn = open_readonly_db(&get_zcode_db_path(), "model_usage")?;
+    conn.query_row(
+        "SELECT model_id FROM model_usage
+         WHERE status IN ('completed','error','cancelled')
+         ORDER BY started_at DESC LIMIT 1",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+}
+
 /// Input tokens of ZCode's most recent request — the closest proxy for how
 /// much context the active conversation currently occupies.
 fn zcode_last_context_tokens() -> u64 {

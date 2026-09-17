@@ -165,7 +165,12 @@ fn dock_loop(app: tauri::AppHandle) {
         // 旧的图像测量线性模型与 AX 锚点差 ~260px（把输入框边缘误判为芯片），已废弃。
         // 空隙随窗口缩放：胶囊宽度自适应收窄（300~410），过窄则隐藏。
         let gap_left = 493.0;
-        let gap_right = zw - 532.0;
+        // 右侧簇宽随模型名动态变化（名字越长芯片越宽）：基准 470 + 6.5px/字符，
+        // 以当前模型名（来自 ZCode DB 最近请求）估算；随后 clamp 到合理区间。
+        // 之前写死 532 是 GLM-5.3-flash(13字符) 标定值，换长名模型即失效贴右芯片。
+        let model_len = crate::current_model_name().map(|name| name.chars().count()).unwrap_or(13);
+        let right_zone = (470.0 + model_len as f64 * 6.5).clamp(500.0, 780.0);
+        let gap_right = zw - right_zone;
         let gap_w = gap_right - gap_left;
         if gap_w < 316.0 {
             if !hidden {
