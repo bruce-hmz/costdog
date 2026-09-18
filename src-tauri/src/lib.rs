@@ -2697,18 +2697,34 @@ fn zcode_last_context_tokens() -> u64 {
 /// zcode 实时输出速率（tokens/min）：直读 ZCode DB 最近 60 秒的 output_tokens。
 /// 30s 扫描节拍下差分会长时间为 0、扫描落地时虚高，必须绕开扫描直查。
 fn zcode_live_output_rate() -> f64 {
+    // 指数衰减窗口（τ=20s）：每次输出是脉冲，生成完成时速率冲高、随后自然
+    // 衰减——比 60s 平均更有"正在生成"的心跳感；稳态连续输出时≈平均吞吐。
+    // rate = Σ (output_i/τ) · e^(−Δt/τ)，单位 tok/s；停顿 ~2 分钟后归零(idle)。
+    const TAU_MS: f64 = 20_000.0;
     let Some(conn) = open_readonly_db(&get_zcode_db_path(), "model_usage") else {
         return 0.0;
     };
-    let since = (chrono::Utc::now() - chrono::Duration::seconds(60)).timestamp_millis();
-    conn.query_row(
-        "SELECT COALESCE(SUM(output_tokens), 0) FROM model_usage
+    let since = (chrono::Utc::now() - chrono::Duration::seconds(120)).timestamp_millis();
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT started_at, output_tokens FROM model_usage
          WHERE started_at > ?1 AND status IN ('completed','error','cancelled')",
-        [since],
-        |row| row.get::<_, i64>(0),
-    )
-    .map(|value| value.max(0) as f64)
-    .unwrap_or(0.0)
+    ) else {
+        return 0.0;
+    };
+    let now_ms = chrono::Utc::now().timestamp_millis() as f64;
+    let rows = stmt.query_map([since], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    });
+    let mut rate = 0.0f64;
+    if let Ok(rows) = rows {
+        for row in rows.flatten() {
+            let (started, output) = row;
+            let dt_ms = (now_ms - started as f64).max(0.0);
+            rate += (output.max(0) as f64 / TAU_MS) * (-dt_ms / TAU_MS).exp();
+        }
+    }
+    // <0.05 tok/s 视为停止，避免衰减长尾挂着假速率。
+    if rate < 0.05 { 0.0 } else { rate }
 }
 
 #[tauri::command]
