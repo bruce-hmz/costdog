@@ -2694,6 +2694,23 @@ fn zcode_last_context_tokens() -> u64 {
     .unwrap_or(0)
 }
 
+/// zcode 实时输出速率（tokens/min）：直读 ZCode DB 最近 60 秒的 output_tokens。
+/// 30s 扫描节拍下差分会长时间为 0、扫描落地时虚高，必须绕开扫描直查。
+fn zcode_live_output_rate() -> f64 {
+    let Some(conn) = open_readonly_db(&get_zcode_db_path(), "model_usage") else {
+        return 0.0;
+    };
+    let since = (chrono::Utc::now() - chrono::Duration::seconds(60)).timestamp_millis();
+    conn.query_row(
+        "SELECT COALESCE(SUM(output_tokens), 0) FROM model_usage
+         WHERE started_at > ?1 AND status IN ('completed','error','cancelled')",
+        [since],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|value| value.max(0) as f64)
+    .unwrap_or(0.0)
+}
+
 #[tauri::command]
 fn get_live_stats() -> Vec<LiveSourceStat> {    const WINDOW_MINUTES: i64 = 10;
     const MIN_DELTA_SECS: f64 = 2.0;
@@ -2807,6 +2824,12 @@ fn get_live_stats() -> Vec<LiveSourceStat> {    const WINDOW_MINUTES: i64 = 10;
                 0
             },
         });
+        // zcode 速率用实时窗口值覆盖（60s 输出窗口本身平滑，无需 EMA）。
+        if source == "zcode" {
+            if let Some(stat) = out.last_mut() {
+                stat.tokens_per_min = zcode_live_output_rate();
+            }
+        }
     }
     *prev_map = Some(next);
     out
