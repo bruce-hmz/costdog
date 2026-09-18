@@ -565,8 +565,13 @@ function fmtDur(ms){const s=Math.max(0,Math.round(ms/1000));const h=Math.floor(s
 let popH=205; // 面板高度：双列 205 / 窄窗单列 260（确定性值），实测仅作下限
 function syncHeight(){
   if(!window.__TAURI_INTERNALS__)return;
-  // +2：停靠胶囊上下各 1px 边框，窗口没算会把下边框裁掉（用户报"下边框被盖"实为溢出裁切）。
-  const h=(DOCK_ON?Math.max(liveRows,1)*24+(popOpen?popH:0)+(open?484:0):36+liveRows*24+(popOpen?POP_HEIGHT:0)+(open?484:0))+2;
+  // 全实测：主条与弹层高度都以真实渲染为准，窗口永远精确包住内容——
+  // 不再假设行高/边框占位，从根上消灭"底部不完整"。
+  const strip=document.getElementById('livestrip');
+  const pop=document.getElementById('livepop');
+  const stripH=DOCK_ON?Math.ceil(strip.getBoundingClientRect().height)||24:36+liveRows*24;
+  const popHh=popOpen?Math.ceil(pop.getBoundingClientRect().height)||popH:0;
+  const h=stripH+popHh+(open?484:0);
   liveHeight=h;
   if(Math.abs(window.innerHeight-h)<2)return;
   window.__TAURI_INTERNALS__.invoke('resize_window',{width:410,height:h});
