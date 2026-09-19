@@ -2514,7 +2514,7 @@ static LIVE_PREV: std::sync::Mutex<Option<HashMap<String, (u64, std::time::Insta
 /// dsh 式会话统计：模型用时 / 工具调用用时 / TTFT / TPS + 缓存命中与 token 分项。
 /// 目前仅 ZCode 提供逐请求计时（model_usage.duration_ms / time_to_first_token_ms），
 /// 其他 source 返回 None，前端只展示 token 分组。
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct SessionMetrics {
     /// 本会话累计模型耗时（所有已完成请求的 duration_ms 之和）
     model_ms: u64,
@@ -2539,6 +2539,9 @@ struct SessionMetrics {
 
 #[tauri::command]
 fn get_session_metrics(source: String, session_id: Option<String>) -> Option<SessionMetrics> {
+    if source == "codex" {
+        return codex_session_metrics_cached(session_id.as_deref());
+    }
     if source != "zcode" {
         return None;
     }
@@ -2601,6 +2604,162 @@ fn get_session_metrics(source: String, session_id: Option<String>) -> Option<Ses
         tool_calls: tool_calls.max(0) as u64,
         started_at_ms: first_started,
         last_context_tokens: zcode_last_context_tokens(),
+        session_id,
+    })
+}
+
+/// Codex（ChatGPT 桌面端）会话指标：解析最近活跃的 rollout JSONL。
+/// 计时口径：role=user 的 message 为 turn 开始；turn 内首个 token_count −
+/// turn 开始 ≈ TTFT；首 token_count → turn 内最后事件 ≈ 模型生成时长；
+/// 工具用时 = turn 墙钟 − 模型。文件按 mtime 缓存，未变直接返回。
+fn codex_session_metrics_cached(session_id: Option<&str>) -> Option<SessionMetrics> {
+    static CACHE: std::sync::Mutex<Option<(PathBuf, std::time::SystemTime, SessionMetrics)>> =
+        std::sync::Mutex::new(None);
+    let path = codex_latest_jsonl(session_id)?;
+    let mtime = fs::metadata(&path).ok()?.modified().ok()?;
+    if let Ok(guard) = CACHE.lock() {
+        if let Some((cp, cm, cmetrics)) = guard.as_ref() {
+            if *cp == path && *cm == mtime {
+                return Some(cmetrics.clone());
+            }
+        }
+    }
+    let metrics = codex_parse_metrics(&path, session_id)?;
+    if let Ok(mut guard) = CACHE.lock() {
+        *guard = Some((path, mtime, metrics.clone()));
+    }
+    Some(metrics)
+}
+
+/// 定位 codex 会话 JSONL：指定 id 则全量匹配首行，否则取 mtime 最新的文件。
+fn codex_latest_jsonl(session_id: Option<&str>) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let root = home.join(".codex").join("sessions");
+    let mut files: Vec<PathBuf> = Vec::new();
+    let stack = vec![root];
+    let mut dirs_to_walk = stack;
+    while let Some(dir) = dirs_to_walk.pop() {
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    dirs_to_walk.push(p);
+                } else if p.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                    files.push(p);
+                }
+            }
+        }
+    }
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for f in files {
+        if let Some(id) = session_id {
+            // 匹配指定会话：文件名含 id（rollout-<ts>-<id>.jsonl）
+            let name = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            if name.contains(id) {
+                return Some(f);
+            }
+            continue;
+        }
+        if let Ok(m) = fs::metadata(&f).and_then(|m| m.modified()) {
+            if newest.as_ref().is_none_or(|(nm, _)| m > *nm) {
+                newest = Some((m, f));
+            }
+        }
+    }
+    newest.map(|(_, f)| f)
+}
+
+fn codex_parse_metrics(path: &Path, _want: Option<&str>) -> Option<SessionMetrics> {
+    use serde_json::Value;
+    let file = fs::File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    let parse_ms = |ts: &str| -> Option<i64> {
+        chrono::DateTime::parse_from_rfc3339(ts).ok().map(|d| d.timestamp_millis())
+    };
+    let mut session_id = String::new();
+    let mut turn_start: Option<i64> = None;
+    let mut turn_first_token: Option<i64> = None;
+    let mut turn_last_event: Option<i64> = None;
+    let mut model_ms = 0u64;
+    let mut ttft_sum = 0f64;
+    let mut ttft_n = 0u64;
+    let mut output = 0u64;
+    let mut input_total = 0u64;
+    let mut cache_read = 0u64;
+    let mut tool_calls = 0u64;
+    let mut first_ts = i64::MAX;
+    let mut last_ts = 0i64;
+    for line in std::io::BufRead::lines(reader) {
+        let line = line.ok()?;
+        let v: Value = serde_json::from_str(&line).ok()?;
+        let ts = v.get("timestamp").and_then(|t| t.as_str()).and_then(parse_ms);
+        let Some(ts) = ts else { continue };
+        if ts < first_ts { first_ts = ts; }
+        if ts > last_ts { last_ts = ts; }
+        let vtype = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let payload = v.get("payload").cloned().unwrap_or(Value::Null);
+        let ptype = payload.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if vtype == "session_meta" {
+            session_id = payload.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+            continue;
+        }
+        if vtype == "response_item" && ptype == "message" {
+            if payload.get("role").and_then(|r| r.as_str()) == Some("user") {
+                // turn 边界：结算上一 turn 的模型时长
+                if let (Some(start), Some(first), Some(last)) = (turn_start, turn_first_token, turn_last_event) {
+                    if last > first { model_ms += (last - first).max(0) as u64; }
+                }
+                turn_start = Some(ts);
+                turn_first_token = None;
+                turn_last_event = Some(ts);
+                continue;
+            }
+        }
+        if vtype == "event_msg" && ptype == "token_count" {
+            if turn_first_token.is_none() {
+                turn_first_token = Some(ts);
+                if let Some(start) = turn_start {
+                    ttft_sum += (ts - start).max(0) as f64;
+                    ttft_n += 1;
+                }
+            }
+            turn_last_event = Some(ts);
+            if let Some(info) = payload.get("info") {
+                if let Some(last) = info.get("last_token_usage") {
+                    output += last.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
+                }
+                if let Some(total) = info.get("total_token_usage") {
+                    if let Some(i) = total.get("input_tokens").and_then(|x| x.as_u64()) { input_total = i; }
+                    if let Some(c) = total.get("cached_input_tokens").and_then(|x| x.as_u64()) { cache_read = c; }
+                }
+            }
+            continue;
+        }
+        if vtype == "response_item" && (ptype == "function_call" || ptype == "custom_tool_call") {
+            tool_calls += 1;
+            turn_last_event = Some(ts);
+        }
+    }
+    if let (Some(start), Some(first), Some(last)) = (turn_start, turn_first_token, turn_last_event) {
+        if last > first { model_ms += (last - first).max(0) as u64; }
+    }
+    if first_ts == i64::MAX { return None; }
+    let wall_ms = (last_ts - first_ts).max(0) as u64;
+    let model_ms = model_ms.min(wall_ms);
+    let tool_ms = wall_ms.saturating_sub(model_ms);
+    let uncached = input_total.saturating_sub(cache_read);
+    Some(SessionMetrics {
+        model_ms,
+        tool_ms,
+        ttft_ms: if ttft_n > 0 { (ttft_sum / ttft_n as f64) as u64 } else { 0 },
+        tps: if model_ms > 0 { output as f64 / (model_ms as f64 / 1000.0) } else { 0.0 },
+        output_tokens: output,
+        uncached_input_tokens: uncached,
+        cache_read_tokens: cache_read,
+        cache_hit_pct: if input_total > 0 { cache_read as f64 / input_total as f64 * 100.0 } else { 0.0 },
+        tool_calls,
+        started_at_ms: first_ts,
+        last_context_tokens: input_total,
         session_id,
     })
 }

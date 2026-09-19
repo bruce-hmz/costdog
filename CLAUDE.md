@@ -252,3 +252,14 @@ npm run tauri:build
 - 根治：syncHeight 全实测——主条/弹层高度均按 getBoundingClientRect 真实渲染计算，
   不再假设任何行高/边框占位；窗口永远精确包住内容
 - 实测：窗口自动 34px（32 内容+边框），底部完整
+### 32. Codex（ChatGPT 桌面端）适配 v1（2026-09-19）
+
+- 宿主确认：Codex Desktop 实为 ChatGPT.app，窗口 owner='ChatGPT'——KNOWN_CLIENTS 加 ChatGPT
+- 嵌入几何按宿主分支：ChatGPT 无 ZCode 芯片行，v1 用窗口内右下角 16px；窗口 <450 宽隐藏
+- codex 会话指标：解析最近活跃 rollout JSONL（8MB 毫秒级+mtime 缓存）——
+  role=user message 为 turn 边界，TTFT=user→首 token_count，模型时长=首 token→turn 末事件，
+  工具用时=墙钟−模型，token 分组取 last/total_token_usage，tool_calls 计数 function/custom_call
+- 实测（单脚本防焦点抢占）：ChatGPT 前台 → 胶囊精确到达右下角 (1492,1154,410×34)；
+  切回 ZCode 自动恢复芯片行锚定位
+- 已知项：ChatGPT 前台时点击胶囊展开面板未生效（non-activating panel 与 wry 点击路由待查，
+  非 blocking——ZCode 主场景正常）；list_recent_sessions 暂只支持 zcode（codex 芯片行空）

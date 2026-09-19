@@ -86,7 +86,7 @@ pub fn spawn(_app: tauri::AppHandle) {}
 
 /// 已知 AI 编程客户端的进程名清单（CGWindowList owner 精确匹配）。
 /// 未来由 app_prefs 的 clients 配置驱动，当前内置最小集。
-const KNOWN_CLIENTS: &[&str] = &["ZCode", "DeepSeek Harness", "Claude", "Codex", "Cursor", "Windsurf"];
+const KNOWN_CLIENTS: &[&str] = &["ZCode", "DeepSeek Harness", "Claude", "Codex", "ChatGPT", "Cursor", "Windsurf"];
 
 /// 前台跟随防抖：候选目标需连续出现在该次数的轮询中才切换（2×500ms ≈ 1s，
 /// 与设计规范 focus_hysteresis_ms=500 同量级，覆盖 Cmd+Tab 掠过）。
@@ -159,40 +159,59 @@ fn dock_loop(app: tauri::AppHandle) {
         let dog_width = window.outer_size().map_or(410.0, |s| s.width as f64 / scale);
 
         // Attach just below ZCode's bottom edge with a 1px overlap so the bar's
-        // 嵌入模式几何（全部采用 AX 系统级标定，2026-09-17，w=1864 实测）：
-        //   左芯片簇右缘 = 493（常数，锚定左侧）；右芯片簇左缘 = w − 532
-        //   （锚定右侧）→ 空隙中点 = 0.5w − 19.5。
-        // 旧的图像测量线性模型与 AX 锚点差 ~260px（把输入框边缘误判为芯片），已废弃。
-        // 空隙随窗口缩放：胶囊宽度自适应收窄（300~410），过窄则隐藏。
-        let gap_left = 493.0;
-        // 右侧簇宽随模型名动态变化（名字越长芯片越宽）：基准 470 + 6.5px/字符，
-        // 以当前模型名（来自 ZCode DB 最近请求）估算；随后 clamp 到合理区间。
-        // 之前写死 532 是 GLM-5.3-flash(13字符) 标定值，换长名模型即失效贴右芯片。
-        let model_len = crate::current_model_name().map(|name| name.chars().count()).unwrap_or(13);
-        let right_zone = (470.0 + model_len as f64 * 6.5).clamp(500.0, 780.0);
-        let gap_right = zw - right_zone;
-        let gap_w = gap_right - gap_left;
-        if gap_w < 316.0 {
-            if !hidden {
-                window.hide().ok();
-                hidden = true;
+        // 嵌入模式几何，按宿主客户端分支：
+        //   ZCode：AX 标定芯片行布局（左簇右缘 493 / 右簇随模型名动态 / 锚定左芯片+46px）
+        //   ChatGPT(Codex Desktop)：无同款芯片行，v1 用窗口内右下角 16px
+        let host_lc = owner.to_ascii_lowercase();
+        let is_chatgpt = host_lc == "chatgpt";
+        let mut target_w = 410.0f64;
+        let mut anchor_x;
+        let mut anchor_y;
+        if !is_chatgpt {
+            let gap_left = 493.0;
+            let model_len = crate::current_model_name().map(|name| name.chars().count()).unwrap_or(13);
+            let right_zone = (470.0 + model_len as f64 * 6.5).clamp(500.0, 780.0);
+            let gap_right = zw - right_zone;
+            let gap_w = gap_right - gap_left;
+            if gap_w < 316.0 {
+                if !hidden {
+                    window.hide().ok();
+                    hidden = true;
+                }
+                last_applied = None;
+                continue;
             }
-            last_applied = None;
-            continue;
-        }
-        if hidden {
-            window.show().ok();
-            hidden = false;
-        }
-        // 两侧各留 ~20px 呼吸空间（旧值 16 在窄窗下贴着模型选择器）。
-        let target_w = (gap_w - 40.0).clamp(300.0, 410.0);
-        // 用户红框标定（2026-09-17）：胶囊左缘 = 左芯片右缘 + 46px，固定间距、
-        // 不做空隙等分居中（等分居中会因左侧留白大而显得偏右）。
-        let mut anchor_x = zx + gap_left + 46.0;
-        // 防与右侧芯片重叠：右缘至少留 20px。
-        let max_left = zx + gap_right - 20.0 - target_w;
-        if anchor_x > max_left {
-            anchor_x = max_left;
+            if hidden {
+                window.show().ok();
+                hidden = false;
+            }
+            let tw = (gap_w - 40.0).clamp(300.0, 410.0);
+            target_w = tw;
+            // 锚定左芯片右侧 46px（用户红框标定）；防与右侧芯片重叠保 20px。
+            let mut ax = zx + gap_left + 46.0;
+            let max_left = zx + gap_right - 20.0 - tw;
+            if ax > max_left {
+                ax = max_left;
+            }
+            anchor_x = ax;
+            anchor_y = zy + zh - 24.0 - 36.0;
+        } else {
+            // ChatGPT：右下角内侧 16px；窗口过窄（<450）时隐藏。
+            if zw < 450.0 {
+                if !hidden {
+                    window.hide().ok();
+                    hidden = true;
+                }
+                last_applied = None;
+                continue;
+            }
+            if hidden {
+                window.show().ok();
+                hidden = false;
+            }
+            target_w = 410.0;
+            anchor_x = zx + zw - target_w - 16.0;
+            anchor_y = zy + zh - 24.0 - 16.0;
         }
         if (dog_width - target_w).abs() > 1.0 {
             let cur_h = window.outer_size().map_or(24.0, |sz| sz.height as f64 / scale);
@@ -201,14 +220,8 @@ fn dock_loop(app: tauri::AppHandle) {
                 .ok();
         }
         let x = anchor_x;
-        // 锚定主行（首行 24px）：文字中心与芯片文字中心一致（距底 48px）。
-        let mut y = zy + zh - 24.0 - 36.0;
-        if y < zy {
-            y = zy;
-        }
-        if last_applied == Some((x, y)) {
-            continue;
-        }
+        // 锚定主行：ZCode 与芯片文字中心对齐（距底 60px 含边框）；ChatGPT 右下角同高。
+        let mut y = anchor_y;
         // 200ms 平滑滑入（设计规范 dock_animation_ms）：分 5 帧插值，
         // 目标切换或首次停靠时生效；微小修正直接落位不抖动。
         let from = last_applied.unwrap_or((x, y));
