@@ -263,3 +263,12 @@ npm run tauri:build
   切回 ZCode 自动恢复芯片行锚定位
 - 已知项：ChatGPT 前台时点击胶囊展开面板未生效（non-activating panel 与 wry 点击路由待查，
   非 blocking——ZCode 主场景正常）；list_recent_sessions 暂只支持 zcode（codex 芯片行空）
+### 33. ChatGPT 宿主配色适配（2026-09-19）
+
+- 本地像素采样（单脚本保前台 + screencapture + NSBitmapImageRep）：ChatGPT 窗口底部
+  有白色区域（#FFF/#EDEDED），胶囊落在深色输入框上方——统一深灰胶囊不协调
+- 新增 body[data-host="chatgpt"] profile：浅色玻璃 rgba(255,255,255,.85)+blur8、
+  白底黑字体系（文字 rgba(0,0,0,.78)、强调 #1a1a1a、命中绿 #15803d、CTX 紫 #7c3aed）、
+  面板/会话芯片全套浅色
+- 验证：胶囊内采样 rgb(221,221,221) ≈ 浅玻璃(0.85×255)叠深输入框(47×0.15)=224 ✓ 生效
+- 注意：Gemini 服务端本轮报位置限制不可用，采样全部本地化（swift+NSBitmapImageRep）
