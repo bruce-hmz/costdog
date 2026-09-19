@@ -196,45 +196,45 @@ body.docked .pop-head{color:rgba(212,212,212,.45)}
 body.docked .pop-kv{border-bottom:1px solid rgba(255,255,255,.06)}
 body.docked .pop-group .pop-kv:last-child{border-bottom:none}
 body.docked .pop-kv span{color:rgba(212,212,212,.55);flex-shrink:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* ── ChatGPT（Codex Desktop）宿主：浅色主题 → 浅色玻璃胶囊（实测白底 #FFF/#EDEDED）── */
+/* ── ChatGPT（Codex Desktop）宿主：克隆其输入框设计语言——#f4f4f4 底、pill 圆角、纯黑白灰（ChatGPT UI 零彩色）── */
 body[data-host="chatgpt"] .livestrip{
-  background:rgba(255,255,255,.85);
-  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
-  border:1px solid rgba(0,0,0,.08);
-  box-shadow:0 2px 8px rgba(0,0,0,.08);
-  color:rgba(0,0,0,.78);
+  background:#f4f4f4;
+  border:1px solid rgba(0,0,0,.06);
+  border-radius:12px;
+  box-shadow:0 2px 12px rgba(0,0,0,.06);
+  color:#0d0d0d;
 }
-body[data-host="chatgpt"] .live-row>*+*{border-left:1px solid rgba(0,0,0,.08)}
-body[data-host="chatgpt"] .live-row.primary:hover{background:rgba(0,0,0,.05)}
-body[data-host="chatgpt"] .live-row.open{background:rgba(0,0,0,.05)}
+body[data-host="chatgpt"] .live-row>*+*{border-left:1px solid rgba(0,0,0,.06)}
+body[data-host="chatgpt"] .live-row.primary:hover{background:rgba(0,0,0,.04)}
+body[data-host="chatgpt"] .live-row.open{background:rgba(0,0,0,.04)}
 body[data-host="chatgpt"] .live-row.idle .live-rate{color:rgba(0,0,0,.35)}
-body[data-host="chatgpt"] .live-brand{color:rgba(0,0,0,.45)}
-body[data-host="chatgpt"] .live-brand:hover{color:rgba(0,0,0,.78)}
-body[data-host="chatgpt"] .live-brand.open-brand{color:#1a1a1a}
-body[data-host="chatgpt"] .live-rate{color:#1a1a1a}
-body[data-host="chatgpt"] .live-src{color:rgba(0,0,0,.4)}
-body[data-host="chatgpt"] .live-proj{color:rgba(0,0,0,.78)}
-body[data-host="chatgpt"] .live-metric{color:rgba(0,0,0,.5)}
-body[data-host="chatgpt"] .live-metric.hit{color:#15803d}
-body[data-host="chatgpt"] .live-metric.ctx{color:#7c3aed}
-body[data-host="chatgpt"] .live-spark{color:#1a1a1a}
-body[data-host="chatgpt"] .live-chevron{color:rgba(0,0,0,.4)}
-body[data-host="chatgpt"] .live-row.open .live-chevron{color:#1a1a1a}
-body[data-host="chatgpt"] .dbtn{color:rgba(0,0,0,.5)}
-body[data-host="chatgpt"] .dbtn:hover{color:rgba(0,0,0,.8);background:rgba(0,0,0,.05)}
+body[data-host="chatgpt"] .live-brand{color:#8f8f8f}
+body[data-host="chatgpt"] .live-brand:hover{color:#0d0d0d}
+body[data-host="chatgpt"] .live-brand.open-brand{color:#0d0d0d}
+body[data-host="chatgpt"] .live-rate{color:#0d0d0d;font-weight:700}
+body[data-host="chatgpt"] .live-src{color:#8f8f8f}
+body[data-host="chatgpt"] .live-proj{color:#0d0d0d}
+body[data-host="chatgpt"] .live-metric{color:#8f8f8f}
+body[data-host="chatgpt"] .live-metric.hit{color:#0d0d0d;font-weight:600}
+body[data-host="chatgpt"] .live-metric.ctx{color:#8f8f8f}
+body[data-host="chatgpt"] .live-spark{color:#0d0d0d}
+body[data-host="chatgpt"] .live-chevron{color:#8f8f8f}
+body[data-host="chatgpt"] .live-row.open .live-chevron{color:#0d0d0d}
+body[data-host="chatgpt"] .dbtn{color:#8f8f8f}
+body[data-host="chatgpt"] .dbtn:hover{color:#0d0d0d;background:rgba(0,0,0,.05)}
 body[data-host="chatgpt"] .livepop{
-  background:rgba(255,255,255,.97);
+  background:#ffffff;
   border:1px solid rgba(0,0,0,.08);
-  box-shadow:0 8px 24px rgba(0,0,0,.12);
-  color:rgba(0,0,0,.78);
+  box-shadow:0 8px 24px rgba(0,0,0,.10);
+  color:#0d0d0d;
 }
-body[data-host="chatgpt"] .pop-head{color:rgba(0,0,0,.45)}
-body[data-host="chatgpt"] .pop-kv{border-bottom:1px solid rgba(0,0,0,.06)}
-body[data-host="chatgpt"] .pop-kv span{color:rgba(0,0,0,.5)}
-body[data-host="chatgpt"] .pop-kv b{color:rgba(0,0,0,.85)}
-body[data-host="chatgpt"] .psess{color:rgba(0,0,0,.5);border-color:rgba(0,0,0,.12)}
-body[data-host="chatgpt"] .psess.on{color:#1a1a1a;border-color:#1a1a1a;background:rgba(0,0,0,.05)}
-body[data-host="chatgpt"] .psess .dot{color:#15803d}
+body[data-host="chatgpt"] .pop-head{color:#8f8f8f}
+body[data-host="chatgpt"] .pop-kv{border-bottom:1px solid rgba(0,0,0,.05)}
+body[data-host="chatgpt"] .pop-kv span{color:#8f8f8f}
+body[data-host="chatgpt"] .pop-kv b{color:#0d0d0d}
+body[data-host="chatgpt"] .psess{color:#8f8f8f;border-color:rgba(0,0,0,.10)}
+body[data-host="chatgpt"] .psess.on{color:#0d0d0d;border-color:#0d0d0d;background:rgba(0,0,0,.04)}
+body[data-host="chatgpt"] .psess .dot{color:#0d0d0d}
 body.docked .pop-kv b{color:#d4d4d4;flex-shrink:0}
 /* 宽度响应：窄窗隐藏低优先级段，保证右侧 ⌄ 与速率/项目/⚡ 完整可见 */
 body.docked.narrow .live-spark{display:none}
