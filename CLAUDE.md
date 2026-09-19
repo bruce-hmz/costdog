@@ -280,3 +280,10 @@ npm run tauri:build
 - 面板白底 #fff 同语言
 - 采样验证：胶囊 rgb(242,242,242) 精确 = 设计值（不透明无混合漂移），与宿主 #FFF
   的灰阶关系 = 输入框对聊天区的关系
+### 35. codex 命中率 4752% 修复（2026-09-19）
+
+- 根因：codex parser 刻意存"未缓存输入"（input−cached，为计价正确），而
+  get_live_stats 命中率公式分母当作总输入 → cache_read/input 爆表
+- 修复：命中率分母按源分支——codex = cache_read/(input+cache_read)；zcode/claude
+  的 input 含缓存，公式不变
+- 验证：最近 codex 会话真值 42,112,768/(877,015+42,112,768)=97.96% ✓

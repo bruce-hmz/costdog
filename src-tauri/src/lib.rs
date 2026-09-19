@@ -2988,7 +2988,13 @@ fn get_live_stats() -> Vec<LiveSourceStat> {    const WINDOW_MINUTES: i64 = 10;
             project: acc.project.clone(),
             tokens_per_min: raw_rate,
             tokens_in_window: acc.tokens,
-            cache_hit_pct: if acc.input > 0 {
+            // 命中率分母按源语义：codex 的 input_tokens 存的是"未缓存输入"
+            //（parser 刻意减去 cached 以正确计价），分母需补回 cache_read；
+            // zcode/claude 的 input 本身含缓存读，直接除。
+            cache_hit_pct: if source == "codex" {
+                let total_input = acc.input + acc.cache_read;
+                if total_input > 0 { acc.cache_read as f64 / total_input as f64 * 100.0 } else { 0.0 }
+            } else if acc.input > 0 {
                 acc.cache_read as f64 / acc.input as f64 * 100.0
             } else {
                 0.0
