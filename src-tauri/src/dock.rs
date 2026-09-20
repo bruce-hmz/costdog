@@ -8,16 +8,14 @@
 //! the window-state plugin put it. Windows/Linux keep the floating bar until
 //! their window-tracking equivalents are implemented.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 static DOCK_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// 把窗口变为 non-activating panel：点击内容不激活应用、事件直达 webview，
 /// 消除"第一次点击只用于激活窗口"的 macOS 默认行为（悬浮 HUD 的通行做法）。
 #[cfg(target_os = "macos")]
-pub fn make_non_activating(app: &tauri::AppHandle) {
-    use tauri::Manager;
-    let Some(window) = app.get_webview_window("main") else { return };
+pub fn make_non_activating(window: &tauri::WebviewWindow) {
     let Ok(ns_window) = window.ns_window() else { return };
     unsafe {
         use objc2::msg_send;
@@ -30,6 +28,24 @@ pub fn make_non_activating(app: &tauri::AppHandle) {
 }
 
 static CURRENT_HOST: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// 每个胶囊窗口（label→宿主）的宿主名，供 get_dock_host 按窗口查询。
+static HOST_BY_LABEL: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+pub fn host_for_label(label: &str) -> String {
+    HOST_BY_LABEL
+        .lock()
+        .ok()
+        .and_then(|map| map.get(label).cloned())
+        .unwrap_or_default()
+}
+
+fn register_host_label(label: &str, host: &str) {
+    if let Ok(mut map) = HOST_BY_LABEL.lock() {
+        map.insert(label.to_string(), host.to_string());
+    }
+}
 
 pub fn set_enabled(enabled: bool) {
     DOCK_ENABLED.store(enabled, Ordering::Relaxed);
@@ -95,6 +111,7 @@ const DEBOUNCE_TICKS: u32 = 2;
 #[cfg(target_os = "macos")]
 fn dock_loop(app: tauri::AppHandle) {
     use tauri::Manager;
+    eprintln!("[CostDog] dock loop thread started, enabled={}", enabled());
 
     // Skip repositioning when the frame has not changed: every set_position
     // costs a native window move and would fight the window-state plugin.
@@ -152,6 +169,29 @@ fn dock_loop(app: tauri::AppHandle) {
             None => current.clone(), // 无已知客户端在前台：保持在最近位置
         };
         let Some(owner) = owner else { continue };
+        // 诊断日志：仅状态变化时打印（owner/前台/隐藏）。
+        static LAST_LOG: std::sync::Mutex<(String, bool)> = std::sync::Mutex::new((String::new(), false));
+        {
+            let hidden_now = hidden;
+            let mut last = LAST_LOG.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if last.0 != owner || last.1 != hidden_now {
+                eprintln!("[CostDog] owner={} hidden={} front={:?}", owner, hidden_now, front);
+                *last = (owner.clone(), hidden_now);
+            }
+        }
+        // 多胶囊：主窗口固定服务 ZCode。其他宿主（ChatGPT 有专属胶囊；
+        // DSH 等无布局适配的客户端直接隐藏）不再让 main 飞来飞去。
+        if owner != "ZCode" {
+            if let Some(w) = app.get_webview_window("main") {
+                if !hidden {
+                    w.hide().ok();
+                    hidden = true;
+                }
+            }
+            last_applied = None;
+            manage_chatgpt_capsule(&app, Some("ChatGPT"));
+            continue;
+        }
         let Some((_, zx, zy, zw, zh)) = scanned.filter(|(name, ..)| *name == owner) else {
             continue;
         };
@@ -249,6 +289,86 @@ fn dock_loop(app: tauri::AppHandle) {
             current = Some(owner.clone());
             set_current_host(&owner);
         }
+
+        // ── ChatGPT 独立胶囊（多胶囊架构）：各宿主各有一个固定位置的胶囊，
+        // 切换前台时旧隐新现，不再单胶囊飞来飞去。主窗口始终是 ZCode 胶囊。
+        manage_chatgpt_capsule(&app, front.as_deref());
+    }
+}
+
+/// ChatGPT 的独立胶囊窗口：存在性、定位（右下角 16px）、显示/隐藏。
+fn manage_chatgpt_capsule(app: &tauri::AppHandle, front: Option<&str>) {
+    use tauri::Manager;
+    let label = "cap-chatgpt";
+    let should_show = front == Some("ChatGPT");
+    let window = match app.get_webview_window(label) {
+        Some(w) => w,
+        None => {
+            if !should_show {
+                return;
+            }
+            // 首次创建：同款胶囊外观参数。窗口创建必须派发到主线程——
+            // 从 dock 线程直接 build 会死锁（症状：主窗口 hide 后永不恢复）。
+            let app2 = app.clone();
+            let label_owned = label.to_string();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let dispatch_ok = app.run_on_main_thread(move || {
+                let built = tauri::WebviewWindowBuilder::new(
+                    &app2,
+                    &label_owned,
+                    tauri::WebviewUrl::App("index.html".into()),
+                )
+                .title("CostDog")
+                .inner_size(410.0, 36.0)
+                .decorations(false)
+                .always_on_top(true)
+                .resizable(false)
+                .skip_taskbar(true)
+                .visible(false)
+                .build();
+                let ok = match built {
+                    Ok(w) => {
+                        w.set_shadow(false).ok();
+                        #[cfg(target_os = "macos")]
+                        make_non_activating(&w);
+                        register_host_label(label, "chatgpt");
+                        true
+                    }
+                    Err(error) => {
+                        eprintln!("[CostDog] capsule window build failed: {error}");
+                        false
+                    }
+                };
+                let _ = tx.send(ok);
+            });
+            if dispatch_ok.is_err() || rx.recv_timeout(std::time::Duration::from_secs(5)) != Ok(true) {
+                return;
+            }
+            app.get_webview_window(label).unwrap()
+        }
+    };
+    if !should_show {
+        if window.is_visible().unwrap_or(false) {
+            window.hide().ok();
+        }
+        return;
+    }
+    // 定位：ChatGPT 自己的窗口右下角 16px（此前误用"最靠前已知客户端"的
+    // 边界——前台是 ZCode 时会拿到 ZCode 的框，位置错乱）。
+    if let Some((_, zx, zy, zw, zh)) = find_known_window(Some("ChatGPT")) {
+        let x = zx + zw - 410.0 - 16.0;
+        let y = zy + zh - 60.0;
+        window
+            .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
+            .ok();
+        if !window.is_visible().unwrap_or(false) {
+            window.show().ok();
+        }
+    } else {
+        // ChatGPT 窗口不在屏幕上（最小化/关窗）：藏起 cap 胶囊。
+        if window.is_visible().unwrap_or(false) {
+            window.hide().ok();
+        }
     }
 }
 
@@ -290,6 +410,11 @@ fn frontmost_owner() -> Option<String> {
 /// 就是前台目标。
 #[cfg(target_os = "macos")]
 fn find_dock_target() -> Option<(String, f64, f64, f64, f64)> {
+    find_known_window(None)
+}
+
+/// 指定 owner（None=任意已知客户端）时，屏幕上最靠前的该客户端主窗口。
+fn find_known_window(filter: Option<&str>) -> Option<(String, f64, f64, f64, f64)> {
     unsafe {
         let list = ffi::CGWindowListCopyWindowInfo(ffi::ON_SCREEN_ONLY, 0);
         if list.is_null() {
@@ -311,6 +436,11 @@ fn find_dock_target() -> Option<(String, f64, f64, f64, f64)> {
             let Some(owner) = cf_string(owner_ref) else { continue };
             if !KNOWN_CLIENTS.contains(&owner.as_str()) {
                 continue;
+            }
+            if let Some(want) = filter {
+                if owner != want {
+                    continue;
+                }
             }
             // Layer 0 = normal window; helpers, overlays and the always-on-top
             // CostDog bar itself live on other layers.

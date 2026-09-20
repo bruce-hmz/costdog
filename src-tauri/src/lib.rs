@@ -2114,10 +2114,8 @@ fn set_activity_category_override(
 }
 
 #[tauri::command]
-fn resize_window(app: tauri::AppHandle, width: f64, height: f64) {
-    if let Some(window) = app.get_webview_window("main") {
-        window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height })).ok();
-    }
+fn resize_window(window: tauri::WebviewWindow, width: f64, height: f64) {
+    window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height })).ok();
 }
 
 #[tauri::command]
@@ -2460,10 +2458,14 @@ fn get_dock_zcode() -> bool {
     dock::enabled()
 }
 
-/// 当前停靠目标的客户端进程名；前端据此切换宿主主题 profile。
+/// 调用窗口自己的宿主：main=zcode，cap-<host>=<host>（多胶囊架构）。
 #[tauri::command]
-fn get_dock_host() -> String {
-    dock::current_host()
+fn get_dock_host(window: tauri::WebviewWindow) -> String {
+    let label = window.label();
+    match label.strip_prefix("cap-") {
+        Some(host) => host.to_string(),
+        None => dock::current_host(),
+    }
 }
 
 /// 记住用户手动选择的会话（展开面板默认高亮；空串=自动跟随最近活跃）。
@@ -3225,7 +3227,9 @@ pub fn run() {
             window.set_shadow(false).ok();
             // non-activating panel：点击直达内容，不抢 ZCode 焦点。
             #[cfg(target_os = "macos")]
-            dock::make_non_activating(app.handle());
+            if let Some(w) = app.get_webview_window("main") {
+                dock::make_non_activating(&w);
+            }
 
             // Dock-to-ZCode: restore the persisted preference, then start the
             // follower thread. The thread itself re-checks the flag every tick,

@@ -744,6 +744,9 @@ LIVE_STRIP.addEventListener('click',event=>{
 async function initDock(){
   const box=document.getElementById('dockzcode');
   if(!box||!window.__TAURI_INTERNALS__)return;
+  // 多胶囊：dock 全局开关只放在 ZCode 主胶囊里，其他宿主胶囊不重复提供。
+  const myLabel=(window.__TAURI_INTERNALS__.metadata?.currentWindow?.label)||'main';
+  if(myLabel!=='main'){box.closest('.dock-controls').style.display='none';}
   try{box.checked=DOCK_ON=await window.__TAURI_INTERNALS__.invoke('get_dock_zcode');}catch(error){return;}
   // HUD 材质由 Rust 侧按平台应用；透明底色样式只在 macOS 生效。
   document.body.classList.toggle('hud',DOCK_ON&&navigator.userAgent.includes('Macintosh'));
