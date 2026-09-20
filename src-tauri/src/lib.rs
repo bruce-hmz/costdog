@@ -2858,33 +2858,43 @@ fn zcode_last_context_tokens() -> u64 {
 /// zcode 实时输出速率（tokens/min）：直读 ZCode DB 最近 60 秒的 output_tokens。
 /// 30s 扫描节拍下差分会长时间为 0、扫描落地时虚高，必须绕开扫描直查。
 fn zcode_live_output_rate() -> f64 {
-    // 指数衰减窗口（τ=20s）：每次输出是脉冲，生成完成时速率冲高、随后自然
-    // 衰减——比 60s 平均更有"正在生成"的心跳感；稳态连续输出时≈平均吞吐。
-    // rate = Σ (output_i/τ) · e^(−Δt/τ)，单位 tok/s；停顿 ~2 分钟后归零(idle)。
-    const TAU_MS: f64 = 20_000.0;
+    // 最近一条响应的真实 TPS：生成中按已产出/已耗时，完成后保持 45s 再 idle。
+    // 此前的指数衰减窗口把输出视作 started_at 的瞬时脉冲，但生成实际持续
+    // 20~40s，脉冲起点迅速过时 → 跑着跑着就 idle（用户实测复现）。
+    const HOLD_MS: f64 = 45_000.0;
     let Some(conn) = open_readonly_db(&get_zcode_db_path(), "model_usage") else {
         return 0.0;
     };
-    let since = (chrono::Utc::now() - chrono::Duration::seconds(120)).timestamp_millis();
-    let Ok(mut stmt) = conn.prepare(
-        "SELECT started_at, output_tokens FROM model_usage
-         WHERE started_at > ?1 AND status IN ('completed','error','cancelled')",
-    ) else {
-        return 0.0;
+    let row = conn.query_row(
+        // 过滤辅助小请求（标题/摘要类，output<50）：它们的低 TPS 会污染
+        // 主对话的真实生成速度显示。
+        "SELECT started_at, duration_ms, output_tokens FROM model_usage
+         WHERE status IN ('completed','error','cancelled') AND output_tokens >= 50
+         ORDER BY started_at DESC LIMIT 1",
+        [],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        },
+    );
+    let Ok((started, duration_ms, output)) = row else { return 0.0 };
+    if output <= 0 { return 0.0; }
+    let now = chrono::Utc::now().timestamp_millis() as f64;
+    let start = started as f64;
+    let dur = (duration_ms as f64).max(1.0);
+    let end = start + dur;
+    let rate = if now < end {
+        // 生成中：已产出 / 已流逝
+        (output as f64) / ((now - start).max(1.0) / 1000.0)
+    } else if now - end <= HOLD_MS {
+        // 完成后保持期：该响应的真实 TPS
+        (output as f64) / (dur / 1000.0)
+    } else {
+        0.0
     };
-    let now_ms = chrono::Utc::now().timestamp_millis() as f64;
-    let rows = stmt.query_map([since], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
-    });
-    let mut rate = 0.0f64;
-    if let Ok(rows) = rows {
-        for row in rows.flatten() {
-            let (started, output) = row;
-            let dt_ms = (now_ms - started as f64).max(0.0);
-            rate += (output.max(0) as f64 / TAU_MS) * (-dt_ms / TAU_MS).exp();
-        }
-    }
-    // <0.05 tok/s 视为停止，避免衰减长尾挂着假速率。
     if rate < 0.05 { 0.0 } else { rate }
 }
 
@@ -3007,10 +3017,11 @@ fn get_live_stats() -> Vec<LiveSourceStat> {    const WINDOW_MINUTES: i64 = 10;
                 0
             },
         });
-        // zcode 速率用实时窗口值覆盖（60s 输出窗口本身平滑，无需 EMA）。
+        // zcode 速率用实时 TPS 覆盖。字段单位是 tokens/min，而
+        // zcode_live_output_rate 返回 tok/s——×60 换算（此前漏乘，显示恒为 0~1）。
         if source == "zcode" {
             if let Some(stat) = out.last_mut() {
-                stat.tokens_per_min = zcode_live_output_rate();
+                stat.tokens_per_min = zcode_live_output_rate() * 60.0;
             }
         }
     }

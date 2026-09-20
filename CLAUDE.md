@@ -287,3 +287,9 @@ npm run tauri:build
 - 修复：命中率分母按源分支——codex = cache_read/(input+cache_read)；zcode/claude
   的 input 含缓存，公式不变
 - 验证：最近 codex 会话真值 42,112,768/(877,015+42,112,768)=97.96% ✓
+### 36. 速率单位 60 倍 bug（2026-09-20，"跑着不显示速率"根治）
+
+- TPS-hold/衰减算法返回 tok/s，直接赋给 tokens/min 字段且前端再 ÷60 → 显示恒 0~1
+- 修复：覆盖时 ×60 换算；另确认 sessions 表 UTC 存储+扫描推进正常（伪异常排除）
+- 现语义：最近一条真实生成（≥50tok，过滤标题类小请求）的 TPS，生成中实时、
+  完成后保持 45s，之后 idle
