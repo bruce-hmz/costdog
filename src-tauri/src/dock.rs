@@ -131,6 +131,9 @@ fn dock_loop(app: tauri::AppHandle) {
         let Some(window) = app.get_webview_window("main") else {
             continue;
         };
+        // ChatGPT 专属胶囊每 tick 无条件管理（显示/隐藏/定位）——必须先于
+        // 本循环所有 continue 路径执行，否则它会脱管残留桌面（用户实测）。
+        manage_chatgpt_capsule(&app);
         // 前台应用守卫：宿主不在前台（用户切到浏览器/Finder 等）时隐藏，
         // 置顶胶囊绝不能盖在其他应用上；CostDog 自身获得焦点时豁免。
         let front = frontmost_owner();
@@ -189,7 +192,6 @@ fn dock_loop(app: tauri::AppHandle) {
                 }
             }
             last_applied = None;
-            manage_chatgpt_capsule(&app, Some("ChatGPT"));
             continue;
         }
         let Some((_, zx, zy, zw, zh)) = scanned.filter(|(name, ..)| *name == owner) else {
@@ -290,17 +292,16 @@ fn dock_loop(app: tauri::AppHandle) {
             set_current_host(&owner);
         }
 
-        // ── ChatGPT 独立胶囊（多胶囊架构）：各宿主各有一个固定位置的胶囊，
-        // 切换前台时旧隐新现，不再单胶囊飞来飞去。主窗口始终是 ZCode 胶囊。
-        manage_chatgpt_capsule(&app, front.as_deref());
     }
 }
 
 /// ChatGPT 的独立胶囊窗口：存在性、定位（右下角 16px）、显示/隐藏。
-fn manage_chatgpt_capsule(app: &tauri::AppHandle, front: Option<&str>) {
+/// 每 tick 调用；前台非 ChatGPT 或其窗口不在屏 → 隐藏。
+fn manage_chatgpt_capsule(app: &tauri::AppHandle) {
     use tauri::Manager;
     let label = "cap-chatgpt";
-    let should_show = front == Some("ChatGPT");
+    let front = frontmost_owner();
+    let should_show = front.as_deref() == Some("ChatGPT");
     let window = match app.get_webview_window(label) {
         Some(w) => w,
         None => {

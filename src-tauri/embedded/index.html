@@ -621,7 +621,11 @@ function renderLive(rows){
   // 其他工具的数据收进展开面板——芯片行不堆叠多行、不超出工具栏行范围。
   let visible=[];
   if(DOCK_ON&&Array.isArray(rows)){
-    const hostRow=rows.find(r=>document.body.dataset.host&&r.source===document.body.dataset.host.toLowerCase());
+    // host→source 映射：ChatGPT 桌面端的会话数据源是 codex；其余 host 与 source 同名。
+  const hostSrc={'chatgpt':'codex'};
+  const hostKey=document.body.dataset.host||'';
+  const wantSrc=hostSrc[hostKey]||hostKey;
+  const hostRow=rows.find(r=>r.source===wantSrc);
     visible=[hostRow||rows[0]];
   }
   if(DOCK_ON&&!visible.length)visible=[{source:'costdog',project:'No active agent traffic',tokens_per_min:0,tokens_in_window:0,cache_hit_pct:0,last_context_tokens:0}];
@@ -691,8 +695,8 @@ async function refreshLive(){
   document.body.classList.toggle('narrow',DOCK_ON&&vw<392);
   document.body.classList.toggle('tight',DOCK_ON&&vw<352);
   // 主行与展开面板都锚定宿主客户端的数据源；速率走势同样跟随宿主行。
-  const hostSource=document.body.dataset.host;
-  const focus=rows.find(r=>hostSource&&r.source===hostSource)||rows[0];
+  const hostSource2={'chatgpt':'codex'}[document.body.dataset.host||'']||document.body.dataset.host;
+  const focus=rows.find(r=>hostSource2&&r.source===hostSource2)||rows[0];
   if(DOCK_ON&&focus){
     rateHistory.push(focus.tokens_per_min);
     if(rateHistory.length>24)rateHistory.shift();

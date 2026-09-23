@@ -293,3 +293,13 @@ npm run tauri:build
 - 修复：覆盖时 ×60 换算；另确认 sessions 表 UTC 存储+扫描推进正常（伪异常排除）
 - 现语义：最近一条真实生成（≥50tok，过滤标题类小请求）的 TPS，生成中实时、
   完成后保持 45s，之后 idle
+### 37. cap 胶囊脱管修复 + host→source 映射（2026-09-23）
+
+- 用户报：速率老不显示 + 最小化后胶囊残留桌面
+- 根因①：manage_chatgpt_capsule 原在循环尾部，多个 continue 路径（scanned None/
+  owner!=ZCode）先于它执行 → ChatGPT 胶囊无人隐藏而残留；其数据 fallback 错源
+  （host=chatgpt 找不到同名 source → 取 rows[0] 可能非 codex）→ 速率长期 idle
+- 修复：manage 提到循环最前每 tick 无条件执行（内部自查前台）；前端 host→source
+  映射 chatgpt→codex（主行与 focus 两处）
+- 验证：ZCode 前台 ▲19/s+CTX525k；切 Chrome 0 窗；回 ZCode 1 窗重现
+- 教训：app 冷启动需 ~8s 初始化后才可读窗口（4s 时序曾误判回归）
