@@ -3058,6 +3058,73 @@ fn hide_bar(app: &tauri::AppHandle) {
 // macOS menu-bar tray: the bar window has no title bar (decorations: false),
 // so the close button hides it. The tray is the only way to bring it back and
 // to quit the app cleanly. Built in code; no tauri.conf.json entry needed.
+/// 菜单栏下拉面板：常驻隐藏窗口，左键托盘切换；右上角对齐图标、下缘 +6px。
+fn toggle_panel(app: &tauri::AppHandle, rect: &tauri::Rect) {
+    use tauri::Manager;
+    let Some(panel) = app.get_webview_window("panel") else { return };
+    if panel.is_visible().unwrap_or(false) {
+        panel.hide().ok();
+        return;
+    }
+    let scale = panel.scale_factor().unwrap_or(2.0);
+    let panel_w = 420.0;
+    // Rect 的 position/size 是 Physical/Logical 枚举，统一换算为物理像素。
+    let (rx, ry, rw, rh) = match (rect.position, rect.size) {
+        (tauri::Position::Physical(p), tauri::Size::Physical(sz)) => {
+            (p.x as f64, p.y as f64, sz.width as f64, sz.height as f64)
+        }
+        (tauri::Position::Logical(p), tauri::Size::Logical(sz)) => {
+            (p.x * scale, p.y * scale, sz.width * scale, sz.height * scale)
+        }
+        _ => return,
+    };
+    let x = rx + rw - panel_w * scale;
+    let y = ry + rh + 6.0 * scale;
+    panel
+        .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+            x: x.round() as i32,
+            y: y.round() as i32,
+        }))
+        .ok();
+    panel.show().ok();
+    panel.set_focus().ok();
+}
+
+/// 创建常驻隐藏的下拉面板窗口（主线程调用）。
+fn ensure_panel_window(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if app.get_webview_window("panel").is_some() {
+        return;
+    }
+    let Ok(panel) = tauri::WebviewWindowBuilder::new(
+        app,
+        "panel",
+        tauri::WebviewUrl::App("index.html#panel".into()),
+    )
+    .title("CostDog")
+    .inner_size(420.0, 560.0)
+    .decorations(false)
+    .always_on_top(true)
+    .resizable(false)
+    .skip_taskbar(true)
+    .visible(false)
+    .build()
+    else {
+        return;
+    };
+    panel.set_shadow(false).ok();
+    #[cfg(target_os = "macos")]
+    dock::make_non_activating(&panel);
+    eprintln!("[CostDog] panel window ready");
+    // 失焦即收起（菜单栏面板惯例）。
+    let ph = panel.clone();
+    panel.on_window_event(move |event| {
+        if let tauri::WindowEvent::Focused(false) = event {
+            ph.hide().ok();
+        }
+    });
+}
+
 fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let version = app.package_info().version.clone();
     let version_i = MenuItem::with_id(app, "version", format!("CostDog v{}", version), false, None::<&str>)?;
@@ -3085,17 +3152,16 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
+                position,
+                rect,
                 ..
             } = event
             else {
                 return;
             };
-            let app = tray.app_handle();
-            if BAR_VISIBLE.load(std::sync::atomic::Ordering::Relaxed) {
-                hide_bar(app);
-            } else {
-                show_bar(app);
-            }
+            // 菜单栏公民形态（方案 A）：左键切换下拉面板；主胶囊由 dock 自治。
+            let _ = position;
+            toggle_panel(tray.app_handle(), &rect);
         })
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_bar(app),
@@ -3250,6 +3316,9 @@ pub fn run() {
                 dock::apply_material(&app.handle(), true);
             }
             dock::spawn(app.handle().clone());
+
+            // 菜单栏下拉面板（常驻隐藏，托盘左键切换）。
+            ensure_panel_window(app.handle());
 
             // System tray (restore hidden bar + quit). Failure is non-fatal: log and continue.
             if let Err(e) = build_tray(app.handle()) {

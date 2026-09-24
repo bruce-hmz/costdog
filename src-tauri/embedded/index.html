@@ -235,6 +235,24 @@ body[data-host="chatgpt"] .pop-kv b{color:#0d0d0d}
 body[data-host="chatgpt"] .psess{color:#8f8f8f;border-color:rgba(0,0,0,.10)}
 body[data-host="chatgpt"] .psess.on{color:#0d0d0d;border-color:#0d0d0d;background:rgba(0,0,0,.04)}
 body[data-host="chatgpt"] .psess .dot{color:#0d0d0d}
+/* ── 菜单栏下拉面板（#panel）── */
+body.panel-mode{background:transparent}
+body.panel-mode .bar,body.panel-mode .livestrip,body.panel-mode .livepop,body.panel-mode .detail{display:none!important}
+#panelview{padding:14px;color:#d4d4d4;font-family:'SFMono-Regular',ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;background:rgba(30,30,30,.92);border:1px solid rgba(255,255,255,.14);border-radius:12px;min-height:100vh}
+#panelview .pv-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+#panelview .pv-title{font-size:10px;color:#8f8f8f;letter-spacing:1px}
+#panelview .pv-cost{font-size:24px;font-weight:700;color:#f97316}
+#panelview .pv-sub{font-size:10px;color:#8f8f8f;margin-bottom:12px}
+#panelview .pv-card{border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px 10px;margin-bottom:8px}
+#panelview .pv-card .row1{display:flex;justify-content:space-between;font-size:11px}
+#panelview .pv-card .src{color:#8f8f8f;text-transform:uppercase;letter-spacing:.5px}
+#panelview .pv-card .proj{color:#d4d4d4;font-weight:600;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#panelview .pv-card .row2{display:flex;gap:12px;font-size:10px;color:#8f8f8f;margin-top:4px}
+#panelview .pv-card .row2 b{color:#d4d4d4;font-weight:600}
+#panelview .pv-kv{display:flex;justify-content:space-between;font-size:10px;line-height:19px}
+#panelview .pv-kv span{color:#8f8f8f}
+#panelview .pv-kv b{color:#d4d4d4}
+#panelview .pv-sec{font-size:9px;color:#8f8f8f;text-transform:uppercase;letter-spacing:.5px;margin:10px 0 6px}
 body.docked .pop-kv b{color:#d4d4d4;flex-shrink:0}
 /* 宽度响应：窄窗隐藏低优先级段，保证右侧 ⌄ 与速率/项目/⚡ 完整可见 */
 body.docked.narrow .live-spark{display:none}
@@ -338,6 +356,7 @@ tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
   </div>
 </div>
 <div class="livestrip" id="livestrip" aria-live="polite"></div>
+<div id="panelview" style="display:none"></div>
 <div class="livepop" id="livepop"></div>
 <div class="detail" id="detail">
   <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><span class="edit-status" id="editstatus" role="status"></span><button class="skin-trigger" id="skinbtn" data-action="toggle-skin-panel" aria-expanded="false" aria-controls="skinpanel" title="Appearance" aria-label="Appearance settings">◈</button><button class="xb" data-action="toggle" title="Close details" aria-label="Close details">&#x2715;</button></div>
@@ -596,6 +615,7 @@ async function clearBudget(){
 // Dock-to-ZCode: the bar snaps under the ZCode window and follows it. The
 // checkbox mirrors the backend flag, which the dock thread re-reads each tick.
 let DOCK_ON=false,liveRows=0,liveHeight=36,popOpen=false,popPinned=false,rateHistory=[],SESSIONS=[],selectedSession=null;
+let TODAY_COST='0.00';
 function fT(n){if(n>=1e9)return(n/1e9).toFixed(1)+'G';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return String(Math.round(n))}
 function fI(n){return Math.round(n).toLocaleString('en-US')}
 function fmtDur(ms){const s=Math.max(0,Math.round(ms/1000));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),ss=s%60;return h?h+'小时'+m+'分'+ss+'秒':(m?m+'分'+ss+'秒':ss+'秒')}
@@ -639,7 +659,7 @@ function renderLive(rows){
     const chev=primary?'<span class="live-chevron" title="点击展开/收起指标">⌄</span>':'';
     const brand=primary?(open?'<span class="live-brand open-brand" data-dock-action="detail" title="收起 CostDog 详情">⌃ 收起</span>':'<span class="live-brand" data-dock-action="detail" title="打开 CostDog 详情">🐕</span>'):'';
     const src=primary?'':'<span class="live-src">'+esc(r.source)+'</span>';
-    return '<div class="'+cls+'" data-live-primary="'+(primary?1:0)+'">'+brand+(primary?sparkSVG():'')+'<span class="live-rate">'+rate+'</span>'+src+'<span class="live-proj" title="'+esc(r.project)+'">'+esc(r.project)+'</span><span class="live-metric hit">⚡'+r.cache_hit_pct.toFixed(0)+'%</span><span class="live-metric">Σ'+fT(r.tokens_in_window)+'</span>'+ctx+chev+'</div>';
+    return '<div class="'+cls+'" data-live-primary="'+(primary?1:0)+'">'+brand+'<span class="live-rate">'+(primary?('$'+TODAY_COST):rate)+'</span>'+src+'<span class="live-proj" title="'+esc(r.project)+'">'+esc(r.project)+'</span><span class="live-metric hit">⚡'+r.cache_hit_pct.toFixed(0)+'%</span><span class="live-metric">Σ'+fT(r.tokens_in_window)+'</span>'+ctx+chev+'</div>';
   }).join('');
   strip.classList.toggle('show',visible.length>0);
   strip.classList.toggle('as-bar',DOCK_ON);
@@ -689,6 +709,12 @@ function renderPop(metrics,project){
 async function refreshLive(){
   let rows=[];
   try{rows=await window.__TAURI_INTERNALS__.invoke('get_live_stats');}catch(error){}
+  // 今日花费（主行替代速率）：30s 粒度足够，失败沿用上次值。
+  try{
+    const an=await window.__TAURI_INTERNALS__.invoke('get_analytics',{range:'today',filters:null});
+    const c=an&&an.totals&&an.totals.cost;
+    if(typeof c==='number')TODAY_COST=c>=100?c.toFixed(0):c.toFixed(2);
+  }catch(error){}
   try{document.body.dataset.host=DOCK_ON?(await window.__TAURI_INTERNALS__.invoke('get_dock_host')).toLowerCase():'';}catch(error){}
   // 宽度响应式：dock 态下按视口宽度挂 narrow/tight，隐藏低优先级段防右侧截断。
   const vw=window.innerWidth;
@@ -938,10 +964,42 @@ applyThemeMode(document.documentElement.dataset.themeMode,false);
 selectAccent(document.documentElement.style.getPropertyValue('--accent').trim()||DEFAULT_ACCENT,false);
 const syncSystemTheme=()=>{if(document.documentElement.dataset.themeMode==='system')applyThemeMode('system',false)};
 if(systemTheme.addEventListener)systemTheme.addEventListener('change',syncSystemTheme);else systemTheme.addListener(syncSystemTheme);
-initDock();
-(async()=>{try{selectedSession=await window.__TAURI_INTERNALS__.invoke('get_live_session');}catch(error){}})();
-pollLive();
-load();
+// ── 菜单栏下拉面板模式（index.html#panel）：汇总视图，宿主无关 ──
+const IS_PANEL=location.hash==='#panel';
+if(IS_PANEL){
+  document.body.classList.add('panel-mode');
+  const pv=document.getElementById('panelview');
+  pv.style.display='block';
+  const fC2=n=>'$'+(n>=100?n.toFixed(0):n.toFixed(2));
+  async function renderPanel(){
+    if(!window.__TAURI_INTERNALS__)return;
+    let an=null,rows=[],metrics=null;
+    try{an=await window.__TAURI_INTERNALS__.invoke('get_analytics',{range:'today',filters:null});}catch(e){}
+    try{rows=await window.__TAURI_INTERNALS__.invoke('get_live_stats');}catch(e){}
+    try{metrics=await window.__TAURI_INTERNALS__.invoke('get_session_metrics',{source:'zcode',sessionId:null});}catch(e){}
+    const cost=an?an.totals.cost:0;
+    const cards=rows.map(r=>'<div class="pv-card"><div class="row1"><span class="src">'+esc(r.source)+'</span><span class="proj" title="'+esc(r.project)+'">'+esc(r.project)+'</span></div><div class="row2"><span>Σ <b>'+fT(r.tokens_in_window)+'</b></span><span>⚡ <b>'+r.cache_hit_pct.toFixed(0)+'%</b></span>'+(r.last_context_tokens>0?'<span>CTX <b>'+fT(r.last_context_tokens)+'</b></span>':'')+'</div></div>').join('');
+    let sess='';
+    if(metrics){
+      sess='<div class="pv-sec">当前会话（'+esc(metrics.session_id.slice(0,8))+'）</div>'
+        +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px">'
+        +'<div>'+kv('模型用时',fmtDur(metrics.model_ms))+kv('工具调用用时',fmtDur(metrics.tool_ms))+kv('TTFT',(metrics.ttft_ms/1000).toFixed(1)+'秒')+kv('输出速度',Math.round(metrics.tps)+' tok/s')+'</div>'
+        +'<div>'+kv('缓存命中',metrics.cache_hit_pct.toFixed(0)+'%')+kv('未缓存输入',fI(metrics.uncached_input_tokens)+' tok')+kv('缓存读取',fI(metrics.cache_read_tokens)+' tok')+kv('输出',fI(metrics.output_tokens)+' tok')+'</div>'
+        +'</div>';
+    }
+    pv.innerHTML='<div class="pv-head"><span class="pv-title">COSTDOG · 今日</span><span class="pv-cost">'+fC2(cost)+'</span></div>'
+      +'<div class="pv-sub">所有客户端合计 · 点击图标刷新</div>'
+      +(cards||'<div class="pv-sub">暂无活跃会话</div>')
+      +sess;
+  }
+  renderPanel();
+  setInterval(renderPanel,5000);
+}else{
+  initDock();
+  (async()=>{try{selectedSession=await window.__TAURI_INTERNALS__.invoke('get_live_session');}catch(error){}})();
+  pollLive();
+  load();
+}
 </script>
 </body>
 </html>
