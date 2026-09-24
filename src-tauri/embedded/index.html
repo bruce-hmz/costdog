@@ -174,6 +174,7 @@ body.docked .live-brand{height:24px;padding:0 2px;display:flex;align-items:cente
 body.docked .live-brand:hover{color:#d4d4d4}
 body.docked .live-brand.open-brand{width:auto;color:#f97316;font-size:10px;white-space:nowrap}
 body.docked .live-rate{color:#f97316;font-weight:600}
+body.docked .live-cost{color:rgba(212,212,212,.85);font-weight:600;white-space:nowrap}
 body.docked .live-src{color:rgba(212,212,212,.45)}
 body.docked .live-proj{color:#d4d4d4}
 body.docked .live-metric{color:rgba(212,212,212,.6)}
@@ -212,6 +213,7 @@ body[data-host="chatgpt"] .live-brand{color:#8f8f8f}
 body[data-host="chatgpt"] .live-brand:hover{color:#0d0d0d}
 body[data-host="chatgpt"] .live-brand.open-brand{color:#0d0d0d}
 body[data-host="chatgpt"] .live-rate{color:#0d0d0d;font-weight:700}
+body[data-host="chatgpt"] .live-cost{color:#0d0d0d;font-weight:600}
 body[data-host="chatgpt"] .live-src{color:#8f8f8f}
 body[data-host="chatgpt"] .live-proj{color:#0d0d0d}
 body[data-host="chatgpt"] .live-metric{color:#8f8f8f}
@@ -659,7 +661,7 @@ function renderLive(rows){
     const chev=primary?'<span class="live-chevron" title="点击展开/收起指标">⌄</span>':'';
     const brand=primary?(open?'<span class="live-brand open-brand" data-dock-action="detail" title="收起 CostDog 详情">⌃ 收起</span>':'<span class="live-brand" data-dock-action="detail" title="打开 CostDog 详情">🐕</span>'):'';
     const src=primary?'':'<span class="live-src">'+esc(r.source)+'</span>';
-    return '<div class="'+cls+'" data-live-primary="'+(primary?1:0)+'">'+brand+'<span class="live-rate">'+(primary?('$'+TODAY_COST):rate)+'</span>'+src+'<span class="live-proj" title="'+esc(r.project)+'">'+esc(r.project)+'</span><span class="live-metric hit">⚡'+r.cache_hit_pct.toFixed(0)+'%</span><span class="live-metric">Σ'+fT(r.tokens_in_window)+'</span>'+ctx+chev+'</div>';
+    return '<div class="'+cls+'" data-live-primary="'+(primary?1:0)+'">'+brand+'<span class="live-cost">$'+TODAY_COST+'</span>'+(primary?sparkSVG():'')+'<span class="live-rate">'+rate+'</span>'+src+'<span class="live-proj" title="'+esc(r.project)+'">'+esc(r.project)+'</span><span class="live-metric hit">⚡'+r.cache_hit_pct.toFixed(0)+'%</span><span class="live-metric">Σ'+fT(r.tokens_in_window)+'</span>'+ctx+chev+'</div>';
   }).join('');
   strip.classList.toggle('show',visible.length>0);
   strip.classList.toggle('as-bar',DOCK_ON);
