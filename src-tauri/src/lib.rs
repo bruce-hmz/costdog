@@ -2469,6 +2469,72 @@ fn get_dock_host(window: tauri::WebviewWindow) -> String {
 }
 
 /// 记住用户手动选择的会话（展开面板默认高亮；空串=自动跟随最近活跃）。
+/// 会话成本异常告警：最近活跃会话的累计花费 vs 近 30 天历史会话平均。
+/// 触发条件：当前 >= $1 且 >= 历史平均的 3 倍（平均 < $0.10 时样本不足不触发）。
+#[derive(Debug, Serialize)]
+struct SessionCostAlert {
+    source: String,
+    project: String,
+    current_cost: f64,
+    avg_cost: f64,
+    multiple: f64,
+}
+
+#[tauri::command]
+fn get_session_cost_alert() -> Option<SessionCostAlert> {
+    let conn = ensure_db_exists().ok()?;
+    // 最近活跃会话（按 end_time 最新的一行定位 session_id+source），聚合其全部天数的花费
+    let (sid, source, project) = conn
+        .query_row(
+            "SELECT session_id, source, COALESCE(NULLIF(project_display,''),NULLIF(project,''),'—')
+             FROM sessions ORDER BY end_time DESC LIMIT 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .ok()?;
+    let current: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(cost),0) FROM sessions WHERE session_id=?1 AND source=?2",
+            [&sid, &source],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+    if current < 1.0 {
+        return None;
+    }
+    let avg: f64 = conn
+        .query_row(
+            "SELECT AVG(sc) FROM (
+               SELECT SUM(cost) AS sc FROM sessions
+               WHERE end_time > datetime('now','-30 days') AND session_id != ?1
+               GROUP BY session_id
+             )",
+            [&sid],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+    if avg < 0.10 {
+        return None;
+    }
+    let multiple = current / avg;
+    if multiple < 3.0 {
+        return None;
+    }
+    Some(SessionCostAlert {
+        source,
+        project,
+        current_cost: current,
+        avg_cost: avg,
+        multiple,
+    })
+}
+
 #[tauri::command]
 fn get_live_session() -> Option<String> {
     match get_pref("live_session") {
@@ -3289,7 +3355,7 @@ pub fn run() {
                 .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions, get_live_session, set_live_session])
+        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions, get_live_session, set_live_session, get_session_cost_alert])
         .setup(|app| {
             // A 36px always-on-top bar is an accessory, not an app: drop the Dock icon
             // and the app menu so CostDog lives entirely in the menu bar.

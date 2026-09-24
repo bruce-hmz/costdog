@@ -1003,6 +1003,11 @@ if(IS_PANEL){
     const diff=cost-prev;
     // ── 自动洞察（最多 3 条，按价值排序）──
     const ins=[];
+    // 最高优先级：当前会话烧钱异常（≥$1 且 ≥ 历史平均 3 倍）
+    try{
+      const alert=await I('get_session_cost_alert');
+      if(alert)ins.push('💸 当前会话「'+esc(alert.project)+'」已累计 $'+alert.current_cost.toFixed(2)+'——是近 30 天会话平均（$'+alert.avg_cost.toFixed(2)+'）的 '+alert.multiple.toFixed(1)+' 倍，建议压缩上下文或新开会话');
+    }catch(e){}
     const projects=an&&an.breakdowns&&an.breakdowns.project?an.breakdowns.project:[];
     if(projects.length&&projects[0].cost>0.5){
       const top=projects[0];

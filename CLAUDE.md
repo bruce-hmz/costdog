@@ -328,3 +328,9 @@ npm run tauri:build
   趋势 sparkline、活跃客户端卡片、当前会话 8 项
 - 数据全部复用 get_analytics(today/week)/budget/live_stats/session_metrics，零新增后端
 - JS 语法 node --check 通过；渲染需用户点托盘手验（自动化点不中状态区图标）
+### 41. 洞察规则 #1：会话烧钱异常（2026-09-23，用户选择 1）
+
+- get_session_cost_alert：最近活跃会话累计 cost vs 近 30 天其他会话平均
+- 触发：≥$1 且 ≥3×平均（avg<$0.10 样本不足不触发）
+- 前端作为最高优先级洞察卡置顶（💸 图标）
+- 真值验证：当前会话 $14.83 vs 平均 $4.78 = 3.1×，恰好触发——面板上即显示
