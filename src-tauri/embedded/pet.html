@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+body{margin:0;background:transparent;overflow:hidden;user-select:none}
+#pet{width:100vw;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.orb{width:76px;height:76px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:36px;position:relative;background:radial-gradient(circle at 32% 28%, #3a3a42, #1c1c22 70%);border:2px solid rgba(255,255,255,.14);box-shadow:0 6px 20px rgba(0,0,0,.45);transition:border-color .5s,box-shadow .5s}
+.orb.live{border-color:rgba(74,222,128,.55);box-shadow:0 6px 22px rgba(74,222,128,.28)}
+.badge{position:absolute;bottom:-5px;right:-4px;background:#1c1c22;border:1px solid rgba(255,255,255,.18);border-radius:9px;font-size:9px;padding:1px 5px;color:#f97316;font-weight:700;font-family:monospace}
+.hud{margin-top:5px;display:flex;gap:8px;font-size:10px;color:#d4d4d4;text-shadow:0 1px 3px rgba(0,0,0,.9);font-family:monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+.hud b{color:#f97316}
+.hud .sep{color:rgba(255,255,255,.25)}
+</style></head>
+<body><div id="pet" data-tauri-drag-region><div class="orb" id="orb"><span id="face">🐕</span><span class="badge" id="cost">$0</span></div><div class="hud"><span id="rate">—</span><span class="sep">│</span><span id="ctx">CTX —</span></div></div>
+<script>
+function fT(n){if(n>=1e9)return(n/1e9).toFixed(1)+'G';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return String(Math.round(n))}
+function fI(n){return Math.round(n).toLocaleString('en-US')}
+var orb=document.getElementById('orb'),face=document.getElementById('face'),cost=document.getElementById('cost'),rate=document.getElementById('rate'),ctx=document.getElementById('ctx');
+function tick(){
+  if(!window.__TAURI_INTERNALS__)return;
+  var I=window.__TAURI_INTERNALS__.invoke;
+  I('get_analytics',{range:'today',filters:null}).then(function(an){
+    cost.textContent='$'+(an&&an.totals?(an.totals.cost>=100?an.totals.cost.toFixed(0):an.totals.cost.toFixed(2)):'0');
+  }).catch(function(){});
+  I('get_live_stats').then(function(rows){
+    var a=rows.slice().sort(function(x,y){return y.tokens_per_min-x.tokens_per_min;})[0];
+    var live=a&&a.tokens_per_min>0.05;
+    orb.className=live?'orb live':'orb';
+    face.textContent=live?'🐕':'😴';
+    rate.innerHTML=live?('▲ <b>'+Math.round(a.tokens_per_min/60)+'/s</b>'):'zzz';
+  }).catch(function(){});
+  I('get_session_metrics',{source:'zcode',sessionId:null}).then(function(m){
+    ctx.textContent='CTX '+(m?fT(m.last_context_tokens||0):'—');
+  }).catch(function(){});
+}
+tick();
+setInterval(tick,2000);
+</script>
+</body></html>

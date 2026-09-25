@@ -237,8 +237,10 @@ body[data-host="chatgpt"] .pop-kv b{color:#0d0d0d}
 body[data-host="chatgpt"] .psess{color:#8f8f8f;border-color:rgba(0,0,0,.10)}
 body[data-host="chatgpt"] .psess.on{color:#0d0d0d;border-color:#0d0d0d;background:rgba(0,0,0,.04)}
 body[data-host="chatgpt"] .psess .dot{color:#0d0d0d}
+html[data-nopetview="1"] body{background:#00ff00!important}
 /* ── 宠物球（#pet）：CostDog 活体化——圆形小狗，状态=行为 ── */
 body.pet-mode{background:transparent}
+body.pet-mode #petview{background:#ff0000}
 body.pet-mode .bar,body.pet-mode .livestrip,body.pet-mode .livepop,body.pet-mode .detail,body.pet-mode #panelview{display:none!important}
 #petview{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;user-select:none;-webkit-app-region:drag}
 #petview .orb{width:76px;height:76px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:38px;position:relative;background:radial-gradient(circle at 32% 28%, #3a3a42, #1c1c22 70%);border:2px solid rgba(255,255,255,.14);box-shadow:0 6px 20px rgba(0,0,0,.45),inset 0 2px 6px rgba(255,255,255,.08);transition:box-shadow .6s,border-color .6s}
@@ -247,11 +249,10 @@ body.pet-mode .bar,body.pet-mode .livestrip,body.pet-mode .livepop,body.pet-mode
 #petview .hud{margin-top:6px;display:flex;gap:8px;font-size:10px;color:#d4d4d4;text-shadow:0 1px 3px rgba(0,0,0,.9);font-variant-numeric:tabular-nums;white-space:nowrap}
 #petview .hud b{color:#f97316}
 #petview .hud .sep{color:rgba(255,255,255,.25)}
-body[data-pet="run"] .orb{animation:pet-run .5s ease-in-out infinite alternate}
+body[data-pet="run"] .orb{border-color:rgba(74,222,128,.6)}
 body[data-pet="run"] .orb{border-color:rgba(74,222,128,.5);box-shadow:0 6px 22px rgba(74,222,128,.25),inset 0 2px 6px rgba(255,255,255,.08)}
-body[data-pet="idle"] .orb{animation:pet-breathe 3.4s ease-in-out infinite}
-@keyframes pet-run{from{transform:translateY(0) rotate(-4deg)}to{transform:translateY(-5px) rotate(4deg)}}
-@keyframes pet-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
+body[data-pet="idle"] .orb{opacity:.92}
+
 /* ── 屏幕顶边常驻条（#topbar）：永远在场、鼠标穿透 ── */
 body.topbar-mode{background:transparent}
 body.topbar-mode .bar,body.topbar-mode .livestrip,body.topbar-mode .livepop,body.topbar-mode .detail,body.panel-mode .bar,body.panel-mode .livestrip,body.panel-mode .livepop,body.panel-mode .detail{display:none!important}
@@ -367,7 +368,15 @@ tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
 <script>
 try{
   var L=(window.__TAURI_INTERNALS__&&window.__TAURI_INTERNALS__.metadata&&window.__TAURI_INTERNALS__.metadata.currentWindow&&window.__TAURI_INTERNALS__.metadata.currentWindow.label)||'';
-  if(L==='topbar'){document.documentElement.setAttribute('data-petwin','1');document.title='PETWIN-OK';}
+  if(L==='topbar'){
+    document.documentElement.setAttribute('data-petwin','1');
+    window.addEventListener('error',function(){document.body.style.background='#0000ff';});
+    document.addEventListener('DOMContentLoaded',function(){
+      if(!document.getElementById('petview')){
+        document.documentElement.setAttribute('data-nopetview','1');
+      }
+    });
+  }
 }catch(e){}
 </script>
 <div class="bar">

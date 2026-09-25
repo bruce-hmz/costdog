@@ -366,3 +366,11 @@ npm run tauri:build
   加载/检测/透明全通，问题确系 hash URL；改纯 index.html + label 检测（WIN_LABEL==='topbar'）
 - 终验：🐕 + $28.49 徽章 + CTX 549.8k 渲染，四角透出真实背景
 - 教训：Tauri WebviewUrl::App 不要拼 hash；窗口模式判定用 metadata.currentWindow.label
+### 46. 宠物球根治：隔离 pet.html（2026-09-23）
+
+- 根因实锤：主 index.html 的巨型脚本/CSS 在透明窗内不绘制（body 底色能画、
+  子元素图层全丢——WKWebView 合成异常）；隔离的 pet.html 同窗同配置完美绘制
+- 最终方案：宠物窗口加载独立 embedded/pet.html（自包含：orb 样式+数据轮询脚本，
+  $今日徽章/▲速率/CTX/🐕跑😴睡/绿光环 live 态/data-tauri-drag-region 拖拽）
+- 教训（重要）：透明悬浮窗一律用独立小 HTML，勿与主应用页共用——主脚本对透明
+  合成有干扰且难排查；诊断靠 Read 工具直接看截图（像素采样/AX 都会误导）
