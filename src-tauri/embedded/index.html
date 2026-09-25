@@ -364,6 +364,12 @@ tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
 </style>
 </head>
 <body>
+<script>
+try{
+  var L=(window.__TAURI_INTERNALS__&&window.__TAURI_INTERNALS__.metadata&&window.__TAURI_INTERNALS__.metadata.currentWindow&&window.__TAURI_INTERNALS__.metadata.currentWindow.label)||'';
+  if(L==='topbar'){document.documentElement.setAttribute('data-petwin','1');document.title='PETWIN-OK';}
+}catch(e){}
+</script>
 <div class="bar">
   <div class="bar-face face-classic">
     <div class="classic-left">
@@ -1008,10 +1014,13 @@ selectAccent(document.documentElement.style.getPropertyValue('--accent').trim()|
 const syncSystemTheme=()=>{if(document.documentElement.dataset.themeMode==='system')applyThemeMode('system',false)};
 if(systemTheme.addEventListener)systemTheme.addEventListener('change',syncSystemTheme);else systemTheme.addListener(syncSystemTheme);
 // ── 菜单栏下拉面板模式（index.html#panel）：汇总视图，宿主无关 ──
-const IS_PANEL=location.hash==='#panel';
-const IS_TOPBAR=location.hash==='#topbar';
-const IS_PET=location.hash==='#pet';
+// 模式检测用窗口 label（hash 在 Tauri App URL 中不可靠——曾致宠物窗全透明不可见）
+const WIN_LABEL=(window.__TAURI_INTERNALS__&&window.__TAURI_INTERNALS__.metadata&&window.__TAURI_INTERNALS__.metadata.currentWindow&&window.__TAURI_INTERNALS__.metadata.currentWindow.label)||'';
+const IS_PANEL=location.hash==='#panel'||WIN_LABEL==='panel';
+const IS_PET=location.hash==='#pet'||WIN_LABEL==='topbar';
+const IS_TOPBAR=false;
 if(IS_PET){
+  document.title='PET-MODE-OK';
   document.body.classList.add('pet-mode');
   const pv=document.getElementById('petview');
   pv.style.display='flex';

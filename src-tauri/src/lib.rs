@@ -3166,7 +3166,7 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
     let Ok(bar) = tauri::WebviewWindowBuilder::new(
         app,
         "topbar",
-        tauri::WebviewUrl::App("index.html#pet".into()),
+        tauri::WebviewUrl::App("index.html".into()),
     )
     .title("CostDog Pet")
     .inner_size(120.0, 120.0)

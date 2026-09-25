@@ -359,3 +359,10 @@ npm run tauri:build
   macOSPrivateApi: true（conf）+ Cargo tauri features 加 macos-private-api
 - 修复后采样：四角 rgb(41,106,159)=真实桌面背景（此前全黑 28,28,28）
 - 退役主胶囊窗口（conf 静态创建）setup 中 window.hide()——屏幕只剩宠物球
+### 45. 宠物球不可见根治（2026-09-23）
+
+- 透明修复后仍不可见：#pet hash 拼进 Tauri App URL 会破坏页面加载（webview 空白全透明）
+- 二分定位法：body 首行注入早期 label 标记脚本 + 红色调试背景——红色出现证明
+  加载/检测/透明全通，问题确系 hash URL；改纯 index.html + label 检测（WIN_LABEL==='topbar'）
+- 终验：🐕 + $28.49 徽章 + CTX 549.8k 渲染，四角透出真实背景
+- 教训：Tauri WebviewUrl::App 不要拼 hash；窗口模式判定用 metadata.currentWindow.label
