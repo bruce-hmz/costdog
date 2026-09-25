@@ -2,18 +2,66 @@
 <html><head><meta charset="utf-8"><style>
 body{margin:0;background:transparent;overflow:hidden;user-select:none}
 #pet{width:100vw;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}
-.orb{width:76px;height:76px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:36px;position:relative;background:radial-gradient(circle at 32% 28%, #3a3a42, #1c1c22 70%);border:2px solid rgba(255,255,255,.14);box-shadow:0 6px 20px rgba(0,0,0,.45);transition:border-color .5s,box-shadow .5s}
-.orb.live{border-color:rgba(74,222,128,.55);box-shadow:0 6px 22px rgba(74,222,128,.28)}
-.badge{position:absolute;bottom:-5px;right:-4px;background:#1c1c22;border:1px solid rgba(255,255,255,.18);border-radius:9px;font-size:9px;padding:1px 5px;color:#f97316;font-weight:700;font-family:monospace}
-.hud{margin-top:5px;display:flex;gap:8px;font-size:10px;color:#d4d4d4;text-shadow:0 1px 3px rgba(0,0,0,.9);font-family:monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+svg{image-rendering:pixelated}
+/* 跑态：整体小幅起伏 + 四腿两帧交替 */
+body[data-state="run"] #bob{animation:bob .34s ease-in-out infinite alternate}
+body[data-state="run"] #legsA{animation:legsA .34s steps(1) infinite}
+body[data-state="run"] #legsB{animation:legsB .34s steps(1) infinite}
+@keyframes bob{from{transform:translateY(0)}to{transform:translateY(-2px)}}
+@keyframes legsA{0%,49%{opacity:1}50%,100%{opacity:0}}
+@keyframes legsB{0%,49%{opacity:0}50%,100%{opacity:1}}
+/* 睡态 */
+body[data-state="sleep"] #dog-run{display:none}
+body[data-state="run"] #dog-sleep{display:none}
+#zzz{display:none;font-family:monospace;color:#9fd8ff;font-size:11px;text-shadow:0 1px 3px #000}
+body[data-state="sleep"] #zzz{display:block;animation:float 2.2s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translate(0,0);opacity:.4}50%{transform:translate(4px,-6px);opacity:1}}
+/* 徽章与 HUD */
+.badge{position:absolute;top:-2px;right:0;background:#1c1c22;border:1px solid rgba(255,255,255,.18);border-radius:8px;font-size:9px;padding:1px 5px;color:#f97316;font-weight:700;font-family:monospace}
+.hud{margin-top:4px;display:flex;gap:8px;font-size:10px;color:#d4d4d4;text-shadow:0 1px 3px rgba(0,0,0,.9);font-family:monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
 .hud b{color:#f97316}
 .hud .sep{color:rgba(255,255,255,.25)}
+.badge,.hud,svg{cursor:default}
 </style></head>
-<body><div id="pet" data-tauri-drag-region><div class="orb" id="orb"><span id="face">🐕</span><span class="badge" id="cost">$0</span></div><div class="hud"><span id="rate">—</span><span class="sep">│</span><span id="ctx">CTX —</span></div></div>
+<body><div id="pet" data-tauri-drag-region>
+<div style="position:relative">
+  <span class="badge" id="cost" data-tauri-drag-region>$0</span>
+  <!-- 跑态小狗（侧视，面向右） -->
+  <svg id="dog-run" data-tauri-drag-region width="90" height="66" viewBox="0 0 30 22" shape-rendering="crispEdges">
+    <g id="bob">
+      <rect x="2" y="6" width="3" height="2" fill="#8a5f33"/>
+      <rect x="5" y="6" width="13" height="6" fill="#b5824c"/>
+      <rect x="6" y="10" width="10" height="2" fill="#d9a86b"/>
+      <rect x="16" y="1" width="7" height="6" fill="#b5824c"/>
+      <rect x="21" y="0" width="2" height="3" fill="#8a5f33"/>
+      <rect x="20" y="3" width="1" height="1" fill="#1c1c22"/>
+      <rect x="23" y="4" width="2" height="2" fill="#8a5f33"/>
+      <g id="legsA">
+        <rect x="7" y="12" width="2" height="4" fill="#b5824c"/>
+        <rect x="17" y="12" width="2" height="4" fill="#b5824c"/>
+      </g>
+      <g id="legsB" style="opacity:0">
+        <rect x="9" y="12" width="2" height="4" fill="#a3743f"/>
+        <rect x="19" y="12" width="2" height="4" fill="#a3743f"/>
+      </g>
+    </g>
+  </svg>
+  <!-- 睡态小狗（趴卧） -->
+  <svg id="dog-sleep" data-tauri-drag-region width="90" height="66" viewBox="0 0 30 22" shape-rendering="crispEdges" style="display:none">
+    <rect x="1" y="14" width="3" height="2" fill="#8a5f33"/>
+    <rect x="4" y="12" width="17" height="5" fill="#b5824c"/>
+    <rect x="5" y="15" width="13" height="2" fill="#d9a86b"/>
+    <rect x="18" y="10" width="7" height="6" fill="#b5824c"/>
+    <rect x="23" y="9" width="2" height="3" fill="#8a5f33"/>
+    <rect x="20" y="12" width="3" height="1" fill="#1c1c22"/>
+  </svg>
+  <div id="zzz" data-tauri-drag-region style="position:absolute;top:-6px;right:8px">Z z</div>
+</div>
+<div class="hud" data-tauri-drag-region><span id="rate">—</span><span class="sep">│</span><span id="ctx">CTX —</span></div>
+</div>
 <script>
 function fT(n){if(n>=1e9)return(n/1e9).toFixed(1)+'G';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return String(Math.round(n))}
-function fI(n){return Math.round(n).toLocaleString('en-US')}
-var orb=document.getElementById('orb'),face=document.getElementById('face'),cost=document.getElementById('cost'),rate=document.getElementById('rate'),ctx=document.getElementById('ctx');
+var cost=document.getElementById('cost'),rate=document.getElementById('rate'),ctx=document.getElementById('ctx'),zzz=document.getElementById('zzz');
 function tick(){
   if(!window.__TAURI_INTERNALS__)return;
   var I=window.__TAURI_INTERNALS__.invoke;
@@ -23,9 +71,8 @@ function tick(){
   I('get_live_stats').then(function(rows){
     var a=rows.slice().sort(function(x,y){return y.tokens_per_min-x.tokens_per_min;})[0];
     var live=a&&a.tokens_per_min>0.05;
-    orb.className=live?'orb live':'orb';
-    face.textContent=live?'🐕':'😴';
-    rate.innerHTML=live?('▲ <b>'+Math.round(a.tokens_per_min/60)+'/s</b>'):'zzz';
+    document.body.dataset.state=live?'run':'sleep';
+    rate.innerHTML=live?('▲ <b>'+Math.round(a.tokens_per_min/60)+'/s</b>'):'<span style="color:#9fd8ff">zzz…</span>';
   }).catch(function(){});
   I('get_session_metrics',{source:'zcode',sessionId:null}).then(function(m){
     ctx.textContent='CTX '+(m?fT(m.last_context_tokens||0):'—');
