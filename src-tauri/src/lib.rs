@@ -3156,6 +3156,50 @@ fn toggle_panel(app: &tauri::AppHandle, rect: &tauri::Rect) {
     panel.set_focus().ok();
 }
 
+/// 屏幕顶边常驻条：贴主屏顶边居中、always-on-top、鼠标穿透——永远在场，
+/// 与任何应用前台状态无关；数据复用 live_stats（前端轮询）。
+fn ensure_topbar_window(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if app.get_webview_window("topbar").is_some() {
+        return;
+    }
+    let Ok(bar) = tauri::WebviewWindowBuilder::new(
+        app,
+        "topbar",
+        tauri::WebviewUrl::App("index.html#topbar".into()),
+    )
+    .title("CostDog TopBar")
+    .inner_size(560.0, 28.0)
+    .position(100.0, 0.0)
+    .decorations(false)
+    .always_on_top(true)
+    .resizable(false)
+    .skip_taskbar(true)
+    .visible(true)
+    .build()
+    else {
+        eprintln!("[CostDog] topbar build failed");
+        return;
+    };
+    bar.set_shadow(false).ok();
+    // 鼠标穿透：整条不可点，点击落到下面的应用（Agent HUD 同款交互）。
+    bar.set_ignore_cursor_events(true).ok();
+    // 居中于主屏顶边。
+    if let Ok(Some(monitor)) = bar.current_monitor() {
+        let size = monitor.size();
+        let sw = size.width as f64;
+        let scale = bar.scale_factor().unwrap_or(2.0);
+        let bar_w = 560.0 * scale;
+        let x = (sw - bar_w) / 2.0;
+        bar.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+            x: x.round() as i32,
+            y: 0,
+        }))
+        .ok();
+    }
+    eprintln!("[CostDog] topbar ready");
+}
+
 /// 创建常驻隐藏的下拉面板窗口（主线程调用）。
 fn ensure_panel_window(app: &tauri::AppHandle) {
     use tauri::Manager;
@@ -3385,6 +3429,9 @@ pub fn run() {
 
             // 菜单栏下拉面板（常驻隐藏，托盘左键切换）。
             ensure_panel_window(app.handle());
+
+            // 屏幕顶边常驻条（永远显示、鼠标穿透）：速率/花费/燃速的瞥视载体。
+            ensure_topbar_window(app.handle());
 
             // System tray (restore hidden bar + quit). Failure is non-fatal: log and continue.
             if let Err(e) = build_tray(app.handle()) {

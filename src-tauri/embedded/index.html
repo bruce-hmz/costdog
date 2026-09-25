@@ -237,6 +237,21 @@ body[data-host="chatgpt"] .pop-kv b{color:#0d0d0d}
 body[data-host="chatgpt"] .psess{color:#8f8f8f;border-color:rgba(0,0,0,.10)}
 body[data-host="chatgpt"] .psess.on{color:#0d0d0d;border-color:#0d0d0d;background:rgba(0,0,0,.04)}
 body[data-host="chatgpt"] .psess .dot{color:#0d0d0d}
+/* ── 屏幕顶边常驻条（#topbar）：永远在场、鼠标穿透 ── */
+body.topbar-mode{background:transparent}
+body.topbar-mode .bar,body.topbar-mode .livestrip,body.topbar-mode .livepop,body.topbar-mode .detail,body.panel-mode .bar,body.panel-mode .livestrip,body.panel-mode .livepop,body.panel-mode .detail{display:none!important}
+body.topbar-mode .detail{display:none!important}
+body.panel-mode #panelview{display:block}
+body.topbar-mode #panelview{display:none!important}
+#topbarview{display:flex;align-items:center;gap:10px;height:100vh;padding:0 14px;background:rgba(18,18,22,.82);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.1);border-top:none;border-radius:0 0 10px 10px;color:#d4d4d4;font-family:'SFMono-Regular',ui-monospace,Menlo,monospace;font-size:11px;font-variant-numeric:tabular-nums;user-select:none}
+#topbarview .tb-cost{color:#f97316;font-weight:700;font-size:12px}
+#topbarview .tb-rate{color:#d4d4d4;font-weight:600;min-width:52px}
+#topbarview .tb-rate.live{color:#4ade80}
+#topbarview .tb-sep{color:rgba(255,255,255,.18)}
+#topbarview .tb-host{display:flex;align-items:center;gap:4px;color:#8f8f8f}
+#topbarview .tb-host .dot{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.15)}
+#topbarview .tb-host.live .dot{background:#4ade80;box-shadow:0 0 6px #4ade80}
+#topbarview .tb-host.live{color:#d4d4d4}
 /* ── 菜单栏下拉面板（#panel）── */
 body.panel-mode{background:transparent}
 body.panel-mode .bar,body.panel-mode .livestrip,body.panel-mode .livepop,body.panel-mode .detail{display:none!important}
@@ -368,6 +383,7 @@ tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
 </div>
 <div class="livestrip" id="livestrip" aria-live="polite"></div>
 <div id="panelview" style="display:none"></div>
+<div id="topbarview" style="display:none"></div>
 <div class="livepop" id="livepop"></div>
 <div class="detail" id="detail">
   <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><span class="edit-status" id="editstatus" role="status"></span><button class="skin-trigger" id="skinbtn" data-action="toggle-skin-panel" aria-expanded="false" aria-controls="skinpanel" title="Appearance" aria-label="Appearance settings">◈</button><button class="xb" data-action="toggle" title="Close details" aria-label="Close details">&#x2715;</button></div>
@@ -977,7 +993,32 @@ const syncSystemTheme=()=>{if(document.documentElement.dataset.themeMode==='syst
 if(systemTheme.addEventListener)systemTheme.addEventListener('change',syncSystemTheme);else systemTheme.addListener(syncSystemTheme);
 // ── 菜单栏下拉面板模式（index.html#panel）：汇总视图，宿主无关 ──
 const IS_PANEL=location.hash==='#panel';
-if(IS_PANEL){
+const IS_TOPBAR=location.hash==='#topbar';
+if(IS_TOPBAR){
+  document.body.classList.add('topbar-mode');
+  const tb=document.getElementById('topbarview');
+  tb.style.display='flex';
+  const HOST_META={zcode:['Z','zcode'],codex:['C','codex'],claude:['K','claude'],'claude-code':['K','claude-code'],opencode:['O','opencode']};
+  async function renderTopbar(){
+    if(!window.__TAURI_INTERNALS__)return;
+    let an=null,rows=[];
+    try{an=await window.__TAURI_INTERNALS__.invoke('get_analytics',{range:'today',filters:null});}catch(e){}
+    try{rows=await window.__TAURI_INTERNALS__.invoke('get_live_stats');}catch(e){}
+    const cost=an?('$'+(an.totals.cost>=100?an.totals.cost.toFixed(0):an.totals.cost.toFixed(2))):'—';
+    // 速率取最活跃源：tokens_per_min(min) ÷60 = tok/s；>0 即 live
+    const active=rows.slice().sort((a,b)=>b.tokens_per_min-a.tokens_per_min)[0];
+    const rate=active&&active.tokens_per_min>0.05?(active.tokens_per_min/60).toFixed(0):null;
+    const hosts=Object.entries(HOST_META).map(([src,[ch,name]])=>{
+      const r=rows.find(x=>x.source===src);
+      const live=r&&r.tokens_per_min>0.05;
+      return '<span class="tb-host'+(live?' live':'')+'" title="'+name+(live?' · 运行中':'')+'"><span class="dot"></span>'+ch+'</span>';
+    }).join('');
+    tb.innerHTML='<span class="tb-cost">'+cost+'</span><span class="tb-sep">│</span>'
+      +'<span class="tb-rate'+(rate?' live':'')+'">'+(rate?'▲ '+rate+'/s':'idle')+'</span><span class="tb-sep">│</span>'+hosts;
+  }
+  renderTopbar();
+  setInterval(renderTopbar,2000);
+}else if(IS_PANEL){
   document.body.classList.add('panel-mode');
   const pv=document.getElementById('panelview');
   pv.style.display='block';
