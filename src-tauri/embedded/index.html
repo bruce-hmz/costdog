@@ -237,13 +237,28 @@ body[data-host="chatgpt"] .pop-kv b{color:#0d0d0d}
 body[data-host="chatgpt"] .psess{color:#8f8f8f;border-color:rgba(0,0,0,.10)}
 body[data-host="chatgpt"] .psess.on{color:#0d0d0d;border-color:#0d0d0d;background:rgba(0,0,0,.04)}
 body[data-host="chatgpt"] .psess .dot{color:#0d0d0d}
+/* ── 宠物球（#pet）：CostDog 活体化——圆形小狗，状态=行为 ── */
+body.pet-mode{background:transparent}
+body.pet-mode .bar,body.pet-mode .livestrip,body.pet-mode .livepop,body.pet-mode .detail,body.pet-mode #panelview{display:none!important}
+#petview{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;user-select:none;-webkit-app-region:drag}
+#petview .orb{width:76px;height:76px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:38px;position:relative;background:radial-gradient(circle at 32% 28%, #3a3a42, #1c1c22 70%);border:2px solid rgba(255,255,255,.14);box-shadow:0 6px 20px rgba(0,0,0,.45),inset 0 2px 6px rgba(255,255,255,.08);transition:box-shadow .6s,border-color .6s}
+#petview .orb .face{line-height:1;transform:translateY(-2px)}
+#petview .orb .badge{position:absolute;bottom:-4px;right:-2px;background:#1c1c22;border:1px solid rgba(255,255,255,.18);border-radius:9px;font-size:9px;padding:1px 5px;color:#f97316;font-weight:700}
+#petview .hud{margin-top:6px;display:flex;gap:8px;font-size:10px;color:#d4d4d4;text-shadow:0 1px 3px rgba(0,0,0,.9);font-variant-numeric:tabular-nums;white-space:nowrap}
+#petview .hud b{color:#f97316}
+#petview .hud .sep{color:rgba(255,255,255,.25)}
+body[data-pet="run"] .orb{animation:pet-run .5s ease-in-out infinite alternate}
+body[data-pet="run"] .orb{border-color:rgba(74,222,128,.5);box-shadow:0 6px 22px rgba(74,222,128,.25),inset 0 2px 6px rgba(255,255,255,.08)}
+body[data-pet="idle"] .orb{animation:pet-breathe 3.4s ease-in-out infinite}
+@keyframes pet-run{from{transform:translateY(0) rotate(-4deg)}to{transform:translateY(-5px) rotate(4deg)}}
+@keyframes pet-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
 /* ── 屏幕顶边常驻条（#topbar）：永远在场、鼠标穿透 ── */
 body.topbar-mode{background:transparent}
 body.topbar-mode .bar,body.topbar-mode .livestrip,body.topbar-mode .livepop,body.topbar-mode .detail,body.panel-mode .bar,body.panel-mode .livestrip,body.panel-mode .livepop,body.panel-mode .detail{display:none!important}
 body.topbar-mode .detail{display:none!important}
 body.panel-mode #panelview{display:block}
 body.topbar-mode #panelview{display:none!important}
-#topbarview{display:flex;align-items:center;gap:10px;height:100vh;padding:0 14px;background:rgba(18,18,22,.82);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.1);border-top:none;border-radius:0 0 10px 10px;color:#d4d4d4;font-family:'SFMono-Regular',ui-monospace,Menlo,monospace;font-size:11px;font-variant-numeric:tabular-nums;user-select:none}
+#topbarview{display:flex;align-items:center;gap:10px;height:100vh;padding:0 12px;background:transparent;border:none;border-radius:0 0 10px 10px;color:#d4d4d4;font-family:'SFMono-Regular',ui-monospace,Menlo,monospace;font-size:11px;font-variant-numeric:tabular-nums;user-select:none;text-shadow:0 1px 3px rgba(0,0,0,.85),0 0 6px rgba(0,0,0,.5)}
 #topbarview .tb-cost{color:#f97316;font-weight:700;font-size:12px}
 #topbarview .tb-rate{color:#d4d4d4;font-weight:600;min-width:52px}
 #topbarview .tb-rate.live{color:#4ade80}
@@ -384,6 +399,7 @@ tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
 <div class="livestrip" id="livestrip" aria-live="polite"></div>
 <div id="panelview" style="display:none"></div>
 <div id="topbarview" style="display:none"></div>
+<div id="petview" style="display:none"><div class="orb"><span class="face" id="petface">🐕</span><span class="badge" id="petcost">$0</span></div><div class="hud"><span id="petrate">—</span><span class="sep">│</span><span id="petctx">CTX —</span></div></div>
 <div class="livepop" id="livepop"></div>
 <div class="detail" id="detail">
   <div class="dh"><span class="dt" id="dtitle">CostDog — Cost Monitor</span><span class="edit-status" id="editstatus" role="status"></span><button class="skin-trigger" id="skinbtn" data-action="toggle-skin-panel" aria-expanded="false" aria-controls="skinpanel" title="Appearance" aria-label="Appearance settings">◈</button><button class="xb" data-action="toggle" title="Close details" aria-label="Close details">&#x2715;</button></div>
@@ -994,7 +1010,30 @@ if(systemTheme.addEventListener)systemTheme.addEventListener('change',syncSystem
 // ── 菜单栏下拉面板模式（index.html#panel）：汇总视图，宿主无关 ──
 const IS_PANEL=location.hash==='#panel';
 const IS_TOPBAR=location.hash==='#topbar';
-if(IS_TOPBAR){
+const IS_PET=location.hash==='#pet';
+if(IS_PET){
+  document.body.classList.add('pet-mode');
+  const pv=document.getElementById('petview');
+  pv.style.display='flex';
+  const face=document.getElementById('petface'),costEl=document.getElementById('petcost'),rateEl=document.getElementById('petrate'),ctxEl=document.getElementById('petctx');
+  async function renderPet(){
+    if(!window.__TAURI_INTERNALS__)return;
+    let an=null,rows=[],metrics=null;
+    try{an=await window.__TAURI_INTERNALS__.invoke('get_analytics',{range:'today',filters:null});}catch(e){}
+    try{rows=await window.__TAURI_INTERNALS__.invoke('get_live_stats');}catch(e){}
+    try{metrics=await window.__TAURI_INTERNALS__.invoke('get_session_metrics',{source:'zcode',sessionId:null});}catch(e){}
+    costEl.textContent='$'+(an?(an.totals.cost>=100?an.totals.cost.toFixed(0):an.totals.cost.toFixed(2)):'0');
+    const active=rows.slice().sort((a,b)=>b.tokens_per_min-a.tokens_per_min)[0];
+    const running=active&&active.tokens_per_min>0.05;
+    // 姿态：跑（有流量）/ 睡（空闲）；表情随姿态
+    document.body.dataset.pet=running?'run':'idle';
+    face.textContent=running?'🐕':'😴';
+    rateEl.innerHTML=running?('▲ <b>'+Math.round(active.tokens_per_min/60)+'/s</b>'):'zzz';
+    ctxEl.textContent='CTX '+(metrics?fT(metrics.last_context_tokens||0):'—');
+  }
+  renderPet();
+  setInterval(renderPet,2000);
+}else if(IS_TOPBAR){
   document.body.classList.add('topbar-mode');
   const tb=document.getElementById('topbarview');
   tb.style.display='flex';

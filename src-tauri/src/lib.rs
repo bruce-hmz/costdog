@@ -3166,11 +3166,11 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
     let Ok(bar) = tauri::WebviewWindowBuilder::new(
         app,
         "topbar",
-        tauri::WebviewUrl::App("index.html#topbar".into()),
+        tauri::WebviewUrl::App("index.html#pet".into()),
     )
-    .title("CostDog TopBar")
-    .inner_size(560.0, 28.0)
-    .position(100.0, 0.0)
+    .title("CostDog Pet")
+    .inner_size(120.0, 120.0)
+    .position(100.0, 200.0)
     .decorations(false)
     .always_on_top(true)
     .resizable(false)
@@ -3182,14 +3182,13 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
         return;
     };
     bar.set_shadow(false).ok();
-    // 鼠标穿透：整条不可点，点击落到下面的应用（Agent HUD 同款交互）。
-    bar.set_ignore_cursor_events(true).ok();
+    // 宠物形态：可拖拽、可点击（交互型），不穿透。
     // 居中于主屏顶边。
     if let Ok(Some(monitor)) = bar.current_monitor() {
         let size = monitor.size();
         let sw = size.width as f64;
         let scale = bar.scale_factor().unwrap_or(2.0);
-        let bar_w = 560.0 * scale;
+        let bar_w = 120.0 * scale;
         let x = (sw - bar_w) / 2.0;
         bar.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
             x: x.round() as i32,
@@ -3418,14 +3417,13 @@ pub fn run() {
                 dock::make_non_activating(&w);
             }
 
-            // Dock-to-ZCode: restore the persisted preference, then start the
-            // follower thread. The thread itself re-checks the flag every tick,
-            // so toggling at runtime needs no restart.
-            if matches!(get_pref("dock_zcode"), Ok(Some(value)) if value == "1") {
-                dock::set_enabled(true);
-                dock::apply_material(&app.handle(), true);
-            }
-            dock::spawn(app.handle().clone());
+            // 停靠胶囊（ZCode 芯片行 / ChatGPT 右下角）已按用户要求停用——
+            // 宠物悬浮窗（topbar 常驻）成为唯一常驻形态。dock 模块保留待复活。
+            // if matches!(get_pref("dock_zcode"), Ok(Some(value)) if value == "1") {
+            //     dock::set_enabled(true);
+            //     dock::apply_material(&app.handle(), true);
+            // }
+            // dock::spawn(app.handle().clone());
 
             // 菜单栏下拉面板（常驻隐藏，托盘左键切换）。
             ensure_panel_window(app.handle());
