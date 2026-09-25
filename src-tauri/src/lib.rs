@@ -3172,6 +3172,7 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
     .inner_size(120.0, 120.0)
     .position(100.0, 200.0)
     .decorations(false)
+    .transparent(true)
     .always_on_top(true)
     .resizable(false)
     .skip_taskbar(true)
@@ -3406,6 +3407,9 @@ pub fn run() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let window = app.get_webview_window("main").unwrap();
+            // 主胶囊已退役（宠物形态接管）：隐藏窗口并移出 Dock 交互，
+            // dock.rs 保留待复活。托盘/面板/宠物为主要界面。
+            window.hide().ok();
             window.set_always_on_top(true).ok();
             window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: 410.0, height: 36.0 })).ok();
             window.set_title("CostDog").ok();

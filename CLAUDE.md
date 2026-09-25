@@ -352,3 +352,10 @@ npm run tauri:build
   花费 $；球下 HUD=▲速率 + CTX；2s 轮询
 - 嵌入胶囊（ZCode 芯片行/ChatGPT 右下角）停用，dock.rs 保留待复活
 - 实测：AX 确认 🐕/$24.23/CTX 537.8k 渲染；窗口 900,30 120×120
+### 44. 宠物球黑方块修复（2026-09-23）
+
+- 用户只见黑方块：代码创建的宠物窗口缺 .transparent(true)（主窗口的透明在
+  tauri.conf.json 里，builder 创建的要显式设置）；且 macOS 透明窗口需
+  macOSPrivateApi: true（conf）+ Cargo tauri features 加 macos-private-api
+- 修复后采样：四角 rgb(41,106,159)=真实桌面背景（此前全黑 28,28,28）
+- 退役主胶囊窗口（conf 静态创建）setup 中 window.hide()——屏幕只剩宠物球
