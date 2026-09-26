@@ -12,6 +12,83 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 static DOCK_ENABLED: AtomicBool = AtomicBool::new(false);
 
+/// 主屏逻辑尺寸（点），setup 时由宠物窗口写入。
+static SCREEN_W: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static SCREEN_H: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// 小狗元素在屏幕逻辑坐标（左上原点）中的矩形，由前端每次布局后上报。
+static PET_RECT: std::sync::Mutex<(f64, f64, f64, f64)> =
+    std::sync::Mutex::new((0.0, 0.0, 0.0, 0.0));
+
+pub fn set_screen_geo(w: f64, h: f64) {
+    SCREEN_W.store(w as u32, std::sync::atomic::Ordering::Relaxed);
+    SCREEN_H.store(h as u32, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn set_pet_rect(x: f64, y: f64, w: f64, h: f64) {
+    if let Ok(mut r) = PET_RECT.lock() {
+        *r = (x, y, w, h);
+    }
+}
+
+/// macOS 全局光标位置（左下原点），转 Tauri 左上原点逻辑坐标。无需任何权限。
+#[cfg(target_os = "macos")]
+fn cursor_point() -> Option<(f64, f64)> {
+    #[repr(C)]
+    struct NSPoint {
+        x: f64,
+        y: f64,
+    }
+    unsafe impl objc2::encode::Encode for NSPoint {
+        const ENCODING: objc2::encode::Encoding = objc2::encode::Encoding::Struct(
+            "NSPoint",
+            &[<f64 as objc2::encode::Encode>::ENCODING, <f64 as objc2::encode::Encode>::ENCODING],
+        );
+    }
+    unsafe impl objc2::encode::RefEncode for NSPoint {
+        const ENCODING_REF: objc2::encode::Encoding =
+            objc2::encode::Encoding::Pointer(&<Self as objc2::encode::Encode>::ENCODING);
+    }
+    unsafe {
+        let cls = objc2::runtime::Class::get(c"NSEvent")?;
+        let sel = objc2::sel!(mouseLocation);
+        let p: NSPoint = objc2::msg_send![cls, mouseLocation];
+        let h = SCREEN_H.load(std::sync::atomic::Ordering::Relaxed) as f64;
+        Some((p.x, h - p.y))
+    }
+}
+
+/// 光标守卫：光标在小狗范围（±12px 余量）内才解除全窗穿透，
+/// 其余时间整窗穿透——桌面上只有小狗本身可交互。
+pub fn spawn_cursor_guard(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        use tauri::Manager;
+        let mut pass_through = true;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            let (px, py, pw, ph) = match PET_RECT.lock() {
+                Ok(g) => *g,
+                Err(_) => (0.0, 0.0, 0.0, 0.0),
+            };
+            if pw <= 0.0 {
+                continue;
+            }
+            let Some((mx, my)) = cursor_point() else { continue };
+            let margin = 12.0;
+            let inside = mx >= px - margin
+                && mx <= px + pw + margin
+                && my >= py - margin
+                && my <= py + ph + margin;
+            if inside == pass_through {
+                if let Some(w) = app.get_webview_window("topbar") {
+                    w.set_ignore_cursor_events(!inside).ok();
+                }
+                pass_through = !inside;
+            }
+        }
+    });
+}
+
 /// 把窗口变为 non-activating panel：点击内容不激活应用、事件直达 webview，
 /// 消除"第一次点击只用于激活窗口"的 macOS 默认行为（悬浮 HUD 的通行做法）。
 #[cfg(target_os = "macos")]

@@ -2458,6 +2458,12 @@ fn get_dock_zcode() -> bool {
     dock::enabled()
 }
 
+/// 前端上报小狗元素矩形（窗口内逻辑坐标），供光标守卫判定穿透/交互。
+#[tauri::command]
+fn set_pet_rect(x: f64, y: f64, w: f64, h: f64) {
+    dock::set_pet_rect(x, y, w, h);
+}
+
 /// 调用窗口自己的宿主：main=zcode，cap-<host>=<host>（多胶囊架构）。
 #[tauri::command]
 fn get_dock_host(window: tauri::WebviewWindow) -> String {
@@ -3169,8 +3175,7 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
         tauri::WebviewUrl::App("pet.html".into()),
     )
     .title("CostDog Pet")
-    .inner_size(120.0, 120.0)
-    .position(100.0, 200.0)
+    .inner_size(800.0, 600.0)
     .decorations(false)
     .transparent(true)
     .always_on_top(true)
@@ -3183,21 +3188,28 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
         return;
     };
     bar.set_shadow(false).ok();
-    // 宠物形态：可拖拽、可点击（交互型），不穿透。
-    // 居中于主屏顶边。
+    #[cfg(target_os = "macos")]
+    dock::make_non_activating(&bar);
+    // 全屏铺满主屏：小狗在整张桌面活动。
     if let Ok(Some(monitor)) = bar.current_monitor() {
         let size = monitor.size();
-        let sw = size.width as f64;
-        let scale = bar.scale_factor().unwrap_or(2.0);
-        let bar_w = 120.0 * scale;
-        let x = (sw - bar_w) / 2.0;
-        bar.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
-            x: x.round() as i32,
-            y: 0,
+        let pos = monitor.position();
+        bar.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+            width: size.width,
+            height: size.height,
         }))
         .ok();
+        bar.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+            x: pos.x,
+            y: pos.y,
+        }))
+        .ok();
+        let scale = bar.scale_factor().unwrap_or(2.0);
+        dock::set_screen_geo(size.width as f64 / scale, size.height as f64 / scale);
     }
-    eprintln!("[CostDog] topbar ready");
+    // 默认全窗穿透：光标进入小狗范围时由 guard 线程解除。
+    bar.set_ignore_cursor_events(true).ok();
+    eprintln!("[CostDog] pet window ready (fullscreen pass-through)");
 }
 
 /// 创建常驻隐藏的下拉面板窗口（主线程调用）。
@@ -3399,7 +3411,7 @@ pub fn run() {
                 .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions, get_live_session, set_live_session, get_session_cost_alert])
+        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions, get_live_session, set_live_session, get_session_cost_alert, set_pet_rect])
         .setup(|app| {
             // A 36px always-on-top bar is an accessory, not an app: drop the Dock icon
             // and the app menu so CostDog lives entirely in the menu bar.
@@ -3432,8 +3444,9 @@ pub fn run() {
             // 菜单栏下拉面板（常驻隐藏，托盘左键切换）。
             ensure_panel_window(app.handle());
 
-            // 屏幕顶边常驻条（永远显示、鼠标穿透）：速率/花费/燃速的瞥视载体。
+            // 屏幕宠物：全屏漫游小狗（穿透 + 光标守卫）。
             ensure_topbar_window(app.handle());
+            dock::spawn_cursor_guard(app.handle().clone());
 
             // System tray (restore hidden bar + quit). Failure is non-fatal: log and continue.
             if let Err(e) = build_tray(app.handle()) {
