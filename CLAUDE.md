@@ -382,3 +382,13 @@ npm run tauri:build
   data-tauri-drag-region（#pet/svg/hud 多处）
 - 实拍验证：小狗+徽章 $25.70+▲40/s+CTX 535.7k 渲染正常
 - 用户指示：下一步用浏览器访问 ChatGPT 生图做真实宠物模型
+### 48. ChatGPT 生图宠物皮肤上线（2026-09-25，用户指定流程全通）
+
+- 链路全通：huashu CDP 接管用户 Chrome（隔离 profile ~/.costdog/chrome-profile，
+  Chrome 136+ 默认目录禁调试端口→必须独立 user-data-dir）→ 驱动已登录 ChatGPT
+  生图（1536×1024）→ canvas+dataURL 触发 Chrome 下载到 ~/Downloads → 接入
+- 资产：embedded/sprite.png（原图）、pet-run.png(766×543)/pet-sleep.png(701×380)
+  （PIL 白底转透明+包围盒裁剪）
+- pet.html v3：img 精灵替换 SVG，跑态 bob 动画、睡态+Zzz 浮动，徽章/HUD 不变
+- 实拍：ChatGPT 生成柴犬奔跑帧悬浮 Chrome 之上，▲18/s+CTX 556.9k 实时
+- 通道注意：9333 端口被 ego lite 占用（huashu 会误连）；CDP 用 9222+独立 user-data-dir
