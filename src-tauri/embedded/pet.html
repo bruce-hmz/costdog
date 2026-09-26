@@ -1,35 +1,71 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 body{margin:0;background:transparent;overflow:hidden;user-select:none}
-#pet{width:100vw;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}
-img.sprite{image-rendering:auto;filter:drop-shadow(0 4px 10px rgba(0,0,0,.35));transition:opacity .25s}
-#dog-run{width:112px}
-#dog-sleep{width:106px}
-.badge{position:absolute;top:-4px;right:-6px;background:#1c1c22;border:1px solid rgba(255,255,255,.2);border-radius:9px;font-size:10px;padding:1px 6px;color:#f97316;font-weight:700;font-family:monospace;box-shadow:0 2px 6px rgba(0,0,0,.3)}
-.wrap{position:relative}
+#pet{width:100vw;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:flex-end}
+/* ── 假3D 舞台：影子 + 跳跃 + 游走 + 转向 ── */
+.stage{position:relative;width:118px;height:86px;display:flex;align-items:flex-end;justify-content:center;transition:transform .9s cubic-bezier(.45,0,.25,1)}
+.critter{position:relative;display:flex;flex-direction:column;align-items:center;transition:transform .9s cubic-bezier(.45,0,.25,1);transform:scaleX(1)}
+img.sprite{height:64px;width:auto;filter:drop-shadow(0 3px 8px rgba(0,0,0,.3))}
+.ground{position:relative;width:100%;height:10px;margin-top:-4px}
+.shadow{position:absolute;left:50%;top:2px;width:64px;height:9px;border-radius:50%;transform:translateX(-50%);background:radial-gradient(ellipse at center,rgba(0,0,0,.4) 0%,rgba(0,0,0,0) 70%);animation:sh-bob .36s ease-in-out infinite alternate}
+@keyframes sh-bob{from{transform:translateX(-50%) scaleX(1);opacity:.9}to{transform:translateX(-50%) scaleX(.8);opacity:.55}}
+.critter{animation:bob .36s ease-in-out infinite alternate}
+@keyframes bob{from{transform:translateY(0)}to{transform:translateY(-5px)}}
+body[data-state="sleep"] .shadow{animation:sh-sleep 3.4s ease-in-out infinite}
+@keyframes sh-sleep{0%,100%{transform:translateX(-50%) scaleX(.92);opacity:.5}50%{transform:translateX(-50%) scaleX(1);opacity:.7}}
+body[data-state="sleep"] .critter{animation:none}
+/* 睡帧覆盖 */
+#dog-sleep,#cat-sleep,#rabbit-sleep{display:none}
+body[data-state="run"][data-ani="dog"] #dog-run{display:block}
+body[data-state="run"][data-ani="dog"] #dog-sleep{display:none}
+body[data-state="sleep"][data-ani="dog"] #dog-sleep{display:block}
+body[data-state="sleep"][data-ani="dog"] #dog-run{display:none}
+body[data-state="run"][data-ani="cat"] #cat-run{display:block}
+body[data-state="run"][data-ani="cat"] #cat-sleep{display:none}
+body[data-state="sleep"][data-ani="cat"] #cat-sleep{display:block}
+body[data-state="sleep"][data-ani="cat"] #cat-run{display:none}
+body[data-state="run"][data-ani="rabbit"] #rabbit-run{display:block}
+body[data-state="run"][data-ani="rabbit"] #rabbit-sleep{display:none}
+body[data-state="sleep"][data-ani="rabbit"] #rabbit-sleep{display:block}
+body[data-state="sleep"][data-ani="rabbit"] #rabbit-run{display:none}
+img.sprite[hidden]{display:none}
+/* 徽章/HUD/ZZZ */
+.badge{position:absolute;top:-4px;right:-8px;background:#1c1c22;border:1px solid rgba(255,255,255,.2);border-radius:9px;font-size:10px;padding:1px 6px;color:#f97316;font-weight:700;font-family:monospace;box-shadow:0 2px 6px rgba(0,0,0,.3)}
 .hud{margin-top:2px;display:flex;gap:8px;font-size:10px;color:#e8e8e8;text-shadow:0 1px 3px rgba(0,0,0,.95),0 0 6px rgba(0,0,0,.6);font-family:monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
 .hud b{color:#f97316}
-.hud .sep{color:rgba(0,0,0,.35)}
-body[data-state="run"] #dog-sleep{display:none}
-body[data-state="sleep"] #dog-run{display:none}
-body[data-state="run"] #dog-run{animation:bob .36s ease-in-out infinite alternate}
-@keyframes bob{from{transform:translateY(0)}to{transform:translateY(-4px)}}
-#zzz{position:absolute;top:-4px;right:14px;font-family:monospace;color:#7fb8ff;font-size:12px;text-shadow:0 1px 3px #000;display:none;animation:floatz 2.2s ease-in-out infinite}
+.hud .sep{color:rgba(0,0,0,.4)}
+#switcher{position:absolute;top:-2px;left:-14px;background:#1c1c22;border:1px solid rgba(255,255,255,.2);border-radius:9px;font-size:10px;padding:1px 6px;color:#7fb8ff;font-family:monospace;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.3)}
+#switcher:hover{color:#fff;border-color:#7fb8ff}
+#zzz{position:absolute;top:-10px;right:6px;font-family:monospace;color:#7fb8ff;font-size:12px;text-shadow:0 1px 3px #000;display:none;animation:floatz 2.2s ease-in-out infinite}
 body[data-state="sleep"] #zzz{display:block}
 @keyframes floatz{0%,100%{transform:translate(0,0);opacity:.35}50%{transform:translate(5px,-7px);opacity:1}}
 </style></head>
 <body><div id="pet" data-tauri-drag-region>
-<div class="wrap" data-tauri-drag-region>
-  <span id="zzz" data-tauri-drag-region>Z z z</span>
-  <span class="badge" id="cost" data-tauri-drag-region>$0</span>
-  <img id="dog-run" class="sprite" src="pet-run.png" data-tauri-drag-region alt="">
-  <img id="dog-sleep" class="sprite" src="pet-sleep.png" data-tauri-drag-region alt="" style="display:none">
+<div class="stage" id="stage" data-tauri-drag-region>
+  <div class="critter" id="critter" data-tauri-drag-region>
+    <span id="zzz" data-tauri-drag-region>Z z z</span>
+    <span class="badge" id="cost" data-tauri-drag-region>$0</span>
+    <span id="switcher" title="切换宠物">⇄</span>
+    <img id="dog-run" class="sprite" src="pet-run.png" data-tauri-drag-region alt="">
+    <img id="dog-sleep" class="sprite" src="pet-sleep.png" data-tauri-drag-region alt="">
+    <img id="cat-run" class="sprite" src="pet-cat-run.png" data-tauri-drag-region alt="" hidden>
+    <img id="cat-sleep" class="sprite" src="pet-cat-sleep.png" data-tauri-drag-region alt="" hidden>
+    <img id="rabbit-run" class="sprite" src="pet-rabbit-run.png" data-tauri-drag-region alt="" hidden>
+    <img id="rabbit-sleep" class="sprite" src="pet-rabbit-sleep.png" data-tauri-drag-region alt="" hidden>
+  </div>
+  <div class="ground" data-tauri-drag-region><div class="shadow" data-tauri-drag-region></div></div>
 </div>
 <div class="hud" data-tauri-drag-region><span id="rate">—</span><span class="sep">·</span><span id="ctx">CTX —</span></div>
 </div>
 <script>
 function fT(n){if(n>=1e9)return(n/1e9).toFixed(1)+'G';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return String(Math.round(n))}
 var cost=document.getElementById('cost'),rate=document.getElementById('rate'),ctx=document.getElementById('ctx'),zzz=document.getElementById('zzz');
+var stage=document.getElementById('stage'),critter=document.getElementById('critter');
+var ANI=['dog','cat','rabbit'];var aniIdx=0;
+function applyAni(){document.body.dataset.ani=ANI[aniIdx];}
+applyAni();
+// 双击切换宠物形态
+document.getElementById('switcher').addEventListener('click',function(e){e.stopPropagation();aniIdx=(aniIdx+1)%ANI.length;applyAni();});
 function tick(){
   if(!window.__TAURI_INTERNALS__)return;
   var I=window.__TAURI_INTERNALS__.invoke;
@@ -48,5 +84,15 @@ function tick(){
 }
 tick();
 setInterval(tick,2000);
+// 假3D 游走：每 4~7 秒向左右小步移动并转向
+function wander(){
+  var dx=(Math.random()*36-18);
+  var cur=parseFloat(stage.dataset.wx||'0');
+  var nxt=Math.max(-24,Math.min(24,cur+dx));
+  stage.dataset.wx=nxt;
+  stage.style.transform='translateX('+nxt+'px)';
+  critter.style.transform=nxt<cur?'scaleX(-1)':'scaleX(1)';
+}
+setInterval(wander,4200);
 </script>
 </body></html>
