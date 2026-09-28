@@ -60,6 +60,7 @@ var dogX=Math.round(SW*0.5), dir=1, walkTarget=null, walkSpeed=1.4;
 var lastLive=0, lastMoveDone=Date.now();
 var state='pause', stateUntil=Date.now()+3000;
 var hopNext=false;
+var sleeping=false;
 
 function setDog(x){
   dogX=Math.max(8,Math.min(SW-128,x));
@@ -75,7 +76,7 @@ function liveNow(){return Date.now()-lastLive<8000;}
 
 function behavior(){
   var now=Date.now();
-  var sleeping=!liveNow()&&now-lastLive>60000;
+  sleeping=!liveNow()&&now-lastLive>60000;
   document.body.dataset.state=sleeping?'sleep':(state==='walk'?'run':'idle');
   if(sleeping){reportRect();return;}
   // 有流量时更兴奋

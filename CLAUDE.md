@@ -418,3 +418,12 @@ npm run tauri:build
 - 前端每 tick 上报小狗矩形（set_pet_rect 命令）；objc2 NSEvent.mouseLocation
   读取光标（左下原点→转左上），NSPoint 需手写 Encode/RefEncode（ENCODING_REF）
 - 实测：小狗在屏幕右缘漫游、铭牌跟随（▲17/s·$26.06·CTX 692k）、位置随时间变化
+### 52. 桌面漫游小狗·最终形态（2026-09-27，回归已验证组件）
+
+- 全屏透明窗方案反复"AX 有 DOM 无像素"（set_size 放大/collection behavior 均
+  排除后依旧，间歇性 wry 合成问题）→ 果断回归**已验证渲染**的 150×150 小窗架构
+- 漫游改由 Rust 驱动：spawn_roamer 线程沿主屏底边移动窗口本身（狗=窗口），
+  walk/pause 状态机+随机掉头+xorshift 随机；小窗天然不挡桌面，穿透问题消失
+- pet.html 保留精灵图+铭牌+⇄ 切换；sleeping 作用域 bug 修复
+- 实测：窗口 3 秒移动 78px，截屏确认小狗+铭牌在底边散步 ✓
+- 教训：透明全屏窗在 wry 上不可靠；"移动小窗"是稳定等效方案

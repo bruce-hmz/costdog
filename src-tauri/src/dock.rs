@@ -58,6 +58,86 @@ fn cursor_point() -> Option<(f64, f64)> {
     }
 }
 
+/// 窗口漫游：小狗=小窗本身，Rust 侧沿主屏底边散步。
+/// 状态：walk（前进）/pause（停顿张望）；速度 8~22 px/步（每 90ms），
+/// 每段走 120~420px 后停 2~5 秒，随机掉头。
+pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
+    std::thread::spawn(move || {
+        use tauri::Manager;
+        let _ = app;
+        let mut x = 200.0f64;
+        let mut dir = 1.0f64;
+        let mut walking = true;
+        let mut remaining = 260.0f64;
+        let mut pause_until = std::time::Instant::now();
+        let mut scale = 2.0f64;
+        if let Ok(m) = window.current_monitor() {
+            if let Some(m) = m {
+                scale = m.scale_factor();
+            }
+        }
+        // 主屏底边（逻辑）：菜单栏约 25pt，窗高 150 → y = H-150-8
+        let screen_h = 1080.0f64;
+        let screen_w = 1920.0f64;
+        let y = screen_h - 150.0 - 6.0;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(90));
+            if !window.is_visible().unwrap_or(false) {
+                // 窗口被关/隐藏时退出漫游（宠物退役路径）。
+                return;
+            }
+            let now = std::time::Instant::now();
+            if !walking {
+                if now >= pause_until {
+                    walking = true;
+                    remaining = 120.0 + rand_range(300.0);
+                    if rand_range(1.0) < 0.4 {
+                        dir = -dir;
+                    }
+                }
+            } else {
+                let step = 8.0 + rand_range(14.0);
+                x += dir * step;
+                remaining -= step;
+                if x < 8.0 {
+                    x = 8.0;
+                    dir = 1.0;
+                    remaining = 200.0 + rand_range(200.0);
+                }
+                if x > screen_w - 158.0 {
+                    x = screen_w - 158.0;
+                    dir = -1.0;
+                    remaining = 200.0 + rand_range(200.0);
+                }
+                if remaining <= 0.0 {
+                    walking = false;
+                    pause_until = now + std::time::Duration::from_millis((2000.0 + rand_range(3000.0)) as u64);
+                }
+            }
+            window
+                .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
+                .ok();
+            let _ = scale;
+        }
+    });
+}
+
+fn rand_range(max: f64) -> f64 {
+    // xorshift 轻量随机，避免引 rand 依赖
+    use std::cell::Cell;
+    thread_local! {
+        static SEED: Cell<u64> = Cell::new(0x9E3779B97F4A7C15);
+    }
+    SEED.with(|s| {
+        let mut v = s.get();
+        v ^= v << 13;
+        v ^= v >> 7;
+        v ^= v << 17;
+        s.set(v);
+        (v % 100000) as f64 / 100000.0 * max
+    })
+}
+
 /// 光标守卫：光标在小狗范围（±12px 余量）内才解除全窗穿透，
 /// 其余时间整窗穿透——桌面上只有小狗本身可交互。
 pub fn spawn_cursor_guard(app: tauri::AppHandle) {
@@ -94,6 +174,7 @@ pub fn spawn_cursor_guard(app: tauri::AppHandle) {
 #[cfg(target_os = "macos")]
 pub fn make_non_activating(window: &tauri::WebviewWindow) {
     let Ok(ns_window) = window.ns_window() else { return };
+    set_cross_space(ns_window as isize);
     unsafe {
         use objc2::msg_send;
         use objc2::runtime::AnyObject;
@@ -101,6 +182,16 @@ pub fn make_non_activating(window: &tauri::WebviewWindow) {
         let mask: usize = msg_send![obj, styleMask];
         // NSNonactivatingPanelMask = 1 << 7
         let _: () = msg_send![obj, setStyleMask: mask | (1 << 7)];
+    }
+}
+
+/// 跨 Space 可见（canJoinAllSpaces | fullScreenAuxiliary）。失败仅打日志。
+#[cfg(target_os = "macos")]
+pub fn set_cross_space(ns_window: isize) {
+    unsafe {
+        let behavior: usize = (1 << 0) | (1 << 8);
+        let _: () = objc2::msg_send![ns_window as *mut objc2::runtime::AnyObject,
+            setCollectionBehavior: behavior];
     }
 }
 

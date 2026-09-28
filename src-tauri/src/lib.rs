@@ -3110,13 +3110,10 @@ fn close_window(app: tauri::AppHandle) {
 }
 
 fn show_bar(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
-        BAR_VISIBLE.store(true, std::sync::atomic::Ordering::Relaxed);
-        // Scans are throttled while hidden, so the bar can be showing numbers up to five
-        // minutes old. Re-reading the DB is cheap and makes it current on reappearance.
-        let _ = app.emit("refresh-data", ());
+    // 退役：Show 入口改为弹出菜单栏面板。
+    if let Some(panel) = app.get_webview_window("panel") {
+        panel.show().ok();
+        panel.set_focus().ok();
     }
 }
 
@@ -3130,6 +3127,71 @@ fn hide_bar(app: &tauri::AppHandle) {
 // macOS menu-bar tray: the bar window has no title bar (decorations: false),
 // so the close button hides it. The tray is the only way to bring it back and
 // to quit the app cleanly. Built in code; no tauri.conf.json entry needed.
+/// 注入宠物从本地 HTTP 拉数据/素材（跨源需 CORS）。
+const PET_RUN_PNG: &[u8] = include_bytes!("../embedded/pet-run.png");
+const PET_SLEEP_PNG: &[u8] = include_bytes!("../embedded/pet-sleep.png");
+const PET_CAT_RUN_PNG: &[u8] = include_bytes!("../embedded/pet-cat-run.png");
+const PET_CAT_SLEEP_PNG: &[u8] = include_bytes!("../embedded/pet-cat-sleep.png");
+const PET_RABBIT_RUN_PNG: &[u8] = include_bytes!("../embedded/pet-rabbit-run.png");
+const PET_RABBIT_SLEEP_PNG: &[u8] = include_bytes!("../embedded/pet-rabbit-sleep.png");
+
+fn live_stats_json() -> serde_json::Value {
+    let sources = get_live_stats();
+    serde_json::to_value(sources).unwrap_or(serde_json::Value::Array(Vec::new()))
+}
+
+fn today_cost() -> f64 {
+    let conn = match ensure_db_exists() { Ok(c) => c, Err(_) => return 0.0 };
+    analytics::get_analytics(&conn, "today", analytics::AnalyticsFilters::default())
+        .map(|a| a.totals.cost)
+        .unwrap_or(0.0)
+}
+
+fn serve_stats_body() -> (String, &'static str) {
+    let body = format!(
+        "{{\"sources\":{},\"today_cost\":{}}}",
+        serde_json::to_string(&live_stats_json()).unwrap_or_else(|_| "[]".into()),
+        today_cost()
+    );
+    (body, "application/json")
+}
+
+/// 本地回环数据服务：注入的宠物 UI 从这里拉实时数据与素材。
+fn spawn_pet_data_server() {
+    std::thread::spawn(|| {
+        let listener = match std::net::TcpListener::bind("127.0.0.1:9401") {
+            Ok(l) => l,
+            Err(e) => { eprintln!("[CostDog] data server bind failed: {e}"); return; }
+        };
+        eprintln!("[CostDog] pet data server on 127.0.0.1:9401");
+        for stream in listener.incoming() {
+            let mut stream = match stream { Ok(s) => s, Err(_) => continue };
+            use std::io::{Read, Write};
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            let req = String::from_utf8_lossy(&buf);
+            let path = req.split(' ').nth(1).unwrap_or("/");
+            let (ctype, body): (&str, Vec<u8>) = match path {
+                "/stats.json" => { let (b, t) = serve_stats_body(); (t, b.into_bytes()) }
+                "/pet-run.png" => ("image/png", PET_RUN_PNG.to_vec()),
+                "/pet-sleep.png" => ("image/png", PET_SLEEP_PNG.to_vec()),
+                "/pet-cat-run.png" => ("image/png", PET_CAT_RUN_PNG.to_vec()),
+                "/pet-cat-sleep.png" => ("image/png", PET_CAT_SLEEP_PNG.to_vec()),
+                "/pet-rabbit-run.png" => ("image/png", PET_RABBIT_RUN_PNG.to_vec()),
+                "/pet-rabbit-sleep.png" => ("image/png", PET_RABBIT_SLEEP_PNG.to_vec()),
+                _ => ("text/plain", b"not found".to_vec()),
+            };
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(&body);
+            let _ = stream.flush();
+        }
+    });
+}
+
 /// 菜单栏下拉面板：常驻隐藏窗口，左键托盘切换；右上角对齐图标、下缘 +6px。
 fn toggle_panel(app: &tauri::AppHandle, rect: &tauri::Rect) {
     use tauri::Manager;
@@ -3175,7 +3237,8 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
         tauri::WebviewUrl::App("pet.html".into()),
     )
     .title("CostDog Pet")
-    .inner_size(800.0, 600.0)
+    .inner_size(150.0, 150.0)
+    .position(200.0, 200.0)
     .decorations(false)
     .transparent(true)
     .always_on_top(true)
@@ -3191,28 +3254,99 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
     #[cfg(target_os = "macos")]
     dock::make_non_activating(&bar);
     // 全屏铺满主屏：小狗在整张桌面活动。
-    if let Ok(Some(monitor)) = bar.current_monitor() {
-        let size = monitor.size();
-        let pos = monitor.position();
-        bar.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-            width: size.width,
-            height: size.height,
-        }))
-        .ok();
-        bar.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
-            x: pos.x,
-            y: pos.y,
-        }))
-        .ok();
-        let scale = bar.scale_factor().unwrap_or(2.0);
-        dock::set_screen_geo(size.width as f64 / scale, size.height as f64 / scale);
-    }
+    dock::set_screen_geo(1920.0, 1080.0);
+    dock::spawn_roamer(app.clone(), bar.clone());
     // 默认全窗穿透：光标进入小狗范围时由 guard 线程解除。
     bar.set_ignore_cursor_events(true).ok();
     eprintln!("[CostDog] pet window ready (fullscreen pass-through)");
 }
 
 /// 创建常驻隐藏的下拉面板窗口（主线程调用）。
+/// CDP 注入器脚本（编译期内嵌，运行时写到临时目录用系统 node 执行）。
+const INJECTOR_SRC: &str = include_str!("../scripts/costdog-inject.mjs");
+
+fn node_candidates() -> Vec<std::path::PathBuf> {
+    [
+        "/opt/homebrew/bin/node",
+        "/usr/local/bin/node",
+        "/usr/bin/node",
+    ]
+    .iter()
+    .map(std::path::PathBuf::from)
+    .filter(|p| p.exists())
+    .collect()
+}
+
+fn cdp_http_ready(port: u16) -> bool {
+    std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
+}
+
+/// 注入一次：对已开 CDP 端口的客户端执行注入脚本。
+fn inject_once(port: u16, host: &str, data_port: u16) -> Result<(), String> {
+    let node = node_candidates().first().cloned().ok_or("node not found")?;
+    let script = std::env::temp_dir().join("costdog-inject.mjs");
+    fs::write(&script, INJECTOR_SRC).map_err(|e| e.to_string())?;
+    let out = std::process::Command::new(node)
+        .arg(&script)
+        .arg("--port").arg(port.to_string())
+        .arg("--host").arg(host)
+        .arg("--data").arg(data_port.to_string())
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).to_string());
+    }
+    Ok(())
+}
+
+/// 注入守护：客户端 CDP 端口在线时每 90 秒补一次注入（幂等）。
+fn spawn_inject_daemon(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let _ = app; // 预留：托盘状态刷新
+        let targets: [(u16, &str); 2] = [(9345, "zcode"), (9346, "codex")];
+        let mut last: [std::time::Instant; 2] = [
+            std::time::Instant::now() - std::time::Duration::from_secs(3600),
+            std::time::Instant::now() - std::time::Duration::from_secs(3600),
+        ];
+        loop {
+            for (i, (port, host)) in targets.iter().enumerate() {
+                if cdp_http_ready(*port) && last[i].elapsed() > std::time::Duration::from_secs(90) {
+                    match inject_once(*port, host, 9401) {
+                        Ok(()) => eprintln!("[CostDog] injected {host} via CDP {port}"),
+                        Err(e) => eprintln!("[CostDog] inject {host} failed: {e}"),
+                    }
+                    last[i] = std::time::Instant::now();
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(15));
+        }
+    });
+}
+
+/// 优雅重启客户端并带 CDP 端口（托盘"嵌入"入口触发，视为用户同意）。
+fn relaunch_client_with_cdp(app_name: &str, port: u16) {
+    let _ = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(format!("quit app \"{app_name}\""))
+        .status();
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    let _ = std::process::Command::new("open")
+        .args(["-na", app_name, "--args",
+               "--remote-debugging-address=127.0.0.1",
+               &format!("--remote-debugging-port={port}")])
+        .status();
+}
+
+#[tauri::command]
+fn embed_zcode() {
+    relaunch_client_with_cdp("ZCode", 9345);
+}
+
+#[tauri::command]
+fn embed_codex() {
+    relaunch_client_with_cdp("ChatGPT", 9346);
+}
+
 fn ensure_panel_window(app: &tauri::AppHandle) {
     use tauri::Manager;
     if app.get_webview_window("panel").is_some() {
@@ -3251,9 +3385,11 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let version = app.package_info().version.clone();
     let version_i = MenuItem::with_id(app, "version", format!("CostDog v{}", version), false, None::<&str>)?;
     let show_i = MenuItem::with_id(app, "show", "Show CostDog", true, None::<&str>)?;
+    let embed_zcode_i = MenuItem::with_id(app, "embed-zcode", "嵌入 ZCode（宠物）", true, None::<&str>)?;
+    let embed_codex_i = MenuItem::with_id(app, "embed-codex", "嵌入 Codex（实验）", true, None::<&str>)?;
     let update_i = MenuItem::with_id(app, "check-update", "Check for Updates…", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit CostDog", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&version_i, &show_i, &update_i, &quit_i])?;
+    let menu = Menu::with_items(app, &[&version_i, &show_i, &embed_zcode_i, &embed_codex_i, &update_i, &quit_i])?;
 
     // macOS recolors template images to match the light/dark menu bar and ignores their
     // color channels, so the opaque app icon would render as a solid blob. Other platforms
@@ -3411,7 +3547,7 @@ pub fn run() {
                 .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions, get_live_session, set_live_session, get_session_cost_alert, set_pet_rect])
+        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions, get_live_session, set_live_session, get_session_cost_alert, set_pet_rect, embed_zcode, embed_codex])
         .setup(|app| {
             // A 36px always-on-top bar is an accessory, not an app: drop the Dock icon
             // and the app menu so CostDog lives entirely in the menu bar.
@@ -3422,7 +3558,7 @@ pub fn run() {
             // 主胶囊已退役（宠物形态接管）：隐藏窗口并移出 Dock 交互，
             // dock.rs 保留待复活。托盘/面板/宠物为主要界面。
             window.hide().ok();
-            window.set_always_on_top(true).ok();
+            window.set_always_on_top(false).ok();
             window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: 410.0, height: 36.0 })).ok();
             window.set_title("CostDog").ok();
             // 停靠态的无缝观感由 ::before 微光顶边负责；自身投影只会制造分离感。
@@ -3444,9 +3580,10 @@ pub fn run() {
             // 菜单栏下拉面板（常驻隐藏，托盘左键切换）。
             ensure_panel_window(app.handle());
 
-            // 屏幕宠物：全屏漫游小狗（穿透 + 光标守卫）。
+            // 桌面宠物（全屏漫游）+ 本地数据服务（供宠物与面板取数）。
             ensure_topbar_window(app.handle());
             dock::spawn_cursor_guard(app.handle().clone());
+            spawn_pet_data_server();
 
             // System tray (restore hidden bar + quit). Failure is non-fatal: log and continue.
             if let Err(e) = build_tray(app.handle()) {
