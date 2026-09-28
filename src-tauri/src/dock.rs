@@ -99,6 +99,7 @@ pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
     std::thread::spawn(move || {
         use tauri::Manager;
         let _ = app;
+        let mut tick = 0u32;
         let mut x = 200.0f64;
         let mut dir = 1.0f64;
         let mut walking = true;
@@ -124,6 +125,19 @@ pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
                 return;
             }
             let now = std::time::Instant::now();
+            // 合成看门狗（每 ~5s=20 tick）：无 shadow 透明置顶窗会被 window server
+            // 间歇剔除出桌面合成（自身渲染正常但肉眼/截屏不可见）；±2px 高度微调
+            // 强制重入合成层（实测 16→127 棕像素即时恢复）。
+            tick += 1;
+            if tick % 20 == 0 {
+                if let Ok(size) = window.outer_size() {
+                    let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+                        width: size.width,
+                        height: size.height + 2,
+                    }));
+                    let _ = window.set_size(tauri::Size::Physical(size));
+                }
+            }
             // 拖动优先：用户 3 秒内手动挪过 → 以新位置为起点，暂停散步。
             if let Some(ux) = take_user_drag() {
                 x = ux;
@@ -159,10 +173,15 @@ pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
                     pause_until = now + std::time::Duration::from_millis((3000.0 + rand_range(4000.0)) as u64);
                 }
             }
-            ROAM_TARGET_X.store((x * 10.0) as i64, std::sync::atomic::Ordering::Relaxed);
-            window
-                .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
-                .ok();
+            // 只有位置真正变化才 set_position：重复设置相同坐标会持续打断
+            // macOS 窗口合成（表现为窗口自身渲染正常但对桌面合成"隐身"）。
+            let next_x = (x * 10.0) as i64;
+            if next_x != ROAM_TARGET_X.load(std::sync::atomic::Ordering::Relaxed) {
+                ROAM_TARGET_X.store(next_x, std::sync::atomic::Ordering::Relaxed);
+                window
+                    .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
+                    .ok();
+            }
             let _ = scale;
         }
     });
