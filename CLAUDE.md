@@ -427,3 +427,12 @@ npm run tauri:build
 - pet.html 保留精灵图+铭牌+⇄ 切换；sleeping 作用域 bug 修复
 - 实测：窗口 3 秒移动 78px，截屏确认小狗+铭牌在底边散步 ✓
 - 教训：透明全屏窗在 wry 上不可靠；"移动小窗"是稳定等效方案
+### 53. 渲染间歇 bug 根治（2026-09-27，二分定位）
+
+- 症状：宠物窗 AX 有 DOM 无像素（红底都不画）；全屏/小窗、移动/静止均间歇发作
+- 二分定位：pet.html 回滚到 9f2cc99（纯抠图+铭牌版）→ 判空=否渲染恢复！
+  凶手=v6 页面重写（.stage absolute+inset:0 / .critter absolute+bottom 布局进入
+  透明窗合成死区；漫游 Rust set_position 无辜）
+- 最终形态：9f2cc99 页面（居中 flex）+ Rust 漫游（walk/pause/掉头）+ 150×150 小窗
+- 实测：漫游中（217,924 → 移动确认）判空=否，狗+铭牌渲染 ✓
+- 铁律：透明窗页面禁用 absolute+inset 全铺布局；改布局先小步验证渲染

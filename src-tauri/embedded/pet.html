@@ -15,7 +15,7 @@ body[data-state="run"][data-ani="dog"] #dog-sleep,body[data-state="sleep"][data-
 body[data-state="run"][data-ani="cat"] #cat-sleep,body[data-state="sleep"][data-ani="cat"] #cat-run{display:none}
 body[data-state="run"][data-ani="rabbit"] #rabbit-sleep,body[data-state="sleep"][data-ani="rabbit"] #rabbit-run{display:none}
 /* 头顶铭牌：纯数据牌，随宠物移动 */
-.plate{position:absolute;top:-20px;left:50%;transform:translateX(-50%);background:#1c1c22;border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:2px 8px;font-size:10px;color:#e8e8e8;font-family:monospace;font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.35)}
+.plate{position:absolute;top:-16px;left:50%;transform:translateX(-50%);background:#1c1c22;border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:2px 8px;font-size:10px;color:#e8e8e8;font-family:monospace;font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.35)}
 .plate b{color:#f97316;font-weight:700}
 .plate .g{color:#4ade80;font-weight:700}
 .plate .sep{color:rgba(255,255,255,.22);margin:0 3px}
@@ -43,67 +43,12 @@ body[data-state="sleep"] #zzz2{display:block}
 </div>
 <script>
 function fT(n){if(n>=1e9)return(n/1e9).toFixed(1)+'G';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return String(Math.round(n))}
-var cost=document.getElementById('cost'),rate=document.getElementById('rate'),ctx=document.getElementById('ctx');
+var rate=document.getElementById('rate'),cost=document.getElementById('cost'),ctx=document.getElementById('ctx'),plate=document.getElementById('plate');
 var stage=document.getElementById('stage'),critter=document.getElementById('critter');
 var ANI=['dog','cat','rabbit'];var aniIdx=0;
 function applyAni(){document.body.dataset.ani=ANI[aniIdx];}
 applyAni();
 document.getElementById('switcher').addEventListener('click',function(e){e.stopPropagation();aniIdx=(aniIdx+1)%ANI.length;applyAni();});
-
-/* ── 行为系统：全屏漫游的小狗 ──
-   walk    沿屏幕底边散步（方向随机，走几秒停几秒）
-   sit     坐下休息 2~5 秒（偶尔张望=翻转）
-   excited agent 有实时流量时：跑步速度×2、偶尔小跳
-   sleep   agent 静默 60 秒：原地趴睡 + Zzz                  */
-var SW=window.screen.width, SH=window.screen.height;
-var dogX=Math.round(SW*0.5), dir=1, walkTarget=null, walkSpeed=1.4;
-var lastLive=0, lastMoveDone=Date.now();
-var state='pause', stateUntil=Date.now()+3000;
-var hopNext=false;
-var sleeping=false;
-
-function setDog(x){
-  dogX=Math.max(8,Math.min(SW-128,x));
-  critter.style.left=dogX+'px';
-}
-function reportRect(){
-  try{
-    var r=critter.getBoundingClientRect();
-    window.__TAURI_INTERNALS__.invoke('set_pet_rect',{x:r.left,y:r.top,w:r.width,h:r.height+22});
-  }catch(e){}
-}
-function liveNow(){return Date.now()-lastLive<8000;}
-
-function behavior(){
-  var now=Date.now();
-  sleeping=!liveNow()&&now-lastLive>60000;
-  document.body.dataset.state=sleeping?'sleep':(state==='walk'?'run':'idle');
-  if(sleeping){reportRect();return;}
-  // 有流量时更兴奋
-  walkSpeed=liveNow()?2.6:1.3;
-  if(now>stateUntil){
-    var r=Math.random();
-    if(r<0.5){state='walk';walkTarget=Math.round(SW*0.08+Math.random()*SW*0.8);dir=walkTarget>dogX?1:-1;}
-    else if(r<0.8){state='pause';stateUntil=now+2000+Math.random()*3000;}
-    else{state='walk';walkTarget=dogX+ (Math.random()<0.5?-90:90);dir=walkTarget>dogX?1:-1;stateUntil=now+4000;}
-  }
-  if(state==='walk'){
-    var step=walkSpeed;
-    if((dir>0&&dogX>=walkTarget)||(dir<0&&dogX<=walkTarget)){state='pause';stateUntil=now+1500+Math.random()*2500;}
-    else{
-      dogX+=dir*step;
-      dogX=Math.max(8,Math.min(SW-128,dogX));
-      critter.style.transform=(dir>0?'scaleX(1)':'scaleX(-1)');
-      if(hopNext&&Math.random()<0.3){hopNext=false;}
-    }
-  }
-  critter.style.left=dogX+'px';
-  reportRect();
-}
-// 翻身张望：pause 时偶尔转向
-setInterval(function(){if(state==='pause'&&Math.random()<0.4){critter.style.transform=critter.style.transform==='scaleX(-1)'?'scaleX(1)':'scaleX(-1)';}},1700);
-
-var liveCheck=0;
 function tick(){
   if(!window.__TAURI_INTERNALS__)return;
   var I=window.__TAURI_INTERNALS__.invoke;
@@ -113,18 +58,23 @@ function tick(){
   I('get_live_stats').then(function(rows){
     var a=rows.slice().sort(function(x,y){return y.tokens_per_min-x.tokens_per_min;})[0];
     var live=a&&a.tokens_per_min>0.05;
-    document.body.dataset.state=(live||state==='walk')?'run':(sleeping?'sleep':'idle');
-    if(live)lastLive=Date.now();
-    rate.innerHTML=live?('▲ <b>'+Math.round(a.tokens_per_min/60)+'/s</b>'):'<span style="color:#7fb8ff">zzz</span>';
+    document.body.dataset.state=live?'run':'sleep';
+    rate.innerHTML=live?('▲ '+Math.round(a.tokens_per_min/60)+'/s'):'<span style="color:#7fb8ff">zzz</span>';
   }).catch(function(){});
   I('get_session_metrics',{source:'zcode',sessionId:null}).then(function(m){
     ctx.textContent='CTX '+(m?fT(m.last_context_tokens||0):'—');
   }).catch(function(){});
-  reportRect();
 }
 tick();
 setInterval(tick,2000);
-setInterval(behavior,100);
-window.addEventListener('resize',reportRect);
+function wander(){
+  var dx=(Math.random()*36-18);
+  var cur=parseFloat(stage.dataset.wx||'0');
+  var nxt=Math.max(-24,Math.min(24,cur+dx));
+  stage.dataset.wx=nxt;
+  stage.style.transform='translateX('+nxt+'px)';
+  critter.style.transform=nxt<cur?'scaleX(-1)':'scaleX(1)';
+}
+setInterval(wander,4200);
 </script>
 </body></html>
