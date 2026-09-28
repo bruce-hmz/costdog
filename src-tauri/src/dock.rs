@@ -107,7 +107,9 @@ pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
         // 主屏底边（逻辑）：菜单栏约 25pt，窗高 150 → y = H-150-8
         let screen_h = 1080.0f64;
         let screen_w = 1920.0f64;
-        let y = screen_h - 150.0 - 6.0;
+        // 路线抬高到 Dock 之上：底部 Dock 约 70~90px，留 100px 安全边距，
+        // 小狗整个身体（含铭牌）在 Dock 上方行走，不再藏进任务栏。
+        let y = screen_h - 150.0 - 100.0;
         loop {
             std::thread::sleep(std::time::Duration::from_millis(90));
             if !window.is_visible().unwrap_or(false) {
