@@ -4,7 +4,7 @@ body{margin:0;background:transparent;overflow:hidden;user-select:none}
 #pet{width:100vw;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .stage{position:relative;width:118px;height:96px;display:flex;align-items:flex-end;justify-content:center;transition:transform .9s cubic-bezier(.45,0,.25,1)}
 .critter{position:relative;display:flex;flex-direction:column;align-items:center;transition:transform .9s cubic-bezier(.45,0,.25,1);transform:scaleX(1)}
-img.sprite{height:64px;width:auto;filter:drop-shadow(0 3px 8px rgba(0,0,0,.28));transition:opacity .25s}
+img.sprite{height:64px;width:auto;filter:drop-shadow(0 0 1.5px rgba(255,255,255,.9)) drop-shadow(0 2px 3px rgba(255,255,255,.5)) drop-shadow(0 5px 12px rgba(0,0,0,.5));transition:opacity .25s}
 #dog-run{width:112px}
 #dog-sleep{width:106px}
 .critter{animation:bob .36s ease-in-out infinite alternate}
@@ -15,7 +15,7 @@ body[data-state="run"][data-ani="dog"] #dog-sleep,body[data-state="sleep"][data-
 body[data-state="run"][data-ani="cat"] #cat-sleep,body[data-state="sleep"][data-ani="cat"] #cat-run{display:none}
 body[data-state="run"][data-ani="rabbit"] #rabbit-sleep,body[data-state="sleep"][data-ani="rabbit"] #rabbit-run{display:none}
 /* 头顶铭牌：纯数据牌，随宠物移动 */
-.plate{position:absolute;top:-16px;left:50%;transform:translateX(-50%);background:#1c1c22;border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:2px 8px;font-size:10px;color:#e8e8e8;font-family:monospace;font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.35)}
+.plate{position:absolute;top:-16px;left:50%;transform:translateX(-50%);box-shadow:0 0 0 1px rgba(255,255,255,.35),0 4px 14px rgba(0,0,0,.5);background:#1c1c22;border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:2px 8px;font-size:10px;color:#e8e8e8;font-family:monospace;font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.35)}
 .plate b{color:#f97316;font-weight:700}
 .plate .g{color:#4ade80;font-weight:700}
 .plate .sep{color:rgba(255,255,255,.22);margin:0 3px}

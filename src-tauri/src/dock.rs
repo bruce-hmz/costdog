@@ -111,7 +111,7 @@ pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
         // 小狗整个身体（含铭牌）在 Dock 上方行走，不再藏进任务栏。
         let y = screen_h - 150.0 - 100.0;
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(90));
+            std::thread::sleep(std::time::Duration::from_millis(160));
             if !window.is_visible().unwrap_or(false) {
                 // 窗口被关/隐藏时退出漫游（宠物退役路径）。
                 return;
@@ -133,7 +133,7 @@ pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
                     }
                 }
             } else {
-                let step = 8.0 + rand_range(14.0);
+                let step = 4.0 + rand_range(7.0);
                 x += dir * step;
                 remaining -= step;
                 if x < 8.0 {
@@ -148,7 +148,7 @@ pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
                 }
                 if remaining <= 0.0 {
                     walking = false;
-                    pause_until = now + std::time::Duration::from_millis((2000.0 + rand_range(3000.0)) as u64);
+                    pause_until = now + std::time::Duration::from_millis((3000.0 + rand_range(4000.0)) as u64);
                 }
             }
             ROAM_TARGET_X.store((x * 10.0) as i64, std::sync::atomic::Ordering::Relaxed);
