@@ -32,7 +32,7 @@ body[data-state="sleep"] #zzz2{display:block}
     <div class="plate" id="plate" data-tauri-drag-region><b id="rate">—</b><span class="sep">│</span><span id="cost">$0</span><span class="sep">│</span><span id="ctx">CTX —</span></div>
     <span id="zzz2" data-tauri-drag-region>Z z z</span>
     <span id="switcher" title="切换宠物">⇄</span>
-    <img id="dog-run" class="sprite" src="pet-run.png" data-tauri-drag-region alt="">
+    <img id="dog-run" class="sprite walk-frames" src="walk-0.png" data-tauri-drag-region alt="">
     <img id="dog-sleep" class="sprite" src="pet-sleep.png" data-tauri-drag-region alt="">
     <img id="cat-run" class="sprite" src="pet-cat-run.png" data-tauri-drag-region alt="" hidden>
     <img id="cat-sleep" class="sprite" src="pet-cat-sleep.png" data-tauri-drag-region alt="" hidden>
@@ -58,7 +58,19 @@ plate.addEventListener('click',function(e){
 });
 var stage=document.getElementById('stage'),critter=document.getElementById('critter');
 var ANI=['dog','cat','rabbit'];var aniIdx=0;
-function applyAni(){document.body.dataset.ani=ANI[aniIdx];}
+// 8 帧走路循环（柴犬）：走时 130ms/帧，停时定格第 0 帧
+var WALK_N=8, walkIdx=0, dogRun=document.getElementById('dog-run');
+setInterval(function(){
+  if(document.body.dataset.ani!=='dog')return;
+  var walking=document.body.dataset.state==='run';
+  if(!walking){walkIdx=0;dogRun.src='walk-0.png';return;}
+  walkIdx=(walkIdx+1)%WALK_N;
+  dogRun.src='walk-'+walkIdx+'.png';
+},130);
+function applyAni(){
+  document.body.dataset.ani=ANI[aniIdx];
+  if(ANI[aniIdx]!=='dog'){dogRun.src='pet-run.png';}
+}
 applyAni();
 document.getElementById('switcher').addEventListener('click',function(e){e.stopPropagation();aniIdx=(aniIdx+1)%ANI.length;applyAni();});
 function tick(){
