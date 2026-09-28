@@ -3294,17 +3294,26 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
     if app.get_webview_window("topbar").is_some() {
         return;
     }
+    let (sw, sh) = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|m| {
+            let size = m.size();
+            let scale = m.scale_factor();
+            (size.width as f64 / scale, size.height as f64 / scale)
+        })
+        .unwrap_or((1920.0, 1080.0));
     let Ok(bar) = tauri::WebviewWindowBuilder::new(
         app,
         "topbar",
         tauri::WebviewUrl::App("pet.html".into()),
     )
     .title("CostDog Pet")
-    .inner_size(150.0, 150.0)
-    .position(200.0, 200.0)
+    .inner_size(sw, sh)
+    .position(0.0, 0.0)
     .decorations(false)
-    // 不透明窗口：系统保证参与桌面合成——透明窗会被 window server 间歇剔除
-    // （隐身顽疾的根）；改为深色"宠物小窝"卡片，视觉由 CSS 圆角内卡承担。
+    .transparent(true)
     .always_on_top(true)
     .resizable(false)
     .skip_taskbar(true)
@@ -3315,6 +3324,9 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
         return;
     };
     bar.set_shadow(false).ok();
+    // 窗口永不动（程序化移窗=移动帧不被合成=隐身元凶）；狗在窗内 CSS 移动。
+    // 整窗穿透：光标守卫在狗范围内解除。
+    bar.set_ignore_cursor_events(true).ok();
     #[cfg(target_os = "macos")]
     dock::make_non_activating(&bar);
     // 全屏铺满主屏：小狗在整张桌面活动。
@@ -3340,7 +3352,7 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
             }
         });
     }
-    dock::spawn_roamer(app.clone(), bar.clone());
+    dock::spawn_cursor_guard(app.clone());
     // 默认全窗穿透：光标进入小狗范围时由 guard 线程解除。
     bar.set_ignore_cursor_events(true).ok();
     eprintln!("[CostDog] pet window ready (fullscreen pass-through)");
