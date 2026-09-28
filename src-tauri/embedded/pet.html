@@ -43,7 +43,19 @@ body[data-state="sleep"] #zzz2{display:block}
 </div>
 <script>
 function fT(n){if(n>=1e9)return(n/1e9).toFixed(1)+'G';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return String(Math.round(n))}
-var rate=document.getElementById('rate'),cost=document.getElementById('cost'),ctx=document.getElementById('ctx'),plate=document.getElementById('plate');
+var rate=document.getElementById('rate'),cost=document.getElementById('cost'),ctx=document.getElementById('ctx'),plate=document.getElementById('plate'),proj=document.getElementById('proj');
+var SESSIONS=[],lockedSession=null;
+plate.addEventListener('click',function(e){
+  e.stopPropagation();
+  if(!SESSIONS.length)return;
+  var ids=SESSIONS.map(function(x){return x.session_id;});
+  var next;
+  if(!lockedSession){next=ids[0];}
+  else{var i=ids.indexOf(lockedSession);next=(i>=0&&i<ids.length-1)?ids[i+1]:null;}
+  lockedSession=next;
+  proj.style.color=next?'#f97316':'#7fb8ff';
+  tick();
+});
 var stage=document.getElementById('stage'),critter=document.getElementById('critter');
 var ANI=['dog','cat','rabbit'];var aniIdx=0;
 function applyAni(){document.body.dataset.ani=ANI[aniIdx];}
@@ -60,9 +72,17 @@ function tick(){
     var live=a&&a.tokens_per_min>0.05;
     document.body.dataset.state=live?'run':'sleep';
     rate.innerHTML=live?('▲ '+Math.round(a.tokens_per_min/60)+'/s'):'<span style="color:#7fb8ff">zzz</span>';
-  }).catch(function(){});
-  I('get_session_metrics',{source:'zcode',sessionId:null}).then(function(m){
-    ctx.textContent='CTX '+(m?fT(m.last_context_tokens||0):'—');
+    var src=a?a.source:'zcode';
+    I('list_recent_sessions',{source:src}).then(function(list){
+      SESSIONS=list||[];
+      var cur=lockedSession||(SESSIONS[0]&&SESSIONS[0].session_id);
+      var hit=SESSIONS.find(function(x){return x.session_id===cur;});
+      proj.textContent=hit?hit.project:'—';
+      proj.title=hit?(hit.project+' · 点击铭牌切换'):'点击铭牌切换';
+      I('get_session_metrics',{source:src,sessionId:cur}).then(function(m){
+        ctx.textContent='CTX '+(m?fT(m.last_context_tokens||0):'—');
+      }).catch(function(){});
+    }).catch(function(){});
   }).catch(function(){});
 }
 tick();

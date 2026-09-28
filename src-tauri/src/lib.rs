@@ -2475,6 +2475,60 @@ fn get_dock_host(window: tauri::WebviewWindow) -> String {
 }
 
 /// 记住用户手动选择的会话（展开面板默认高亮；空串=自动跟随最近活跃）。
+/// codex 最近会话清单：rollout 文件名含会话 id，首行 session_meta 含 cwd。
+fn codex_recent_sessions() -> Vec<SessionSummary> {
+    let home = match dirs::home_dir() { Some(h) => h, None => return Vec::new() };
+    let root = home.join(".codex").join("sessions");
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                    if let Ok(m) = p.metadata().and_then(|m| m.modified()) {
+                        files.push((m, p));
+                    }
+                }
+            }
+        }
+    }
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let mut out = Vec::new();
+    for (m, p) in files.into_iter().take(5) {
+        let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        // rollout-<ts>-<id>.jsonl → 取 uuid 段
+        let id = name.split('-').skip(2).collect::<Vec<_>>().join("-");
+        let id = id.trim_end_matches(".jsonl").to_string();
+        let mut project = "未命名".to_string();
+        if let Ok(f) = fs::File::open(&p) {
+            use std::io::BufRead;
+            if let Some(Ok(first)) = std::io::BufReader::new(f).lines().next() {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&first) {
+                    if let Some(cwd) = v["payload"]["cwd"].as_str() {
+                        if let Some(base) = std::path::Path::new(cwd).file_name() {
+                            let b = base.to_string_lossy().to_string();
+                            if !b.is_empty() { project = b; }
+                        }
+                    }
+                }
+            }
+        }
+        let last_ms = m.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+        out.push(SessionSummary {
+            session_id: id,
+            project,
+            last_active_ms: last_ms,
+            total_tokens: 0,
+            active: now_ms - last_ms < 600_000,
+        });
+    }
+    out
+}
+
 /// 会话成本异常告警：最近活跃会话的累计花费 vs 近 30 天历史会话平均。
 /// 触发条件：当前 >= $1 且 >= 历史平均的 3 倍（平均 < $0.10 时样本不足不触发）。
 #[derive(Debug, Serialize)]
@@ -2852,6 +2906,9 @@ struct SessionSummary {
 
 #[tauri::command]
 fn list_recent_sessions(source: String) -> Vec<SessionSummary> {
+    if source == "codex" {
+        return codex_recent_sessions();
+    }
     if source != "zcode" {
         return Vec::new();
     }

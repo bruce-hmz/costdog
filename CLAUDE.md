@@ -436,3 +436,11 @@ npm run tauri:build
 - 最终形态：9f2cc99 页面（居中 flex）+ Rust 漫游（walk/pause/掉头）+ 150×150 小窗
 - 实测：漫游中（217,924 → 移动确认）判空=否，狗+铭牌渲染 ✓
 - 铁律：透明窗页面禁用 absolute+inset 全铺布局；改布局先小步验证渲染
+### 54. 多会话语义：铭牌显示会话名 + 点击切换（2026-09-27）
+
+- 用户问题：多会话/多窗口时宠物显示哪个对话？
+- 语义定版：铭牌最前加会话名（蓝色=自动跟随最活跃，橙色=已锁定）；
+  点击铭牌循环切换最近 5 个会话，切到最后再点=解锁回自动跟随
+- 后端：list_recent_sessions 泛化 codex（rollout 文件名取 id+首行 session_meta 取 cwd
+  basename，mtime top5）；CTX 按选中会话取（get_session_metrics sessionId）
+- 实拍：铭牌 ZCodeProject·▲/s·$·CTX 渲染确认
