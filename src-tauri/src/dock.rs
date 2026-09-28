@@ -16,6 +16,34 @@ static DOCK_ENABLED: AtomicBool = AtomicBool::new(false);
 static SCREEN_W: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static SCREEN_H: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
+/// 用户拖动记录（拖动优先于漫游）：最近一次手动移动的时间与 x。
+static USER_DRAG: std::sync::Mutex<Option<(std::time::Instant, f64)>> =
+    std::sync::Mutex::new(None);
+/// roamer 最近一次 set_position 的目标 x（0.1px 精度，-1 哨兵）。
+static ROAM_TARGET_X: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
+
+pub fn roam_target_x() -> f64 {
+    let v = ROAM_TARGET_X.load(std::sync::atomic::Ordering::Relaxed);
+    if v < 0 { -1.0 } else { v as f64 / 10.0 }
+}
+
+pub fn note_user_drag(x: f64) {
+    if let Ok(mut d) = USER_DRAG.lock() {
+        *d = Some((std::time::Instant::now(), x));
+    }
+}
+
+fn take_user_drag() -> Option<f64> {
+    if let Ok(d) = USER_DRAG.lock() {
+        if let Some((at, x)) = *d {
+            if at.elapsed() < std::time::Duration::from_secs(3) {
+                return Some(x);
+            }
+        }
+    }
+    None
+}
+
 /// 小狗元素在屏幕逻辑坐标（左上原点）中的矩形，由前端每次布局后上报。
 static PET_RECT: std::sync::Mutex<(f64, f64, f64, f64)> =
     std::sync::Mutex::new((0.0, 0.0, 0.0, 0.0));
@@ -87,6 +115,13 @@ pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
                 return;
             }
             let now = std::time::Instant::now();
+            // 拖动优先：用户 3 秒内手动挪过 → 以新位置为起点，暂停散步。
+            if let Some(ux) = take_user_drag() {
+                x = ux;
+                walking = false;
+                pause_until = now + std::time::Duration::from_secs(3);
+                remaining = 0.0;
+            }
             if !walking {
                 if now >= pause_until {
                     walking = true;
@@ -114,6 +149,7 @@ pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
                     pause_until = now + std::time::Duration::from_millis((2000.0 + rand_range(3000.0)) as u64);
                 }
             }
+            ROAM_TARGET_X.store((x * 10.0) as i64, std::sync::atomic::Ordering::Relaxed);
             window
                 .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
                 .ok();

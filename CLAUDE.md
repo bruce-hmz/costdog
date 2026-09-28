@@ -444,3 +444,9 @@ npm run tauri:build
 - 后端：list_recent_sessions 泛化 codex（rollout 文件名取 id+首行 session_meta 取 cwd
   basename，mtime top5）；CTX 按选中会话取（get_session_metrics sessionId）
 - 实拍：铭牌 ZCodeProject·▲/s·$·CTX 渲染确认
+### 55. 手动挪动优先于漫游（2026-09-27）
+
+- 用户要求支持手动挪动；拖拽区已有但漫游线程 90ms 会抢回坐标
+- 拖动优先：窗口 Moved 事件里对比实际位置与漫游目标（>0.8px 偏差=用户拖）
+  → note_user_drag；漫游线程每 tick 检查（3 秒内拖过→以新位置为起点暂停 3s 再继续）
+- 实测：拖到 x=1500 → 2.5s 停在 1500（让位）→ 6.5s 走到 1550（新起点续走）✓

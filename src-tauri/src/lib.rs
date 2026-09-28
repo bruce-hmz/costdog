@@ -3312,6 +3312,20 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
     dock::make_non_activating(&bar);
     // 全屏铺满主屏：小狗在整张桌面活动。
     dock::set_screen_geo(1920.0, 1080.0);
+    // 手动挪动优先：用户拖窗（位置偏离漫游目标）→ 漫游线程让位并从新位置继续。
+    {
+        let bar2 = bar.clone();
+        bar.on_window_event(move |event| {
+            if let tauri::WindowEvent::Moved(pos) = event {
+                let scale = bar2.scale_factor().unwrap_or(2.0);
+                let lx = pos.x as f64 / scale;
+                let target = dock::roam_target_x();
+                if target >= 0.0 && (lx - target).abs() > 0.8 {
+                    dock::note_user_drag(lx);
+                }
+            }
+        });
+    }
     dock::spawn_roamer(app.clone(), bar.clone());
     // 默认全窗穿透：光标进入小狗范围时由 guard 线程解除。
     bar.set_ignore_cursor_events(true).ok();
