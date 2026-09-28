@@ -3317,7 +3317,14 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
     #[cfg(target_os = "macos")]
     dock::make_non_activating(&bar);
     // 全屏铺满主屏：小狗在整张桌面活动。
-    dock::set_screen_geo(1920.0, 1080.0);
+    // 实测主屏逻辑尺寸写入（外接屏/缩放变化自适应，杜绝走出可视区）。
+    if let Ok(Some(monitor)) = app.primary_monitor() {
+        let size = monitor.size();
+        let scale = monitor.scale_factor();
+        dock::set_screen_geo(size.width as f64 / scale, size.height as f64 / scale);
+    } else {
+        dock::set_screen_geo(1920.0, 1080.0);
+    }
     // 手动挪动优先：用户拖窗（位置偏离漫游目标）→ 漫游线程让位并从新位置继续。
     {
         let bar2 = bar.clone();

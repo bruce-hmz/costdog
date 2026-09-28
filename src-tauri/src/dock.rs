@@ -14,7 +14,7 @@ static DOCK_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// 主屏逻辑尺寸（点），setup 时由宠物窗口写入。
 static SCREEN_W: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-static SCREEN_H: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static SCREEN_H: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1080);
 
 /// 用户拖动记录（拖动优先于漫游）：最近一次手动移动的时间与 x。
 static USER_DRAG: std::sync::Mutex<Option<(std::time::Instant, f64)>> =
@@ -111,8 +111,9 @@ pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
             }
         }
         // 主屏底边（逻辑）：菜单栏约 25pt，窗高 150 → y = H-150-8
-        let screen_h = 1080.0f64;
-        let screen_w = 1920.0f64;
+        // 主屏尺寸动态读取（外接屏/分辨率变化时不再走出可视区）。
+        let screen_h = SCREEN_H.load(std::sync::atomic::Ordering::Relaxed) as f64;
+        let screen_w = SCREEN_W.load(std::sync::atomic::Ordering::Relaxed) as f64;
         // 路线抬高到 Dock 之上：底部 Dock 约 70~90px，留 100px 安全边距，
         // 小狗整个身体（含铭牌）在 Dock 上方行走，不再藏进任务栏。
         let y = screen_h - 150.0 - 100.0;
