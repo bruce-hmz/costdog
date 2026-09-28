@@ -3303,7 +3303,8 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
     .inner_size(150.0, 150.0)
     .position(200.0, 200.0)
     .decorations(false)
-    .transparent(true)
+    // 不透明窗口：系统保证参与桌面合成——透明窗会被 window server 间歇剔除
+    // （隐身顽疾的根）；改为深色"宠物小窝"卡片，视觉由 CSS 圆角内卡承担。
     .always_on_top(true)
     .resizable(false)
     .skip_taskbar(true)

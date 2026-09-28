@@ -125,9 +125,9 @@ pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
                 return;
             }
             let now = std::time::Instant::now();
-            // 合成看门狗（每 ~5s=20 tick）：无 shadow 透明置顶窗会被 window server
+            // 合成看门狗（每 ~1s=4 tick）：无 shadow 透明置顶窗会被 window server
             // 间歇剔除出桌面合成（自身渲染正常但肉眼/截屏不可见）；±2px 高度微调
-            // 强制重入合成层（实测 16→127 棕像素即时恢复）。
+            // 强制重入合成层（实测即时恢复）。1s 频率下隐身窗口期肉眼难察觉。
             tick += 1;
             if tick % 20 == 0 {
                 if let Ok(size) = window.outer_size() {
