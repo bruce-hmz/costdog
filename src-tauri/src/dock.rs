@@ -21,6 +21,12 @@ static USER_DRAG: std::sync::Mutex<Option<(std::time::Instant, f64)>> =
     std::sync::Mutex::new(None);
 /// roamer 最近一次 set_position 的目标 x（0.1px 精度，-1 哨兵）。
 static ROAM_TARGET_X: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
+/// 漫游线程当前是否在"走"（区别于停顿）——前端据此切走路帧。
+static ROAM_WALKING: AtomicBool = AtomicBool::new(false);
+
+pub fn roam_walking() -> bool {
+    ROAM_WALKING.load(Ordering::Relaxed)
+}
 
 pub fn roam_target_x() -> f64 {
     let v = ROAM_TARGET_X.load(std::sync::atomic::Ordering::Relaxed);
@@ -111,7 +117,7 @@ pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
         // 小狗整个身体（含铭牌）在 Dock 上方行走，不再藏进任务栏。
         let y = screen_h - 150.0 - 100.0;
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(160));
+            std::thread::sleep(std::time::Duration::from_millis(250));
             if !window.is_visible().unwrap_or(false) {
                 // 窗口被关/隐藏时退出漫游（宠物退役路径）。
                 return;
@@ -124,6 +130,7 @@ pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
                 pause_until = now + std::time::Duration::from_secs(3);
                 remaining = 0.0;
             }
+            ROAM_WALKING.store(walking, Ordering::Relaxed);
             if !walking {
                 if now >= pause_until {
                     walking = true;
@@ -133,7 +140,7 @@ pub fn spawn_roamer(app: tauri::AppHandle, window: tauri::WebviewWindow) {
                     }
                 }
             } else {
-                let step = 4.0 + rand_range(7.0);
+                let step = 10.0 + rand_range(6.0);
                 x += dir * step;
                 remaining -= step;
                 if x < 8.0 {

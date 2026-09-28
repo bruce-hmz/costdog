@@ -2458,6 +2458,12 @@ fn get_dock_zcode() -> bool {
     dock::enabled()
 }
 
+/// 漫游线程是否正在走（前端据此切走路帧，与 agent 活跃无关）。
+#[tauri::command]
+fn get_walk_state() -> bool {
+    dock::roam_walking()
+}
+
 /// 前端上报小狗元素矩形（窗口内逻辑坐标），供光标守卫判定穿透/交互。
 #[tauri::command]
 fn set_pet_rect(x: f64, y: f64, w: f64, h: f64) {
@@ -3618,7 +3624,7 @@ pub fn run() {
                 .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions, get_live_session, set_live_session, get_session_cost_alert, set_pet_rect, embed_zcode, embed_codex])
+        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions, get_live_session, set_live_session, get_session_cost_alert, set_pet_rect, embed_zcode, embed_codex, get_walk_state])
         .setup(|app| {
             // A 36px always-on-top bar is an accessory, not an app: drop the Dock icon
             // and the app menu so CostDog lives entirely in the menu bar.

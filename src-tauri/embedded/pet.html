@@ -4,6 +4,8 @@ body{margin:0;background:transparent;overflow:hidden;user-select:none}
 #pet{width:100vw;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .stage{position:relative;width:118px;height:96px;display:flex;align-items:flex-end;justify-content:center;transition:transform .9s cubic-bezier(.45,0,.25,1)}
 .critter{position:relative;display:flex;flex-direction:column;align-items:center;transition:transform .9s cubic-bezier(.45,0,.25,1);transform:scaleX(1)}
+.critter.walking img.sprite{animation:stepbob .5s ease-in-out infinite}
+@keyframes stepbob{0%,100%{transform:translateY(0)}25%{transform:translateY(-2.5px)}50%{transform:translateY(0)}75%{transform:translateY(-1.5px)}}
 img.sprite{height:64px;width:auto;filter:drop-shadow(0 0 1.5px rgba(255,255,255,.9)) drop-shadow(0 2px 3px rgba(255,255,255,.5)) drop-shadow(0 5px 12px rgba(0,0,0,.5));transition:opacity .25s}
 #dog-run{width:112px}
 #dog-sleep{width:106px}
@@ -60,9 +62,14 @@ var stage=document.getElementById('stage'),critter=document.getElementById('crit
 var ANI=['dog','cat','rabbit'];var aniIdx=0;
 // 8 帧走路循环（柴犬）：走时 130ms/帧，停时定格第 0 帧
 var WALK_N=8, walkIdx=0, dogRun=document.getElementById('dog-run');
+var roaming=false;
 setInterval(function(){
+  if(window.__TAURI_INTERNALS__){
+    window.__TAURI_INTERNALS__.invoke('get_walk_state').then(function(w){roaming=!!w;}).catch(function(){});
+  }
   if(document.body.dataset.ani!=='dog')return;
-  var walking=document.body.dataset.state==='run';
+  var walking=roaming||document.body.dataset.state==='run';
+  var cr=document.querySelector('.critter');if(cr)cr.classList.toggle('walking',walking);
   if(!walking){walkIdx=0;dogRun.src='walk-0.png';return;}
   walkIdx=(walkIdx+1)%WALK_N;
   dogRun.src='walk-'+walkIdx+'.png';
