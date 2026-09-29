@@ -259,6 +259,45 @@ pub fn make_non_activating(window: &tauri::WebviewWindow) {
 
 /// 跨 Space 可见（canJoinAllSpaces | fullScreenAuxiliary）。失败仅打日志。
 #[cfg(target_os = "macos")]
+/// 重申宠物窗口的 HUD 属性：nonactivating mask、状态栏级 level(25)、跨 Space。
+/// Tauri/wry 的后续窗口操作可能清掉早期设置的 mask（竞态），导致窗口降级为
+/// 普通窗口被系统间歇剔除出合成——定期重申以对冲竞态。
+#[cfg(target_os = "macos")]
+pub fn reinforce_hud_window(window: &tauri::WebviewWindow) {
+    let Ok(ns_window) = window.ns_window() else { return };
+    unsafe {
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        let obj = ns_window as *mut AnyObject;
+        // nonactivating panel mask
+        let mask: usize = msg_send![obj, styleMask];
+        let _: () = msg_send![obj, setStyleMask: mask | (1 << 7)];
+        // 状态栏级（高于 Dock 的 20），确保永远在最前
+        let _: () = msg_send![obj, setLevel: 25i64];
+        // canJoinAllSpaces | fullScreenAuxiliary
+        let behavior: usize = (1 << 0) | (1 << 8);
+        let _: () = msg_send![obj, setCollectionBehavior: behavior];
+    }
+}
+
+/// 属性重申看门狗：每 3s 重设一次（对冲 Tauri 清属性的竞态）。
+/// NSWindow 属性必须在主线程设置——后台线程直调 AppKit 会崩溃。
+pub fn spawn_reinforce_guard(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        use tauri::Manager;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            let app2 = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Some(w) = app2.get_webview_window("topbar") {
+                    #[cfg(target_os = "macos")]
+                    reinforce_hud_window(&w);
+                }
+            });
+        }
+    });
+}
+
 pub fn set_cross_space(ns_window: isize) {
     unsafe {
         let behavior: usize = (1 << 0) | (1 << 8);

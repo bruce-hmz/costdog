@@ -3358,6 +3358,7 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
         });
     }
     dock::spawn_cursor_guard(app.clone());
+            dock::spawn_reinforce_guard(app.clone());
     // 默认全窗穿透：光标进入小狗范围时由 guard 线程解除。
     bar.set_ignore_cursor_events(true).ok();
     eprintln!("[CostDog] pet window ready (fullscreen pass-through)");
