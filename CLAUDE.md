@@ -555,3 +555,12 @@ npm run tauri:build
   狗瞬移屏幕中央 + 强制重绘（opacity 闪烁，对冲合成异常）
 - 实测链路全通：托盘点击（System Events 自动化）→ counter 1 → 狗到中央
   (849,800) → 实拍完整可见
+### 69. "恍惚影子"根因：App Nap 节流（2026-09-29）
+
+- 用户："完全看不见狗了，走动也是一个恍惚的影子"——半可见/残影≠剔除，
+  是**帧率被节流**：宠物窗永不激活 → macOS App Nap 压 WKWebView JS 定时器
+  到极低频 → 移动/动画几秒一帧=影子
+- 修复：disable_app_nap()——NSProcessInfo beginActivityWithOptions:
+  NSActivityLatencyCritical|idleSystemSleep|idleDisplaySleep（CFString reason，
+  toll-free 桥 NSString），进程存活期间永久持有
+- 验证：nap disabled 日志 ✓；1 秒帧差 2213px（动画恢复满帧）；截屏狗+铭牌清晰

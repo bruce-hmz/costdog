@@ -3691,6 +3691,10 @@ pub fn run() {
             // 菜单栏下拉面板（常驻隐藏，托盘左键切换）。
             ensure_panel_window(app.handle());
 
+            // 禁用 App Nap：宠物窗永不激活会被系统节流（"恍惚影子"根因）。
+            #[cfg(target_os = "macos")]
+            dock::disable_app_nap();
+
             // 桌面宠物（全屏漫游）+ 本地数据服务（供宠物与面板取数）。
             ensure_topbar_window(app.handle());
             dock::spawn_cursor_guard(app.handle().clone());

@@ -269,6 +269,35 @@ pub fn make_non_activating(window: &tauri::WebviewWindow) {
 
 /// 跨 Space 可见（canJoinAllSpaces | fullScreenAuxiliary）。失败仅打日志。
 #[cfg(target_os = "macos")]
+/// 禁用 App Nap：宠物窗永不激活，macOS 会节流其 WKWebView 的 JS 定时器
+/// （表现为"恍惚的影子"——几秒才渲染一帧）。beginActivity 永久持有。
+#[cfg(target_os = "macos")]
+pub fn disable_app_nap() {
+    use std::os::raw::c_void;
+    unsafe {
+        let Some(cls) = objc2::runtime::AnyClass::get(c"NSProcessInfo") else { return };
+        let pi: *mut objc2::runtime::AnyObject = objc2::msg_send![cls, processInfo];
+        // NSActivityLatencyCritical(0xFF<<20) | idleSystemSleep | idleDisplaySleep
+        let opts: u64 = (0xFFu64 << 20) | (1 << 20) | (1 << 0);
+        // reason: NSString —— CFString toll-free bridged
+        let bytes = b"CostDog pet animation\0";
+        let cfstr = ffi::CFStringCreateWithCString(
+            std::ptr::null(),
+            bytes.as_ptr(),
+            ffi::K_CF_UTF8,
+        );
+        let activity: *mut c_void = objc2::msg_send![
+            pi,
+            beginActivityWithOptions: opts
+            reason: cfstr as *mut objc2::runtime::AnyObject
+        ];
+        // 永久持有（不 end）——变量本身不存也 OK：activity 对象被系统保留在
+        // 进程活动表，进程存活期间有效。
+        let _ = activity;
+        eprintln!("[CostDog] app nap disabled (latency critical)");
+    }
+}
+
 /// 重申宠物窗口的 HUD 属性：nonactivating mask、状态栏级 level(25)、跨 Space。
 /// Tauri/wry 的后续窗口操作可能清掉早期设置的 mask（竞态），导致窗口降级为
 /// 普通窗口被系统间歇剔除出合成——定期重申以对冲竞态。
