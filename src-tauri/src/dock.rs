@@ -59,6 +59,13 @@ pub fn set_screen_geo(w: f64, h: f64) {
     SCREEN_H.store(h as u32, std::sync::atomic::Ordering::Relaxed);
 }
 
+pub fn pet_rect() -> (f64, f64, f64, f64) {
+    match PET_RECT.lock() {
+        Ok(g) => *g,
+        Err(_) => (0.0, 0.0, 0.0, 0.0),
+    }
+}
+
 pub fn set_pet_rect(x: f64, y: f64, w: f64, h: f64) {
     if let Ok(mut r) = PET_RECT.lock() {
         *r = (x, y, w, h);

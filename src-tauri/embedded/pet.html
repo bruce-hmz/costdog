@@ -7,10 +7,13 @@ body{margin:0;background:transparent;overflow:hidden;user-select:none}
 .critter{position:absolute;bottom:110px;width:150px;height:170px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;transition:left 1.2s linear}
 #dog-sleep{height:72px!important;animation:sleepbreath 3.4s ease-in-out infinite}
 @keyframes sleepbreath{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
+#dog-run.sheet{width:88px;height:72px;background-image:url("walk-sheet.png");background-size:5552px 72px;background-repeat:no-repeat;animation:walkcycle 1s steps(8) infinite}
+@keyframes walkcycle{from{background-position:0 0}to{background-position:-5552px 0}}
+body:not(.walking) #dog-run.sheet{animation:none;background-position:0 0}
 img.sprite{height:64px;width:auto;filter:drop-shadow(0 0 1.5px rgba(255,255,255,.9)) drop-shadow(0 2px 3px rgba(255,255,255,.5)) drop-shadow(0 5px 12px rgba(0,0,0,.5))}
 img.sprite{transform-origin:center}
 #dog-run{transition:transform .3s}
-.critter.walking #dog-run{animation:stepbob .5s ease-in-out infinite}
+body.walking #dog-run{animation:walkcycle 1s steps(8) infinite,stepbob .5s ease-in-out infinite}
 
 @keyframes stepbob{0%,100%{transform:translateY(0)}25%{transform:translateY(-2.5px)}50%{transform:translateY(0)}75%{transform:translateY(-1.5px)}}
 .plate{position:absolute;top:-2px;left:50%;transform:translateX(-50%);background:rgba(22,22,28,.92);border:1px solid rgba(255,255,255,.15);border-radius:9px;padding:2px 7px;color:#e8e8e8;font-family:monospace;font-variant-numeric:tabular-nums;box-shadow:0 0 0 1px rgba(255,255,255,.12),0 3px 10px rgba(0,0,0,.45);text-align:center;line-height:1.25}
@@ -34,7 +37,7 @@ body[data-state="run"] #dog-sleep{display:none}
     <div class="plate" id="plate"><div class="prow pt"><span id="proj" style="color:#7fb8ff">—</span><span class="sep">·</span><span id="ctx">CTX —</span></div><div class="prow pb"><b id="rate">—</b><span class="sep">·</span><span id="cost">$0</span></div></div>
     <span id="zzz">Z z z</span>
     <span id="switcher" title="切换宠物">⇄</span>
-    <img id="dog-run" class="sprite" src="walk-0.png" alt="">
+    <div id="dog-run" class="sprite sheet"></div>
     <img id="dog-sleep" class="sprite" src="pet-sleep.png" alt="" hidden>
   </div>
 </div>
@@ -72,16 +75,10 @@ setInterval(function(){
   }
   var walking=state==='walk'&&!sleeping;
   document.body.dataset.state=sleeping?'sleep':(walking?'run':'idle');
-  critter.classList.toggle('walking',walking);
+  document.body.classList.toggle('walking',walking);
 },110);
-/* 8 帧走路循环 */
-var WALK_N=8,walkIdx=0;
-setInterval(function(){
-  var walking=critter.classList.contains('walking');
-  if(!walking){walkIdx=0;dogRun.src='walk-0.png';return;}
-  walkIdx=(walkIdx+1)%WALK_N;
-  dogRun.src='walk-'+walkIdx+'.png';
-},125);
+/* 8 帧走路循环：CSS steps 雪碧图动画（零重排），walking 挂 body */
+
 /* 数据 */
 var SESSIONS=[],lockedSession=null;
 plate.addEventListener('click',function(e){
@@ -119,6 +116,12 @@ function tick(){
 }
 tick();
 setInterval(tick,2000);
+// 自主验收通道：狗矩形上报（全屏窗 0,0 起，CSS 坐标即屏幕坐标）
+setInterval(function(){
+  if(!window.__TAURI_INTERNALS__)return;
+  var r=critter.getBoundingClientRect();
+  window.__TAURI_INTERNALS__.invoke('set_pet_rect',{x:r.left,y:r.top,w:r.width,h:r.height}).catch(function(){});
+},500);
 // 坐标报告：写入窗口标题供外部 AX 读取（PET:x,y 屏幕 CSS 坐标）
 setInterval(function(){
   var r=critter.getBoundingClientRect();

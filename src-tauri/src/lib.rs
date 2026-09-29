@@ -3236,6 +3236,11 @@ fn spawn_pet_data_server() {
             let path = req.split(' ').nth(1).unwrap_or("/");
             let (ctype, body): (&str, Vec<u8>) = match path {
                 "/stats.json" => { let (b, t) = serve_stats_body(); (t, b.into_bytes()) }
+                "/pet.json" => {
+                    let rect = dock::pet_rect();
+                    let body = format!("{{\"x\":{:.0},\"y\":{:.0},\"w\":{:.0},\"h\":{:.0}}}", rect.0, rect.1, rect.2, rect.3);
+                    ("application/json", body.into_bytes())
+                }
                 "/pet-run.png" => ("image/png", PET_RUN_PNG.to_vec()),
                 "/pet-sleep.png" => ("image/png", PET_SLEEP_PNG.to_vec()),
                 "/pet-cat-run.png" => ("image/png", PET_CAT_RUN_PNG.to_vec()),
