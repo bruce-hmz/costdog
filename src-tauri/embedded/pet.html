@@ -4,7 +4,7 @@ body{margin:0;background:transparent;overflow:hidden;user-select:none}
 /* 底部横条舞台：只有 220px 高，绝不全屏铺 absolute —— 全铺布局会触发
    透明窗合成死区（历史教训） */
 #stage{position:fixed;left:0;right:0;bottom:0;height:220px}
-.critter{position:absolute;bottom:14px;width:150px;height:170px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;transition:left 1.2s linear}
+.critter{position:absolute;bottom:110px;width:150px;height:170px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;transition:left 1.2s linear}
 img.sprite{height:64px;width:auto;filter:drop-shadow(0 0 1.5px rgba(255,255,255,.9)) drop-shadow(0 2px 3px rgba(255,255,255,.5)) drop-shadow(0 5px 12px rgba(0,0,0,.5))}
 .critter.walking img.sprite{animation:stepbob .5s ease-in-out infinite}
 @keyframes stepbob{0%,100%{transform:translateY(0)}25%{transform:translateY(-2.5px)}50%{transform:translateY(0)}75%{transform:translateY(-1.5px)}}

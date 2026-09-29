@@ -514,3 +514,9 @@ npm run tauri:build
 - 实证：铭牌深色横条特征扫描在屏幕 (524,1260) 命中，文字清晰可读
   （ZCodeProject·▲6/s·$322·CTX 655k）——全屏窗合成通道稳定
 - 页面：JS 漫游状态机（walk/pause/掉头）+8 帧循环+stepbob+铭牌+会话切换 全保留
+### 64. 窗内路线抬高避 Dock（2026-09-28）
+
+- 全屏窗版 #stage bottom:14 → 狗钻进 Dock 后面（Dock 系统层在普通窗之上）
+- critter bottom:110px：狗+铭牌整体在 Dock 上方行走
+- 实拍：小狗 8 帧姿态+铭牌（endlesslegend2-guide·▲1/s·$322·CTX 655k）
+  在 Dock 上方清晰可见 ✓
