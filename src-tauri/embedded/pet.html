@@ -5,16 +5,23 @@ body{margin:0;background:transparent;overflow:hidden;user-select:none}
    透明窗合成死区（历史教训） */
 #stage{position:fixed;left:0;right:0;bottom:0;height:220px}
 .critter{position:absolute;bottom:110px;width:150px;height:170px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;transition:left 1.2s linear}
+#dog-sleep{height:72px!important;animation:sleepbreath 3.4s ease-in-out infinite}
+@keyframes sleepbreath{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
 img.sprite{height:64px;width:auto;filter:drop-shadow(0 0 1.5px rgba(255,255,255,.9)) drop-shadow(0 2px 3px rgba(255,255,255,.5)) drop-shadow(0 5px 12px rgba(0,0,0,.5))}
-.critter.walking img.sprite{animation:stepbob .5s ease-in-out infinite}
+img.sprite{transform-origin:center}
+#dog-run{transition:transform .3s}
+.critter.walking #dog-run{animation:stepbob .5s ease-in-out infinite}
+
 @keyframes stepbob{0%,100%{transform:translateY(0)}25%{transform:translateY(-2.5px)}50%{transform:translateY(0)}75%{transform:translateY(-1.5px)}}
-.plate{position:absolute;top:0;left:50%;transform:translateX(-50%);white-space:nowrap;background:#1c1c22;border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:2px 8px;font-size:10px;color:#e8e8e8;font-family:monospace;font-variant-numeric:tabular-nums;box-shadow:0 0 0 1px rgba(255,255,255,.2),0 4px 14px rgba(0,0,0,.5)}
+.plate{position:absolute;top:-2px;left:50%;transform:translateX(-50%);background:rgba(22,22,28,.92);border:1px solid rgba(255,255,255,.15);border-radius:9px;padding:2px 7px;color:#e8e8e8;font-family:monospace;font-variant-numeric:tabular-nums;box-shadow:0 0 0 1px rgba(255,255,255,.12),0 3px 10px rgba(0,0,0,.45);text-align:center;line-height:1.25}
+.plate .prow{white-space:nowrap}
+.plate .pt{font-size:8px;color:#9aa0aa;max-width:150px;overflow:hidden;text-overflow:ellipsis}
+.plate .pb{font-size:11px}
 .plate b{color:#f97316}
-.plate .g{color:#4ade80}
-.plate .sep{color:rgba(255,255,255,.22);margin:0 3px}
+.plate .sep{color:rgba(255,255,255,.25);margin:0 2px}
 #switcher{position:absolute;top:16px;left:6px;background:#1c1c22;border:1px solid rgba(255,255,255,.2);border-radius:9px;font-size:10px;padding:1px 6px;color:#7fb8ff;font-family:monospace;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.3)}
 #switcher:hover{color:#fff;border-color:#7fb8ff}
-#zzz{position:absolute;top:22px;right:14px;font-family:monospace;color:#7fb8ff;font-size:12px;text-shadow:0 1px 3px #000;display:none;animation:floatz 2.2s ease-in-out infinite}
+#zzz{position:absolute;top:28px;right:6px;font-family:monospace;color:#7fb8ff;font-size:10px;text-shadow:0 1px 3px #000;display:none;animation:floatz 2.2s ease-in-out infinite}
 body[data-state="sleep"] #zzz{display:block}
 @keyframes floatz{0%,100%{transform:translate(0,0);opacity:.35}50%{transform:translate(5px,-7px);opacity:1}}
 img.sprite[hidden]{display:none}
@@ -24,7 +31,7 @@ body[data-state="run"] #dog-sleep{display:none}
 <body data-ani="dog" data-state="idle">
 <div id="stage">
   <div class="critter" id="critter">
-    <div class="plate" id="plate"><span id="proj" style="color:#7fb8ff;font-weight:700;max-width:86px;overflow:hidden;text-overflow:ellipsis;display:inline-block;vertical-align:bottom">—</span><span class="sep">│</span><b id="rate">—</b><span class="sep">│</span><span id="cost">$0</span><span class="sep">│</span><span id="ctx">CTX —</span></div>
+    <div class="plate" id="plate"><div class="prow pt"><span id="proj" style="color:#7fb8ff">—</span><span class="sep">·</span><span id="ctx">CTX —</span></div><div class="prow pb"><b id="rate">—</b><span class="sep">·</span><span id="cost">$0</span></div></div>
     <span id="zzz">Z z z</span>
     <span id="switcher" title="切换宠物">⇄</span>
     <img id="dog-run" class="sprite" src="walk-0.png" alt="">
@@ -56,9 +63,12 @@ setInterval(function(){
       else{state='pause';stateUntil=now+2000+Math.random()*3500;}
     }
     if(state==='walk'){
-      if((dir>0&&dogX>=walkTarget-2)||(dir<0&&dogX<=walkTarget+2)){state='pause';stateUntil=now+2000+Math.random()*3000;critter.style.transform=dir>0?'scaleX(1)':'scaleX(-1)';}
+      if((dir>0&&dogX>=walkTarget-2)||(dir<0&&dogX<=walkTarget+2)){state='pause';stateUntil=now+2000+Math.random()*3000;}
       else setDog(dogX+dir*(SW*0.004));
     }
+    // 转向只翻转狗图（铭牌文字永不镜像）
+    var face=dir>0?'scaleX(1)':'scaleX(-1)';
+    if(dogRun.style.transform!==face)dogRun.style.transform=face;
   }
   var walking=state==='walk'&&!sleeping;
   document.body.dataset.state=sleeping?'sleep':(walking?'run':'idle');

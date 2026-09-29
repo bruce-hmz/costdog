@@ -520,3 +520,11 @@ npm run tauri:build
 - critter bottom:110px：狗+铭牌整体在 Dock 上方行走
 - 实拍：小狗 8 帧姿态+铭牌（endlesslegend2-guide·▲1/s·$322·CTX 655k）
   在 Dock 上方清晰可见 ✓
+### 65. 铭牌镜像/长条/睡觉隐身三修（2026-09-29）
+
+- 镜像：转向 scaleX(-1) 原来挂在 critter（连铭牌文字一起翻）→ 移到 dog-run
+  img 上，铭牌永不镜像；stepbob 动画改挂 #dog-run
+- 长条：铭牌重构为两行紧凑卡（上行 8px 会话名·CTX，下行 11px ▲速率·$花费），
+  半透明深底+白描边，宽 ~120px
+- 睡觉隐身：睡帧 72px 放大+3.4s 呼吸动画（scale 1→1.05），Zzz 缩小至角落
+- AX 实证新 DOM 两行铭牌渲染中（ZCodeProject·CTX 797.1k / ▲4/s·$70.78）
