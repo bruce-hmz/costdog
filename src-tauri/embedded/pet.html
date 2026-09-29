@@ -116,11 +116,25 @@ function tick(){
 }
 tick();
 setInterval(tick,2000);
-// 自主验收通道：狗矩形上报（全屏窗 0,0 起，CSS 坐标即屏幕坐标）
+// 自主验收通道：狗矩形上报 + 召唤检测（托盘"召唤小狗"→回中央+强制重绘）
+var lastSummon=-1;
 setInterval(function(){
-  if(!window.__TAURI_INTERNALS__)return;
   var r=critter.getBoundingClientRect();
-  window.__TAURI_INTERNALS__.invoke('set_pet_rect',{x:r.left,y:r.top,w:r.width,h:r.height}).catch(function(){});
+  if(window.__TAURI_INTERNALS__){
+    window.__TAURI_INTERNALS__.invoke('set_pet_rect',{x:r.left,y:r.top,w:r.width,h:r.height}).catch(function(){});
+  }
+  fetch('http://127.0.0.1:9401/pet.json').then(function(res){return res.json();}).then(function(d){
+    if(lastSummon<0){lastSummon=d.summon;return;}
+    if(d.summon>lastSummon){
+      lastSummon=d.summon;
+      // 召唤：移到屏幕中央 + 触发重绘（对冲任何合成异常）
+      setDog(window.innerWidth/2-75);
+      critter.style.transition='none';critter.style.left=(window.innerWidth/2-75)+'px';
+      requestAnimationFrame(function(){critter.style.transition='';});
+      document.body.style.opacity='0.99';
+      setTimeout(function(){document.body.style.opacity='1';},60);
+    }
+  }).catch(function(){});
 },500);
 // 坐标报告：写入窗口标题供外部 AX 读取（PET:x,y 屏幕 CSS 坐标）
 setInterval(function(){

@@ -3238,7 +3238,11 @@ fn spawn_pet_data_server() {
                 "/stats.json" => { let (b, t) = serve_stats_body(); (t, b.into_bytes()) }
                 "/pet.json" => {
                     let rect = dock::pet_rect();
-                    let body = format!("{{\"x\":{:.0},\"y\":{:.0},\"w\":{:.0},\"h\":{:.0}}}", rect.0, rect.1, rect.2, rect.3);
+                    let body = format!(
+                        "{{\"x\":{:.0},\"y\":{:.0},\"w\":{:.0},\"h\":{:.0},\"summon\":{}}}",
+                        rect.0, rect.1, rect.2, rect.3,
+                        dock::summon_count()
+                    );
                     ("application/json", body.into_bytes())
                 }
                 "/pet-run.png" => ("image/png", PET_RUN_PNG.to_vec()),
@@ -3488,11 +3492,12 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let version = app.package_info().version.clone();
     let version_i = MenuItem::with_id(app, "version", format!("CostDog v{}", version), false, None::<&str>)?;
     let show_i = MenuItem::with_id(app, "show", "Show CostDog", true, None::<&str>)?;
+    let summon_i = MenuItem::with_id(app, "summon", "🐕 召唤小狗（找不到时点这）", true, None::<&str>)?;
     let embed_zcode_i = MenuItem::with_id(app, "embed-zcode", "嵌入 ZCode（宠物）", true, None::<&str>)?;
     let embed_codex_i = MenuItem::with_id(app, "embed-codex", "嵌入 Codex（实验）", true, None::<&str>)?;
     let update_i = MenuItem::with_id(app, "check-update", "Check for Updates…", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit CostDog", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&version_i, &show_i, &embed_zcode_i, &embed_codex_i, &update_i, &quit_i])?;
+    let menu = Menu::with_items(app, &[&version_i, &show_i, &summon_i, &embed_zcode_i, &embed_codex_i, &update_i, &quit_i])?;
 
     // macOS recolors template images to match the light/dark menu bar and ignores their
     // color channels, so the opaque app icon would render as a solid blob. Other platforms
@@ -3525,6 +3530,9 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             toggle_panel(tray.app_handle(), &rect);
         })
         .on_menu_event(|app, event| match event.id.as_ref() {
+            "summon" => {
+                dock::bump_summon();
+            }
             "show" => show_bar(app),
             "check-update" => {
                 let handle = app.clone();

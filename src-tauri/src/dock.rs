@@ -23,6 +23,16 @@ static USER_DRAG: std::sync::Mutex<Option<(std::time::Instant, f64)>> =
 static ROAM_TARGET_X: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
 /// 漫游线程当前是否在"走"（区别于停顿）——前端据此切走路帧。
 static ROAM_WALKING: AtomicBool = AtomicBool::new(false);
+/// 召唤计数：托盘触发 +1，前端轮询发现后把狗移到屏幕中央并强制重绘。
+static SUMMON: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn bump_summon() -> u32 {
+    SUMMON.fetch_add(1, Ordering::Relaxed) + 1
+}
+
+pub fn summon_count() -> u32 {
+    SUMMON.load(Ordering::Relaxed)
+}
 
 pub fn roam_walking() -> bool {
     ROAM_WALKING.load(Ordering::Relaxed)
