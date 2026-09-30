@@ -5,7 +5,10 @@ body{margin:0;background:transparent;overflow:hidden;user-select:none}
    透明窗合成死区（历史教训） */
 #stage{position:fixed;left:0;right:0;bottom:0;height:220px}
 .critter{position:absolute;bottom:110px;width:150px;height:170px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;transition:left 1.2s linear}
-#dog-sleep{height:72px!important;animation:sleepbreath 3.4s ease-in-out infinite}
+/* ── 三只宠物：每只一对元素（跑/睡）。可见性只由 data-pet × data-state 决定，
+   全程不换 img.src（铁律 2：高频换 src 会重绘风暴挤出铭牌层）。
+   狗有 8 帧走路雪碧图；猫/兔只有单帧跑图，靠步态弹跳 + 位移表现走动。 ── */
+.crit-sleep{height:72px;width:auto;animation:sleepbreath 3.4s ease-in-out infinite}
 @keyframes sleepbreath{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
 /* 雪碧图真值：8 帧 × 86.75px = 694×218，帧内容在纵向 0..71。元素只开 86px 视窗，
    steps(8) 总位移 694px ⇒ 每步 86.75px = 恰好一帧。此两处若写成 5552(=694×8)，
@@ -13,10 +16,25 @@ body{margin:0;background:transparent;overflow:hidden;user-select:none}
 #dog-run.sheet{width:86px;height:72px;background-image:url("walk-sheet.png");background-size:694px 218px;background-repeat:no-repeat;animation:walkcycle 1s steps(8) infinite}
 @keyframes walkcycle{from{background-position:0 0}to{background-position:-694px 0}}
 body:not(.walking) #dog-run.sheet{animation:none;background-position:0 0}
-img.sprite{height:64px;width:auto;filter:drop-shadow(0 0 1.5px rgba(255,255,255,.9)) drop-shadow(0 2px 3px rgba(255,255,255,.5)) drop-shadow(0 5px 12px rgba(0,0,0,.5))}
-img.sprite{transform-origin:center}
 #dog-run{transition:transform .3s}
 body.walking #dog-run{animation:walkcycle 1s steps(8) infinite,stepbob .5s ease-in-out infinite}
+/* 橘猫走路雪碧图：8 帧 × 107px = 856×72（生成图 2172×724 → 去白底 → 等分切帧 → 缩放到 72 高） */
+#cat-run.sheet{width:104px;height:72px;background-image:url("cat-walk-sheet.png");background-size:856px 72px;background-repeat:no-repeat;animation:catwalk 1s steps(8) infinite}
+@keyframes catwalk{from{background-position:0 0}to{background-position:-856px 0}}
+body:not(.walking) #cat-run.sheet{animation:none;background-position:0 0}
+body.walking #cat-run{animation:catwalk 1s steps(8) infinite,stepbob .5s ease-in-out infinite}
+/* 灰兔走路雪碧图：8 帧 × 88px = 704×72 */
+#rabbit-run.sheet{width:85px;height:72px;background-image:url("rabbit-walk-sheet.png");background-size:704px 72px;background-repeat:no-repeat;animation:rabbitwalk 1s steps(8) infinite}
+@keyframes rabbitwalk{from{background-position:0 0}to{background-position:-704px 0}}
+body:not(.walking) #rabbit-run.sheet{animation:none;background-position:0 0}
+body.walking #rabbit-run{animation:rabbitwalk 1s steps(8) infinite,stepbob .5s ease-in-out infinite}
+/* .crit-run 只是"当前跑图"的标记类（三个跑图元素都是雪碧图 div.sheet，尺寸与帧动画各自声明），
+   setFace() 用它统一施加转向 scale */
+.crit-run{height:72px}
+body.walking .crit-run{animation:stepbob .5s ease-in-out infinite}
+/* 白描边+投影让宠物在任何背景上都看得见。注意用 .sprite 而非 img.sprite——
+   狗的跑图是 div（雪碧图），原选择器把它漏掉了，走路态因此没有描边。 */
+.sprite{filter:drop-shadow(0 0 1.5px rgba(255,255,255,.9)) drop-shadow(0 2px 3px rgba(255,255,255,.5)) drop-shadow(0 5px 12px rgba(0,0,0,.5));transform-origin:center}
 
 @keyframes stepbob{0%,100%{transform:translateY(0)}25%{transform:translateY(-2.5px)}50%{transform:translateY(0)}75%{transform:translateY(-1.5px)}}
 /* 铭牌贴住狗头顶：狗盒高 72px，bottom:80px ⇒ 与头顶留 8px（跑动 stepbob 抬 2.5px 仍有余量）。
@@ -29,34 +47,76 @@ body.walking #dog-run{animation:walkcycle 1s steps(8) infinite,stepbob .5s ease-
 .plate .sep{color:rgba(255,255,255,.25);margin:0 2px}
 /* 切换芯片与 Zzz 排在铭牌上方一行（bottom = 铭牌 80 + 铭牌高约 30 + 4px 间隙），
    不再压在铭牌上（原 top:16px 与铭牌重叠） */
-#switcher{position:absolute;bottom:114px;left:6px;background:#1c1c22;border:1px solid rgba(255,255,255,.2);border-radius:9px;font-size:10px;padding:1px 6px;color:#7fb8ff;font-family:monospace;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.3)}
+#switcher{position:absolute;bottom:114px;left:6px;background:#1c1c22;border:1px solid rgba(255,255,255,.2);border-radius:9px;font-size:11px;line-height:1.2;padding:3px 9px;color:#7fb8ff;font-family:monospace;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.3)}
 #switcher:hover{color:#fff;border-color:#7fb8ff}
 /* Zzz 与切换芯片同排（铭牌上方），随 floatz 上飘 */
 #zzz{position:absolute;bottom:114px;right:6px;font-family:monospace;color:#7fb8ff;font-size:10px;text-shadow:0 1px 3px #000;display:none;animation:floatz 2.2s ease-in-out infinite}
 body[data-state="sleep"] #zzz{display:block}
 @keyframes floatz{0%,100%{transform:translate(0,0);opacity:.35}50%{transform:translate(5px,-7px);opacity:1}}
-/* 可见性只由 data-state 决定：#dog-sleep 在非 sleep 态隐藏，其余状态显示。
-   （历史 bug：这里曾给 <img> 加 hidden 属性 + img.sprite[hidden]{display:none}，
-   而没有任何代码移除它 —— sleep 态下两个精灵都被隐藏，狗彻底消失。） */
-body:not([data-state="sleep"]) #dog-sleep{display:none}
-body[data-state="sleep"] #dog-run{display:none}
+/* 可见性矩阵：默认全隐；选中的那只按状态显示跑图或睡图。
+   不使用 hidden 属性（历史 bug：靠 hidden 隐藏睡姿精灵却没人移除它，
+   静默 60s 后两个精灵都被隐藏 → 宠物彻底消失）。 */
+#dog-run,#dog-sleep,#cat-run,#cat-sleep,#rabbit-run,#rabbit-sleep{display:none}
+body[data-pet="dog"]:not([data-state="sleep"]) #dog-run,
+body[data-pet="dog"][data-state="sleep"] #dog-sleep,
+body[data-pet="cat"]:not([data-state="sleep"]) #cat-run,
+body[data-pet="cat"][data-state="sleep"] #cat-sleep,
+body[data-pet="rabbit"]:not([data-state="sleep"]) #rabbit-run,
+body[data-pet="rabbit"][data-state="sleep"] #rabbit-sleep{display:block}
 </style></head>
-<body data-ani="dog" data-state="idle">
+<body data-pet="dog" data-state="idle">
 <div id="stage">
   <div class="critter" id="critter">
     <div class="plate" id="plate"><div class="prow pt"><span id="proj" style="color:#7fb8ff">—</span><span class="sep">·</span><span id="ctx">CTX —</span></div><div class="prow pb"><b id="rate">—</b><span class="sep">·</span><span id="cost">$0</span></div></div>
     <span id="zzz">Z z z</span>
     <span id="switcher" title="切换宠物">⇄</span>
-    <div id="dog-run" class="sprite sheet"></div>
-    <img id="dog-sleep" class="sprite" src="pet-sleep.png" alt="">
+    <div id="dog-run" class="sprite sheet crit-run"></div>
+    <img id="dog-sleep" class="sprite crit-sleep" src="pet-sleep.png" alt="">
+    <div id="cat-run" class="sprite sheet crit-run"></div>
+    <img id="cat-sleep" class="sprite crit-sleep" src="pet-cat-sleep.png" alt="">
+    <div id="rabbit-run" class="sprite sheet crit-run"></div>
+    <img id="rabbit-sleep" class="sprite crit-sleep" src="pet-rabbit-sleep.png" alt="">
   </div>
 </div>
 <script>
 function fT(n){if(n>=1e9)return(n/1e9).toFixed(1)+'G';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return String(Math.round(n))}
 var proj=document.getElementById('proj'),rate=document.getElementById('rate'),cost=document.getElementById('cost'),ctx=document.getElementById('ctx'),plate=document.getElementById('plate');
-var critter=document.getElementById('critter'),dogRun=document.getElementById('dog-run');
-var ANI=['dog'];var aniIdx=0;
-document.getElementById('switcher').addEventListener('click',function(e){e.stopPropagation();});
+var critter=document.getElementById('critter');
+/* ── 宠物登记表 + 切换（⇄ 芯片循环 柴犬→橘猫→灰兔，选择持久化在 localStorage）──
+   每只一对元素（跑/睡），切换只改 body[data-pet]，不换 img.src（铁律 2）。 */
+var PETS=[
+  {id:'dog',   name:'柴犬', run:'dog-run',    sleep:'dog-sleep'},
+  {id:'cat',   name:'橘猫', run:'cat-run',    sleep:'cat-sleep'},
+  {id:'rabbit',name:'灰兔', run:'rabbit-run', sleep:'rabbit-sleep'}
+];
+var petIdx=0, petFace=1;
+try{
+  var savedPet=localStorage.getItem('costdog.pet');
+  if(savedPet){for(var pi=0;pi<PETS.length;pi++){if(PETS[pi].id===savedPet){petIdx=pi;}}}
+}catch(e){}
+function curPet(){return PETS[petIdx];}
+/* 转向：用独立 scale 属性（不参与 transform 动画，所以不会被 stepbob 的
+   transform 盖掉——旧代码用行内 scaleX(-1)，走动时被动画覆盖，宠物永远不回头）。
+   对三个跑图元素一起设，谁被 CSS 显示出来谁就是对的，不与 petIdx 耦合。 */
+function setFace(d){
+  petFace=d;
+  var s=(d>0?'1':'-1')+' 1';
+  var els=document.querySelectorAll('.crit-run');
+  for(var i=0;i<els.length;i++)els[i].style.scale=s;
+}
+function applyPet(){
+  document.body.dataset.pet=curPet().id;
+  var next=PETS[(petIdx+1)%PETS.length];
+  document.getElementById('switcher').title='当前：'+curPet().name+'　点击换成'+next.name;
+  setFace(petFace);
+}
+document.getElementById('switcher').addEventListener('click',function(e){
+  e.stopPropagation();
+  petIdx=(petIdx+1)%PETS.length;
+  try{localStorage.setItem('costdog.pet',curPet().id);}catch(err){}
+  applyPet();
+});
+applyPet();
 /* ── 窗内漫游状态机（窗口永不动）── */
 var SW=window.innerWidth;
 var dogX=SW*0.4, dir=1, walkTarget=null;
@@ -79,9 +139,8 @@ setInterval(function(){
       if((dir>0&&dogX>=walkTarget-2)||(dir<0&&dogX<=walkTarget+2)){state='pause';stateUntil=now+2000+Math.random()*3000;}
       else setDog(dogX+dir*(SW*0.004));
     }
-    // 转向只翻转狗图（铭牌文字永不镜像）
-    var face=dir>0?'scaleX(1)':'scaleX(-1)';
-    if(dogRun.style.transform!==face)dogRun.style.transform=face;
+    // 转向只翻转宠物跑图（铭牌文字永不镜像）
+    if(dir!==petFace)setFace(dir);
   }
   var walking=state==='walk'&&!sleeping;
   document.body.dataset.state=sleeping?'sleep':(walking?'run':'idle');
