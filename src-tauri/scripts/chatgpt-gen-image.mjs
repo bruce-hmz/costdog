@@ -73,9 +73,51 @@ await sleep(1500);
 const composed = await ev("document.querySelector('div[contenteditable=\"true\"]').innerText.length");
 console.log('composer 文本长度:', composed);
 if (!composed || composed < 10) { console.error('提示词没进 composer，放弃'); process.exit(2); }
-await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
-await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
-console.log('已发送，等待生成…');
+
+// 发送并**校验真的发出去了**：只看回车不可靠 —— 参考图上传失败时页面顶部会挂一条
+// "上传未成功"，此时回车被吞掉（实测：composer 里留着整段提示词，页面零条消息）。
+// 所以先点发送按钮，1.2s 后看 composer 是否清空；没清空再退回回车；仍不行就
+// 开新会话（顺带清掉坏附件）重试一次。
+async function composerLength() {
+  return await ev("(document.querySelector('div[contenteditable=\"true\"]')||{innerText:''}).innerText.length");
+}
+async function sendViaButton() {
+  return await ev(`(()=>{const b=document.querySelector('button[data-testid="send-button"],button[aria-label*="Send"],button[aria-label*="发送"]');if(b&&!b.disabled){b.click();return 'clicked';}return 'no-button';})()`);
+}
+async function pressEnter() {
+  // 必须带 text/unmodifiedText:'\r'：这个版本的 ChatGPT 没有 data-testid="send-button"
+  // 的发送按钮（composer 附近只有 附件/模型/听写/语音 四个），而**不带 text 的合成 Enter
+  // 会被内容可编辑区当成普通按键吞掉**——实测 composer 里留住整段提示词、页面零条消息。
+  // 带上 '\r' 后回车才真的提交（实测 composer 清空、消息出现在会话里）。
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+}
+// 发送成功的判据要**宽松且多路**：composer 清空可能滞后好几秒，只等 1.2s 会误判成
+// "没发出去"，然后开新会话把刚发起的生成中断（实测踩过：提示词其实已送达、页面在
+// "思考中"，脚本却以为失败并跳走）。所以：清空 OR 出现停止按钮 OR 页面里出现了
+// 刚输入的提示词片段，任一成立即算发出；最多轮询 10s。
+async function sentEvidence() {
+  const composer = await composerLength();
+  if (composer === 0) return 'composer 清空';
+  const stop = await ev(`!!document.querySelector('button[data-testid="stop-button"],button[aria-label*="停止"],button[aria-label*="Stop"]')`);
+  if (stop) return '出现停止按钮';
+  const echoed = await ev(`(document.body.innerText||'').includes(${JSON.stringify(prompt.slice(0, 24))})`);
+  if (echoed) return '消息已出现在会话里';
+  return null;
+}
+async function attemptSend(step) {
+  const how = await sendViaButton();
+  if (how === 'no-button') await pressEnter();
+  for (let i = 0; i < 20; i++) {
+    await sleep(500);
+    const why = await sentEvidence();
+    if (why) { console.log(`已发送（${step}: ${how === 'no-button' ? 'Enter' : '发送按钮'} / ${why}）`); return true; }
+  }
+  console.log(`${step} 没发出去（composer 仍有文本且无生成迹象）`);
+  return false;
+}
+const sent = await attemptSend('第1次');
+if (!sent) { console.error('提示词没能发出，放弃（不再自动换会话，避免中断可能已开始的生成）'); process.exit(2); }
 
 // 4) 等新图（基线在发送后取，按 naturalWidth 过滤掉参考图缩略图）
 await sleep(8000);

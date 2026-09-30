@@ -4,7 +4,7 @@ body{margin:0;background:transparent;overflow:hidden;user-select:none}
 /* 底部横条舞台：只有 220px 高，绝不全屏铺 absolute —— 全铺布局会触发
    透明窗合成死区（历史教训） */
 #stage{position:fixed;left:0;right:0;bottom:0;height:220px}
-.critter{position:absolute;bottom:110px;width:150px;height:170px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;transition:left 1.2s linear;cursor:grab;touch-action:none}
+.critter{position:absolute;bottom:110px;width:150px;height:170px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;transition:left 120ms linear;cursor:grab;touch-action:none}
 /* 拖动中：去掉 left 的 1.2s 缓动（否则宠物追不上光标），并换成抓取光标 */
 body.dragging .critter{transition:none;cursor:grabbing}
 body.dragging .critter *{cursor:grabbing}
@@ -16,25 +16,25 @@ body.dragging .critter *{cursor:grabbing}
 /* 雪碧图真值：8 帧 × 86.75px = 694×218，帧内容在纵向 0..71。元素只开 86px 视窗，
    steps(8) 总位移 694px ⇒ 每步 86.75px = 恰好一帧。此两处若写成 5552(=694×8)，
    素材会被横向拉伸 8 倍、纵向压扁 3 倍，狗变成一条涂抹（历史 bug）。 */
-#dog-run.sheet{width:86px;height:72px;background-image:url("walk-sheet.png");background-size:694px 218px;background-repeat:no-repeat;animation:walkcycle 1s steps(8) infinite}
-@keyframes walkcycle{from{background-position:0 0}to{background-position:-694px 0}}
+#dog-run.sheet{width:100px;height:72px;background-image:url("walk-sheet.png");background-size:824px 72px;background-repeat:no-repeat;animation:walkcycle .6s steps(8) infinite}
+@keyframes walkcycle{from{background-position:0 0}to{background-position:-824px 0}}
 body:not(.walking) #dog-run.sheet{animation:none;background-position:0 0}
 #dog-run{transition:transform .3s}
-body.walking #dog-run{animation:walkcycle 1s steps(8) infinite,stepbob .5s ease-in-out infinite}
+body.walking #dog-run{animation:walkcycle .6s steps(8) infinite,stepbob .3s ease-in-out infinite}
 /* 橘猫走路雪碧图：8 帧 × 107px = 856×72（生成图 2172×724 → 去白底 → 等分切帧 → 缩放到 72 高） */
-#cat-run.sheet{width:104px;height:72px;background-image:url("cat-walk-sheet.png");background-size:856px 72px;background-repeat:no-repeat;animation:catwalk 1s steps(8) infinite}
-@keyframes catwalk{from{background-position:0 0}to{background-position:-856px 0}}
+#cat-run.sheet{width:93px;height:72px;background-image:url("cat-walk-sheet.png");background-size:768px 72px;background-repeat:no-repeat;animation:catwalk .6s steps(8) infinite}
+@keyframes catwalk{from{background-position:0 0}to{background-position:-768px 0}}
 body:not(.walking) #cat-run.sheet{animation:none;background-position:0 0}
-body.walking #cat-run{animation:catwalk 1s steps(8) infinite,stepbob .5s ease-in-out infinite}
+body.walking #cat-run{animation:catwalk .6s steps(8) infinite,stepbob .3s ease-in-out infinite}
 /* 灰兔走路雪碧图：8 帧 × 88px = 704×72 */
-#rabbit-run.sheet{width:85px;height:72px;background-image:url("rabbit-walk-sheet.png");background-size:704px 72px;background-repeat:no-repeat;animation:rabbitwalk 1s steps(8) infinite}
-@keyframes rabbitwalk{from{background-position:0 0}to{background-position:-704px 0}}
+#rabbit-run.sheet{width:79px;height:72px;background-image:url("rabbit-walk-sheet.png");background-size:656px 72px;background-repeat:no-repeat;animation:rabbitwalk .6s steps(8) infinite}
+@keyframes rabbitwalk{from{background-position:0 0}to{background-position:-656px 0}}
 body:not(.walking) #rabbit-run.sheet{animation:none;background-position:0 0}
-body.walking #rabbit-run{animation:rabbitwalk 1s steps(8) infinite,stepbob .5s ease-in-out infinite}
+body.walking #rabbit-run{animation:rabbitwalk .6s steps(8) infinite,stepbob .3s ease-in-out infinite}
 /* .crit-run 只是"当前跑图"的标记类（三个跑图元素都是雪碧图 div.sheet，尺寸与帧动画各自声明），
    setFace() 用它统一施加转向 scale */
 .crit-run{height:72px}
-body.walking .crit-run{animation:stepbob .5s ease-in-out infinite}
+body.walking .crit-run{animation:stepbob .3s ease-in-out infinite}
 /* 白描边+投影让宠物在任何背景上都看得见。注意用 .sprite 而非 img.sprite——
    狗的跑图是 div（雪碧图），原选择器把它漏掉了，走路态因此没有描边。 */
 .sprite{filter:drop-shadow(0 0 1.5px rgba(255,255,255,.9)) drop-shadow(0 2px 3px rgba(255,255,255,.5)) drop-shadow(0 5px 12px rgba(0,0,0,.5));transform-origin:center;-webkit-user-drag:none;user-select:none}
@@ -189,6 +189,24 @@ critter.addEventListener('pointermove',onDragMove);
 critter.addEventListener('pointerup',endDrag);
 critter.addEventListener('pointercancel',endDrag);
 window.addEventListener('blur',endDrag);
+// 步速必须与雪碧图的步幅自洽，否则就是"冰上滑"（用户反馈的"滑步"）。
+// 实测「一个 8 帧循环里，脚（最低墨迹重心）相对身体前后移动多少像素」：
+//   狗 19.5px（20%，换图前 8.6px）/ 猫 13.4px（14%，换图前 21.3px）/ 兔 23.1px（29%）
+// 循环 0.6s 时，脚踩住地面的速度上限 = 步幅 ÷ 0.6s → 狗 32.5 / 猫 22.3 / 兔 38.4 px/s。
+// 旧参数 SW*0.004（1920 屏 ≈70px/s）对狗曾经是上限的 4.9 倍 —— 整段路都在打滑。
+// 所以按宠物分别取速度（换素材就改这张表；想跑更快只能重画步幅更大的雪碧图）；
+// 另外用绝对像素而不是 SW 比例，否则 4K 屏上会自己加速到 140px/s。
+var WALK_CYCLE_S=0.6;
+// 三只于 2026-09-30 全部换过素材（旧图边缘锐度 54~62 = 像素风，且狗的步幅只有 8.6px
+// → 必须慢跑到 14px/s 才不打滑）。新图边缘锐度 42~50（≈参考图缩到 72 高的基准
+// 47~52，即平滑渲染），步幅也变大：狗 8.6→19.5、兔 21.7→23.1；猫 21.3→13.4
+// （猫这张步幅小了些，速度表会跟着降到 22px/s，仍然不打滑）。
+var PET_STRIDE={dog:19.5, cat:13.4, rabbit:23.1};
+function walkPxPerTick(){
+  var pet=PETS[petIdx];                       // PETS 在下方定义，运行时才求值
+  var stride=PET_STRIDE[pet&&pet.id]||8.6;
+  return stride/WALK_CYCLE_S*0.110;           // 每 110ms tick 的位移
+}
 function liveNow(){return Date.now()-lastLive<8000;}
 setInterval(function(){
   SW=window.innerWidth;
@@ -201,7 +219,7 @@ setInterval(function(){
     }
     if(state==='walk'){
       if((dir>0&&dogX>=walkTarget-2)||(dir<0&&dogX<=walkTarget+2)){state='pause';stateUntil=now+2000+Math.random()*3000;}
-      else setDog(dogX+dir*(SW*0.004));
+      else setDog(dogX+dir*walkPxPerTick());
     }
     // 转向只翻转宠物跑图（铭牌文字永不镜像）
     if(dir!==petFace)setFace(dir);

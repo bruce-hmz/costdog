@@ -115,4 +115,26 @@ def main():
     print(f"CSS: #x-run.sheet{{width:{max(f.size[0] for f in frames_out)}px;height:{CH}px;background-size:{sheet.size[0]}px {CH}px}} "
           f"@keyframes xw{{from{{background-position:0 0}}to{{background-position:-{sheet.size[0]}px 0}}}} steps({len(frames_out)})")
 
+    # ── 步幅（stride）：脚（最低墨迹）在一个循环里相对身体前后移动多少像素 ──
+    # 这个数直接决定"脚不打滑"的地面速度上限 = 步幅 / 循环时长。
+    # 步幅太小是"跑起来像在冰上滑"的根因：狗 8.6px / 猫 10.0px / 兔 5.8px（旧素材）
+    # 配 1s 循环只能走 <10px/s，而当时身体跑 70px/s → 打滑 8 倍。
+    feet = []
+    for f in frames_out:
+        a = np.array(f)
+        ys, xs = np.nonzero(a[:, :, 3] > 40)
+        if len(ys) == 0:
+            feet.append(None)
+            continue
+        low = ys.max()
+        feet.append(float(xs[ys >= low - 3].mean()))
+    valid = [x for x in feet if x is not None]
+    stride = (max(valid) - min(valid)) if valid else 0.0
+    body_w = max(f.size[0] for f in frames_out)
+    print("逐帧脚位(最低3行重心x):", [None if x is None else round(x, 1) for x in feet])
+    print(f"步幅 stride = {stride:.1f}px  （{stride / body_w * 100:.0f}% 身宽；<20% 会明显打滑）")
+    for cycle_ms in (400, 600, 800):
+        print(f"  循环 {cycle_ms}ms → 脚不打滑的地面速度 ≈ {stride / (cycle_ms / 1000):.1f} px/s"
+              f"（≈{stride / (cycle_ms / 1000) * 0.110:.2f}px / 110ms tick）")
+
 main()
