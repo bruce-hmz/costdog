@@ -2,6 +2,7 @@ import { scanClaudeSessions } from './parsers/claude-code';
 import { scanCodexSessions } from './parsers/codex';
 import { scanZcodeSessions } from './parsers/zcode';
 import { scanOpencodeSessions } from './parsers/opencode';
+import { scanDshSessions } from './parsers/dsh';
 import { loadPricing, calculateCost } from './utils/pricing';
 import { upsertSession, getAggregateStats, getTopModels, getRecentSessions, getAlerts } from './db/schema';
 import { SessionSummary, DailySummary, DashboardData, Alert } from './types';
@@ -49,7 +50,8 @@ export async function fullScan(): Promise<{ newSessions: number; totalSessions: 
   const codexSessions = scanCodexSessions();
   const zcodeSessions = scanZcodeSessions();
   const opencodeSessions = scanOpencodeSessions();
-  const allSessions = [...claudeSessions, ...codexSessions, ...zcodeSessions, ...opencodeSessions].filter(
+  const dshSessions = scanDshSessions();
+  const allSessions = [...claudeSessions, ...codexSessions, ...zcodeSessions, ...opencodeSessions, ...dshSessions].filter(
     (s) =>
       s.tokenUsage.inputTokens +
         s.tokenUsage.outputTokens +
@@ -71,6 +73,7 @@ export async function fullScan(): Promise<{ newSessions: number; totalSessions: 
       s.tokenUsage.reasoningOutputTokens,
       s.model,
       pricing,
+      s.provider,
     );
 
     upsertSession({

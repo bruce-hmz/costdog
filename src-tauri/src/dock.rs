@@ -111,9 +111,12 @@ fn cursor_point() -> Option<(f64, f64)> {
         x: f64,
         y: f64,
     }
+    // 编码名必须是 CGPoint：NSPoint 只是 CGPoint 的 typedef，而 objc2 拿
+    // `msg_send!` 的返回类型编码跟方法签名（`{CGPoint=dd}`）逐字比对——写成
+    // "NSPoint" 在 debug 构建里会直接 panic 掉守卫线程（release 不校验才"看起来没事"）。
     unsafe impl objc2::encode::Encode for NSPoint {
         const ENCODING: objc2::encode::Encoding = objc2::encode::Encoding::Struct(
-            "NSPoint",
+            "CGPoint",
             &[<f64 as objc2::encode::Encode>::ENCODING, <f64 as objc2::encode::Encode>::ENCODING],
         );
     }
@@ -244,6 +247,14 @@ fn rand_range(max: f64) -> f64 {
 /// 光标守卫：光标在小狗范围（±12px 余量）内才解除全窗穿透，
 /// 其余时间整窗穿透——桌面上只有小狗本身可交互。
 pub fn spawn_cursor_guard(app: tauri::AppHandle) {
+    // 只允许一份：两处调用点（setup 与 ensure_topbar_window）曾各起一条线程，
+    // 各自维护自己的 pass_through 状态，于是每次边界穿越都要写两遍
+    // set_ignore_cursor_events（40ms 轮询下是纯浪费，还可能互相翻状态）。
+    static GUARD_STARTED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    if GUARD_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
     std::thread::spawn(move || {
         use tauri::Manager;
         let mut pass_through = true;

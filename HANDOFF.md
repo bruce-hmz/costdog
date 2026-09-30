@@ -128,3 +128,12 @@ screencapture -x -R<x-25>,<y-40>,200,250 /tmp/dog.png  # 按 pet.json 坐标裁�
     - **修复四件**：① SQL 改为"先用 `(started_at)` 索引取最近 300 条请求定位候选会话，再只在候选会话内聚合"（`SCAN ... USING INDEX model_usage_started_model_idx`，冷缓存 ~50ms、热 <5ms，仍返回最近活跃 5 个会话）；② `get_live_stats` / `list_recent_sessions` / `get_session_metrics` / `get_analytics` / `scan` 全部改 `#[tauri::command(async)]`（挪到线程池，主线程再不会被查询堵住）；③ `list_recent_sessions` 加 3s 结果缓存；④ 宠物页分频：速率仍 2s，今日花费 16s，会话名/CTX 10s（或活跃源变化时立即刷）。
     - **顺带**：3s 一次的属性看门狗原来**无条件** `setStyleMask:/setLevel:/setCollectionBehavior:`——`setStyleMask:` 会重建窗口 frame/backing 并触发 WindowServer 往返，等于每 3s 主动卡一下；改为**先读后写**（值已正确就什么都不做，职责仍是"被清掉时补回来"）。另外差分速率的 `MIN_DELTA_SECS` 2.0 → 1.0（宠物 2s + 面板 5s 交错时相邻采样只差 1.x 秒，旧值会把这类差分全丢掉）。
     - 复验：部署后 `sample` 主线程不再出现 `list_recent_sessions`（已在线程池线程），`/stats.json` 三源并存（codex / zcode / dsh，dsh 速率与 CTX 正常）。
+
+11. **清掉剩余 P2 + TS 侧接 DSH + UI 文案统一英文**（本轮，收尾）。
+    - **光标守卫只起一份**：`spawn_cursor_guard` 被 `setup` 与 `ensure_topbar_window` 各调一次 → 两条线程各自维护 `pass_through`，每次边界穿越写两遍 `set_ignore_cursor_events`。加 `GUARD_STARTED` 幂等开关并删掉重复调用点。
+    - **`NSPoint` → `CGPoint` 编码**：`dock.rs` 手写的 `Encode` 用了 `"NSPoint"`，而方法签名是 `{CGPoint=dd}`。**更正我上一轮 review 的说法**：这里不会 panic——A/B 对照（临时改回 `NSPoint` 跑 debug 构建）日志里 0 条 panic，objc2 的 `msg_send!` 并不校验返回类型编码（`verify` 模块只在测试里用）。改动保留（编码名应与 ABI 一致），但性质是隐患而非崩溃。
+    - **首扫移出主线程**：setup 里原来同步 `full_scan()`（要遍历解析 codex 那种 14MB rollout），拖住第一帧。改为扫描线程启动时先扫一次再进 30s 循环，扫完 `emit("refresh-data")`。
+    - **TS 侧接入 DSH**：新增 `src/parsers/dsh.ts` + `getDshSessionsDir()`（`DSH_HOME` 可覆盖）+ `SessionSummary.provider` + aggregator 接线。**同一个多帧坑**：Node 的 `zstdDecompressSync`、`zstdDecompress` 回调、`createZstdDecompress` 流式三种入口都只解第一帧（实测 226 字节），所以按帧魔数切开逐帧解，魔数误切时并回下一帧重试（实测 1373 帧全解、0 失败）。定价同样加 `PROVIDER_PRICING` 并让 `calculateCost` 接受 provider。
+    - **跨前端对账**：TS 侧 `fullScan` 到临时库与 Rust 侧正式库逐行比对，4 个已定稿会话的 token 与 cost **完全一致**（0.0671/0.0416/0.3714/0.0192），唯一的差异行是仍在增长的活跃会话（TS 那次扫得更晚）。
+    - **UI 文案统一英文**：`npm run test:ts` 之前是红的——CJK 断言报 947 个字符。查下去发现注释里 901 个 + **真正的中文 UI 文案 46 处**（退役停靠胶囊的 tooltip/pop 标签，以及菜单栏洞察面板的分区标题与洞察句）。改法两件：① 断言先剥注释再看可见文案（把"UI 单一语言"这条守严，而不是让注释淹没它）；② 把 46 处文案全部译成英文（保留 emoji 前缀，面板 `slice(0,2)` 的图标逻辑依赖它）。**测试现在 14/14 全绿**，并验证过它仍能抓到真实违规（往 `pv-sec` 塞回中文 → 立刻失败）。
+

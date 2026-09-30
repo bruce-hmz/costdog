@@ -676,7 +676,7 @@ let DOCK_ON=false,liveRows=0,liveHeight=36,popOpen=false,popPinned=false,rateHis
 let TODAY_COST='0.00';
 function fT(n){if(n>=1e9)return(n/1e9).toFixed(1)+'G';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return String(Math.round(n))}
 function fI(n){return Math.round(n).toLocaleString('en-US')}
-function fmtDur(ms){const s=Math.max(0,Math.round(ms/1000));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),ss=s%60;return h?h+'小时'+m+'分'+ss+'秒':(m?m+'分'+ss+'秒':ss+'秒')}
+function fmtDur(ms){const s=Math.max(0,Math.round(ms/1000));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),ss=s%60;return h?h+'h '+m+'m '+ss+'s':(m?m+'m '+ss+'s':ss+'s')}
 // Window height: docked → 32px native bar + extra rows + popover + detail;
 // floating → 36px skin bar + rows + popover + detail.
 let popH=205; // 面板高度：双列 205 / 窄窗单列 260（确定性值），实测仅作下限
@@ -713,9 +713,9 @@ function renderLive(rows){
     const idle=r.tokens_per_min<=0.5/60;
     const rate=idle?'idle':'▲ '+fT(r.tokens_per_min/60)+'/s';
     const cls=(primary?'live-row primary clickable':'live-row sub'+(idle?' idle':''))+(primary&&popOpen?' open':'');
-    const ctx=r.last_context_tokens>0?'<span class="live-metric ctx" title="最近一次请求输入（上下文占用）">CTX '+fT(r.last_context_tokens)+'</span>':'';
-    const chev=primary?'<span class="live-chevron" title="点击展开/收起指标">⌄</span>':'';
-    const brand=primary?(open?'<span class="live-brand open-brand" data-dock-action="detail" title="收起 CostDog 详情">⌃ 收起</span>':'<span class="live-brand" data-dock-action="detail" title="打开 CostDog 详情">🐕</span>'):'';
+    const ctx=r.last_context_tokens>0?'<span class="live-metric ctx" title="Input of the last request (context occupancy)">CTX '+fT(r.last_context_tokens)+'</span>':'';
+    const chev=primary?'<span class="live-chevron" title="Click to expand/collapse metrics">⌄</span>':'';
+    const brand=primary?(open?'<span class="live-brand open-brand" data-dock-action="detail" title="Collapse CostDog details">⌃ Collapse</span>':'<span class="live-brand" data-dock-action="detail" title="Open CostDog details">🐕</span>'):'';
     const src=primary?'':'<span class="live-src">'+esc(r.source)+'</span>';
     return '<div class="'+cls+'" data-live-primary="'+(primary?1:0)+'">'+brand+'<span class="live-cost">$'+TODAY_COST+'</span>'+(primary?sparkSVG():'')+'<span class="live-rate">'+rate+'</span>'+src+'<span class="live-proj" title="'+esc(r.project)+'">'+esc(r.project)+'</span><span class="live-metric hit">⚡'+r.cache_hit_pct.toFixed(0)+'%</span><span class="live-metric">Σ'+fT(r.tokens_in_window)+'</span>'+ctx+chev+'</div>';
   }).join('');
@@ -737,23 +737,23 @@ function sparkSVG(){
 function renderPop(metrics,project){
   const pop=document.getElementById('livepop');
   if(!popOpen){pop.classList.remove('show');syncHeight();return;}
-  let timing='<div class="pop-group"><div class="pop-head">会话计时 <span>'+esc(project)+'</span></div>'+kv('模型用时','—')+kv('工具调用用时','—')+kv('首 token（TTFT）','—')+kv('输出速度（TPS）','—')+'</div>';
-  let tokens='<div class="pop-group"><div class="pop-head">Token 用量与缓存</div>'+kv('缓存命中','—')+kv('未缓存输入','—')+kv('缓存读取','—')+kv('输出','—')+'</div>';
+  let timing='<div class="pop-group"><div class="pop-head">Session timing <span>'+esc(project)+'</span></div>'+kv('Model time','—')+kv('Tool time','—')+kv('First token (TTFT)','—')+kv('Output speed (TPS)','—')+'</div>';
+  let tokens='<div class="pop-group"><div class="pop-head">Token usage &amp; cache</div>'+kv('Cache hit','—')+kv('Uncached input','—')+kv('Cache read','—')+kv('Output','—')+'</div>';
   if(metrics){
-    timing='<div class="pop-group"><div class="pop-head">会话计时 <span>'+esc(project)+' · '+metrics.tool_calls+' 次工具调用</span></div>'
-      +kv('模型用时',fmtDur(metrics.model_ms))
-      +kv('工具调用用时',fmtDur(metrics.tool_ms))
-      +kv('首 token 平均（TTFT）',(metrics.ttft_ms/1000).toFixed(1)+'秒')
-      +kv('输出速度（TPS）',Math.round(metrics.tps)+' tok/s')+'</div>';
-    tokens='<div class="pop-group"><div class="pop-head">Token 用量与缓存 <span>当前会话</span></div>'
-      +kv('缓存命中','<span style="color:#34d399">'+metrics.cache_hit_pct.toFixed(0)+'%</span>')
-      +kv('未缓存输入',fI(metrics.uncached_input_tokens)+' tok')
-      +kv('缓存读取','<span style="color:#c084fc">'+fI(metrics.cache_read_tokens)+' tok</span>')
-      +kv('输出',fI(metrics.output_tokens)+' tok')+'</div>';
+    timing='<div class="pop-group"><div class="pop-head">Session timing <span>'+esc(project)+' · '+metrics.tool_calls+' tool calls</span></div>'
+      +kv('Model time',fmtDur(metrics.model_ms))
+      +kv('Tool time',fmtDur(metrics.tool_ms))
+      +kv('Avg first token (TTFT)',(metrics.ttft_ms/1000).toFixed(1)+'s')
+      +kv('Output speed (TPS)',Math.round(metrics.tps)+' tok/s')+'</div>';
+    tokens='<div class="pop-group"><div class="pop-head">Token usage &amp; cache <span>Current session</span></div>'
+      +kv('Cache hit','<span style="color:#34d399">'+metrics.cache_hit_pct.toFixed(0)+'%</span>')
+      +kv('Uncached input',fI(metrics.uncached_input_tokens)+' tok')
+      +kv('Cache read','<span style="color:#c084fc">'+fI(metrics.cache_read_tokens)+' tok</span>')
+      +kv('Output',fI(metrics.output_tokens)+' tok')+'</div>';
   }
-  const sessRow=SESSIONS.length?'<div class="pop-sessions" role="tablist" aria-label="会话切换">'+SESSIONS.map(x=>{
+  const sessRow=SESSIONS.length?'<div class="pop-sessions" role="tablist" aria-label="Session switcher">'+SESSIONS.map(x=>{
     const cur=metrics&&x.session_id===metrics.session_id;
-    return '<button class="psess'+(cur?' on':'')+'" data-sess="'+esc(x.session_id)+'" title="'+esc(x.project)+' · '+(x.active?'活跃中':'最近使用')+'">'+(x.active?'<span class="dot">●</span> ':'')+esc(x.project)+'</button>';
+    return '<button class="psess'+(cur?' on':'')+'" data-sess="'+esc(x.session_id)+'" title="'+esc(x.project)+' · '+(x.active?'active':'recent')+'">'+(x.active?'<span class="dot">●</span> ':'')+esc(x.project)+'</button>';
   }).join('')+'</div>':'';
   pop.innerHTML=sessRow+timing+tokens;
   pop.classList.add('show');
@@ -1069,7 +1069,7 @@ const SRC_LABELS={'claude-code':'Claude Code',codex:'Codex',zcode:'ZCode',openco
     const hosts=Object.entries(HOST_META).map(([src,[ch,name]])=>{
       const r=rows.find(x=>x.source===src);
       const live=r&&r.tokens_per_min>0.05;
-      return '<span class="tb-host'+(live?' live':'')+'" title="'+name+(live?' · 运行中':'')+'"><span class="dot"></span>'+ch+'</span>';
+      return '<span class="tb-host'+(live?' live':'')+'" title="'+name+(live?' · running':'')+'"><span class="dot"></span>'+ch+'</span>';
     }).join('');
     tb.innerHTML='<span class="tb-cost">'+cost+'</span><span class="tb-sep">│</span>'
       +'<span class="tb-rate'+(rate?' live':'')+'">'+(rate?'▲ '+rate+'/s':'idle')+'</span><span class="tb-sep">│</span>'+hosts;
@@ -1105,28 +1105,28 @@ const SRC_LABELS={'claude-code':'Claude Code',codex:'Codex',zcode:'ZCode',openco
     // 最高优先级：当前会话烧钱异常（≥$1 且 ≥ 历史平均 3 倍）
     try{
       const alert=await I('get_session_cost_alert');
-      if(alert)ins.push('💸 当前会话「'+esc(alert.project)+'」已累计 $'+alert.current_cost.toFixed(2)+'——是近 30 天会话平均（$'+alert.avg_cost.toFixed(2)+'）的 '+alert.multiple.toFixed(1)+' 倍，建议压缩上下文或新开会话');
+      if(alert)ins.push('💸 Current session "'+esc(alert.project)+'" has spent $'+alert.current_cost.toFixed(2)+' — '+alert.multiple.toFixed(1)+'x the 30-day session average ($'+alert.avg_cost.toFixed(2)+'). Compact the context or start a new session');
     }catch(e){}
     const projects=an&&an.breakdowns&&an.breakdowns.project?an.breakdowns.project:[];
     if(projects.length&&projects[0].cost>0.5){
       const top=projects[0];
       const share=cost>0?Math.round(top.cost/cost*100):0;
-      ins.push('🔥 今天「'+esc(top.display_name)+'」烧了 $'+top.cost.toFixed(2)+'（占 '+share+'%），'+(projects[1]?'是第二名 $'+projects[1].cost.toFixed(2)+' 的 '+(top.cost/Math.max(projects[1].cost,0.01)).toFixed(1)+' 倍':'占绝对大头'));
+      ins.push('🔥 "'+esc(top.display_name)+'" took $'+top.cost.toFixed(2)+' today ('+share+'% of spend), '+(projects[1]?(top.cost/Math.max(projects[1].cost,0.01)).toFixed(1)+'x the runner-up ($'+projects[1].cost.toFixed(2)+')':'by far the largest share'));
     }
     const models=an&&an.breakdowns&&an.breakdowns.model?an.breakdowns.model:[];
     if(models.length>=2&&models[1].tokens>10000){
       const a=models[0],b=models[1];
       const pa=a.cost/Math.max(a.tokens,1)*1e6,pb=b.cost/Math.max(b.tokens,1)*1e6;
-      if(pa>pb*1.8&&pa>1)ins.push('⚖️ '+esc(a.display_name)+' 单位成本 $'+pa.toFixed(1)+'/M，是 '+esc(b.display_name)+'（$'+pb.toFixed(1)+'/M）的 '+(pa/pb).toFixed(1)+' 倍');
+      if(pa>pb*1.8&&pa>1)ins.push('⚖️ '+esc(a.display_name)+' costs $'+pa.toFixed(1)+'/M per unit, '+(pa/pb).toFixed(1)+'x '+esc(b.display_name)+' ($'+pb.toFixed(1)+'/M)');
     }
     const low=rows.find(r=>r.tokens_in_window>100000&&r.cache_hit_pct<60);
-    if(low)ins.push('⚡ '+esc(low.source)+' 缓存命中率仅 '+low.cache_hit_pct.toFixed(0)+'%——长对话新开会话可显著省钱');
-    if(Math.abs(diff)>2)ins.push(diff>0?'📈 比昨天多花 $'+Math.abs(diff).toFixed(2):'📉 比昨天省 $'+Math.abs(diff).toFixed(2));
+    if(low)ins.push('⚡ '+esc(low.source)+' cache hit is only '+low.cache_hit_pct.toFixed(0)+'% — a fresh session would save real money');
+    if(Math.abs(diff)>2)ins.push(diff>0?'📈 $'+Math.abs(diff).toFixed(2)+' more than yesterday':'📉 $'+Math.abs(diff).toFixed(2)+' less than yesterday');
     // ── 预算条 ──
     let budgetHtml='';
     if(B&&B.limit){
       const pct=Math.min(100,Math.round(B.percentUsed||0));
-      budgetHtml='<div class="pv-budget"><i style="width:'+pct+'%"></i></div><div class="pv-sub" style="margin:2px 0 0">本月预算 '+pct+'%（'+(B.forecast!=null?'预测 '+B.forecast:'')+'）</div>';
+      budgetHtml='<div class="pv-budget"><i style="width:'+pct+'%"></i></div><div class="pv-sub" style="margin:2px 0 0">Monthly budget '+pct+'%'+(B.forecast!=null?' · forecast '+B.forecast:'')+'</div>';
     }
     // ── 项目/模型条形 ──
     const hbars=list=>list.slice(0,3).map(x=>{
@@ -1139,18 +1139,18 @@ const SRC_LABELS={'claude-code':'Claude Code',codex:'Codex',zcode:'ZCode',openco
     const cards=rows.map(r=>'<div class="pv-card"><div class="row1"><span class="src">'+esc(SRC_LABELS[r.source]||r.source)+'</span><span class="proj" title="'+esc(r.project)+'">'+esc(r.project)+'</span></div><div class="row2"><span>Σ <b>'+fT(r.tokens_in_window)+'</b></span><span>⚡ <b>'+r.cache_hit_pct.toFixed(0)+'%</b></span>'+(r.last_context_tokens>0?'<span>CTX <b>'+fT(r.last_context_tokens)+'</b></span>':'')+'</div></div>').join('');
     let sess='';
     if(metrics){
-      sess='<div class="pv-sec">当前会话</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px">'
-        +'<div>'+kv('模型用时',fmtDur(metrics.model_ms))+kv('工具调用用时',fmtDur(metrics.tool_ms))+kv('TTFT',(metrics.ttft_ms/1000).toFixed(1)+'秒')+kv('输出速度',Math.round(metrics.tps)+' tok/s')+'</div>'
-        +'<div>'+kv('缓存命中',metrics.cache_hit_pct.toFixed(0)+'%')+kv('未缓存输入',fI(metrics.uncached_input_tokens)+' tok')+kv('缓存读取',fI(metrics.cache_read_tokens)+' tok')+kv('输出',fI(metrics.output_tokens)+' tok')+'</div></div>';
+      sess='<div class="pv-sec">Current session</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px">'
+        +'<div>'+kv('Model time',fmtDur(metrics.model_ms))+kv('Tool time',fmtDur(metrics.tool_ms))+kv('TTFT',(metrics.ttft_ms/1000).toFixed(1)+'s')+kv('Output speed',Math.round(metrics.tps)+' tok/s')+'</div>'
+        +'<div>'+kv('Cache hit',metrics.cache_hit_pct.toFixed(0)+'%')+kv('Uncached input',fI(metrics.uncached_input_tokens)+' tok')+kv('Cache read',fI(metrics.cache_read_tokens)+' tok')+kv('Output',fI(metrics.output_tokens)+' tok')+'</div></div>';
     }
-    pv.innerHTML='<div class="pv-head"><span class="pv-title">COSTDOG · 今日</span><span class="pv-cost">'+fC2(cost)+'</span></div>'
-      +'<div class="pv-sub">昨天 $'+prev.toFixed(2)+' · '+(diff>=0?'+':'−')+'$'+Math.abs(diff).toFixed(2)+'</div>'
+    pv.innerHTML='<div class="pv-head"><span class="pv-title">COSTDOG · Today</span><span class="pv-cost">'+fC2(cost)+'</span></div>'
+      +'<div class="pv-sub">Yesterday $'+prev.toFixed(2)+' · '+(diff>=0?'+':'−')+'$'+Math.abs(diff).toFixed(2)+'</div>'
       +budgetHtml
-      +(ins.length?'<div class="pv-sec">洞察</div>'+ins.slice(0,3).map(t=>'<div class="pv-insight"><span class="ico">'+t.slice(0,2)+'</span><span>'+t.slice(2)+'</span></div>').join(''):'')
-      +(projects.length?'<div class="pv-sec">项目 Top</div>'+hbars(projects):'')
-      +(models.length?'<div class="pv-sec">模型对比（今日）</div>'+hbars(models):'')
-      +(trend?'<div class="pv-sec">7 天花费趋势</div>'+trend:'')
-      +(cards?'<div class="pv-sec">活跃客户端</div>'+cards:'')
+      +(ins.length?'<div class="pv-sec">Insights</div>'+ins.slice(0,3).map(t=>'<div class="pv-insight"><span class="ico">'+t.slice(0,2)+'</span><span>'+t.slice(2)+'</span></div>').join(''):'')
+      +(projects.length?'<div class="pv-sec">Top projects</div>'+hbars(projects):'')
+      +(models.length?'<div class="pv-sec">Models (today)</div>'+hbars(models):'')
+      +(trend?'<div class="pv-sec">7-day spend trend</div>'+trend:'')
+      +(cards?'<div class="pv-sec">Active clients</div>'+cards:'')
       +sess;
   }
   renderPanel();

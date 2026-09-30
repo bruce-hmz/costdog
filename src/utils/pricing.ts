@@ -15,6 +15,39 @@ const FALLBACK_PRICING: Record<string, { input: number; output: number }> = {
 };
 
 /**
+ * Provider-level prices taken from the tools' own model registries ($/M: input, output,
+ * cache read, cache write). These beat OpenRouter: it only lists one provider's list
+ * price, while the same model id can differ 2-10x between providers. Measured for
+ * `deepseek-v4.1-flash`: opencode-go 0.15/0.6/0.003, opencode 0.3/1.2/0.006, OpenRouter
+ * 0.3/1.2 — and OpenRouter's cache read then gets estimated as input×0.1 (0.03), which
+ * inflates a 94%-cache-read DSH session by ~3.8x.
+ * Source: DeepSeek Harness's bundled model registry (per-provider `cost` fields).
+ */
+const PROVIDER_PRICING: Record<string, Record<string, { input: number; output: number; cacheRead: number; cacheCreation: number }>> = {
+  'opencode-go': { 'deepseek-v4.1-flash': { input: 0.15, output: 0.6, cacheRead: 0.003, cacheCreation: 0 } },
+  opencode: { 'deepseek-v4.1-flash': { input: 0.3, output: 1.2, cacheRead: 0.006, cacheCreation: 0 } },
+  openrouter: { 'deepseek-v4.1-flash': { input: 0.15, output: 0.6, cacheRead: 0.003, cacheCreation: 0 } },
+};
+
+interface ResolvedPrice {
+  input: number;
+  output: number;
+  /** 缺省时由调用方按 input×0.1 估（Anthropic 式启发）。 */
+  cacheRead?: number;
+  cacheCreation?: number;
+}
+
+export function findProviderPrice(provider: string | undefined, modelId: string): ResolvedPrice | null {
+  if (!provider) return null;
+  const table = PROVIDER_PRICING[provider.toLowerCase()];
+  if (!table) return null;
+  const lower = modelId.toLowerCase();
+  const suffix = lower.split('/').pop() ?? lower;
+  const hit = table[lower] ?? table[suffix];
+  return hit ? { ...hit } : null;
+}
+
+/**
  * Fetch pricing from OpenRouter API
  */
 async function fetchOpenRouterPricing(): Promise<ModelPricing[]> {
@@ -96,8 +129,16 @@ export async function loadPricing(): Promise<ModelPricing[]> {
 /**
  * Find price for a model, with fuzzy matching
  */
-export function findModelPrice(modelId: string, pricing: ModelPricing[]): { input: number; output: number } | null {
+export function findModelPrice(
+  modelId: string,
+  pricing: ModelPricing[],
+  provider?: string,
+): ResolvedPrice | null {
   if (!modelId) return null;
+
+  // Provider 表优先（见 PROVIDER_PRICING 的说明）。
+  const providerPrice = findProviderPrice(provider, modelId);
+  if (providerPrice) return providerPrice;
 
   const lower = modelId.toLowerCase();
 
@@ -155,17 +196,20 @@ export function calculateCost(
   reasoningTokens: number,
   modelId: string,
   pricing: ModelPricing[],
+  provider?: string,
 ): number {
-  const price = findModelPrice(modelId, pricing);
+  const price = findModelPrice(modelId, pricing, provider);
   if (!price) return 0;
 
   const perM = 1_000_000;
   // inputTokens is the NON-cached portion: Anthropic reports it separately from cache
   // read/creation, and the Codex parser subtracts cached tokens. So no subtraction here.
+  // Cache prices come from the provider table when it has them (DeepSeek-style pricing
+  // reads at ~2% of input, not the Anthropic-style 10%).
   return (
     (inputTokens / perM) * price.input +
-    (cacheReadTokens / perM) * (price.input * 0.1) +
-    (cacheCreationTokens / perM) * (price.input * 1.25) +
+    (cacheReadTokens / perM) * (price.cacheRead ?? price.input * 0.1) +
+    (cacheCreationTokens / perM) * (price.cacheCreation ?? price.input * 1.25) +
     (outputTokens / perM) * price.output +
     (reasoningTokens / perM) * price.output
   );

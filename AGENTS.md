@@ -22,13 +22,16 @@ activity-category features the bar has.
 | Codex CLI | `~/.codex/sessions/*/rollout-*.jsonl` | `token_count` events are cumulative — last value wins. `input_tokens` includes cached, so cached is subtracted |
 | ZCode | `~/.zcode/cli/db/db.sqlite` | `model_usage` rows aggregated per (session, local date) |
 | OpenCode | `~/.local/share/opencode/opencode.db` | `session` table is pre-aggregated and carries its own `cost` |
-| DeepSeek Harness | `~/.dsh/sessions/*/*/session.v4.jsonl.zstd` | zstd JSONL; `assistant/message.usage` per step is the billing unit. `inputTokens` is *uncached*, so cache hit is `cacheRead/(input+cacheRead)`. Sessions span days, so buckets are keyed by message timestamp's local date. Auxiliary `~/.dsh/storages/session_projcache/sessions/<id>.json` supplies model/CTX/timings without decompressing |
+| DeepSeek Harness | `~/.dsh/sessions/*/*/session.v4.jsonl.zstd` | zstd JSONL; `assistant/message.usage` per step is the billing unit. `inputTokens` is *uncached*, so cache hit is `cacheRead/(input+cacheRead)`. Sessions span days, so buckets are keyed by message timestamp's local date. Auxiliary `~/.dsh/storages/session_projcache/sessions/<id>.json` supplies model/CTX/timings without decompressing | Both frontends parse it: `src-tauri/src/dsh.rs` (ruzstd) and `src/parsers/dsh.ts` (node:zlib). Both need their own frame loop — every `zstdDecompress*` helper in both runtimes stops after the **first** frame, which is 226 bytes of `{"type":"session"}` and makes every session look empty.
 
 Overrides: `CODEX_HOME`, `ZCODE_HOME`, `OPENCODE_DB`, `DSH_HOME`, `XDG_DATA_HOME`,
 `COSTDOG_DATA_DIR`, `COSTDOG_PORT`.
 
 Prices come from the OpenRouter API, cached 24h in `~/.costdog/pricing-cache.json` and
-shared with the TypeScript side.
+shared with the TypeScript side. A small **provider-level** table (`provider_price()` in
+`lib.rs`, `PROVIDER_PRICING` in `src/utils/pricing.ts`) wins over OpenRouter: the same model
+id can differ 2-10x between providers, and OpenRouter's cache-read estimate (input×0.1) is
+Anthropic-shaped — it overstates a cache-heavy DeepSeek session by ~3.8x.
 
 ## Scanning
 
@@ -72,7 +75,9 @@ because scans are incremental, a rescan would only revisit the last day of sourc
   the activity donut and source diagnostics live in a collapsible "Analysis & diagnostics"
   section so the numbers stay on the first screen.
 - The whole UI is English. The skins' English typography is deliberate; a test fails on any
-  CJK character in `src-tauri/embedded/index.html`.
+  CJK character in **user-visible text** of `src-tauri/embedded/index.html`. Comments (HTML,
+  block and line) are stripped first — Chinese comments are this repo's norm and the file's
+  CSS comments carry layout/iron-rule history, so they must not gate the check.
 - On macOS it runs as an accessory app (no Dock icon) with a monochrome template tray icon.
   Closing hides the window on every platform; the tray is how it comes back.
 - The frontend is a single embedded HTML file talking to Rust over IPC. There is no HTTP

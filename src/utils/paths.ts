@@ -53,6 +53,15 @@ export function getCostDogDbPath(): string {
   return path.join(dataDir, 'costdog.sqlite');
 }
 
+// DeepSeek Harness stores zstd-compressed session transcripts under ~/.dsh/sessions.
+// DSH_HOME overrides the base directory (same convention as CODEX_HOME/ZCODE_HOME).
+export function getDshDir(): string {
+  return process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+}
+
+export function getDshSessionsDir(): string {
+  return path.join(getDshDir(), 'sessions');
+}
 export function getCostDogConfigDir(): string {
   return process.env.COSTDOG_DATA_DIR || path.join(os.homedir(), '.costdog');
 }

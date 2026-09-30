@@ -16,9 +16,12 @@ export interface ToolCall {
 
 export interface SessionSummary {
   sessionId: string;
-  source: 'claude-code' | 'codex' | 'zcode' | 'opencode';
+  source: 'claude-code' | 'codex' | 'zcode' | 'opencode' | 'dsh';
   date: string;
   model: string;
+  /** Provider the session ran against (only sources that log it fill this in).
+   *  Pricing prefers it: the same model id can differ 2-10x between providers. */
+  provider?: string;
   project: string;
   startTime: string;
   endTime: string;

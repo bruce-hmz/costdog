@@ -68,7 +68,14 @@ test('detail panel leads with the numbers, not the analytics', () => {
 // skins keep their English typography (NIGHT WATCH, LAP COST) as art direction, so the
 // whole file is English now — any CJK character means the two have drifted apart again.
 test('desktop UI text is single-language', () => {
-  const cjk = desktopHtml.match(/[一-鿿]/gu);
+  // 只检查**用户可见文案**：注释（HTML/JS 块注释与行注释）里中英混排是这个仓库的常态
+  // ——Rust 侧的注释几乎全是中文，index.html 里的 CSS 注释也承载着布局/铁律的来龙去脉。
+  // 旧断言把注释一起算进来，于是长期误报 947 个字符，把真正要守的"UI 文案单一语言"淹没。
+  const visible = desktopHtml
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  const cjk = visible.match(/[一-鿿]/gu);
 
   assert.equal(cjk, null, `unexpected CJK text: ${cjk?.slice(0, 8).join('')}`);
   assert.match(desktopHtml, /<html lang="en"/);

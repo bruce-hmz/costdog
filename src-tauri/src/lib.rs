@@ -3712,8 +3712,8 @@ fn ensure_topbar_window(app: &tauri::AppHandle) {
             }
         });
     }
-    dock::spawn_cursor_guard(app.clone());
-            dock::spawn_reinforce_guard(app.clone());
+    // 光标守卫不在这里起：它由 setup 统一起一份（见 spawn_cursor_guard 的幂等保护）。
+    dock::spawn_reinforce_guard(app.clone());
     // 默认全窗穿透：光标进入小狗范围时由 guard 线程解除。
     bar.set_ignore_cursor_events(true).ok();
     eprintln!("[CostDog] pet window ready (fullscreen pass-through)");
@@ -4056,17 +4056,20 @@ pub fn run() {
                 eprintln!("[CostDog] tray init failed: {}", e);
             }
 
-            // Initial scan (synchronous - completes before window loads)
-            if let Err(e) = full_scan() {
-                eprintln!("Initial scan failed: {}", e);
-            }
-
+            // 首扫放到扫描线程里去（不再在 setup 主线程同步跑）：它要遍历解析其它工具的
+            // 日志（codex rollout 有 14MB 的），同步跑会拖住第一帧——窗口已经显示、内容
+            // 和宠物却还没画出来。前端本来就订阅 refresh-data / 2s 轮询，扫完自然补上。
+            //
             // Auto-refresh: every 30s while the bar is on screen, every 10th tick (5 min)
             // while it is hidden — nobody is reading the numbers then. Ticking at a fixed
             // 30s rather than sleeping longer keeps the delay after the bar reappears
             // bounded by one tick.
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
+                if let Err(e) = full_scan() {
+                    eprintln!("Initial scan failed: {}", e);
+                }
+                let _ = app_handle.emit("refresh-data", ());
                 let mut ticks_since_scan = 0;
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(SCAN_TICK_SECONDS));
