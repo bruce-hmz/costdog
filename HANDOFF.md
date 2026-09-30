@@ -160,3 +160,10 @@ screencapture -x -R<x-25>,<y-40>,200,250 /tmp/dog.png  # 按 pet.json 坐标裁�
     - 验证：CDP 真实输入 单击⇄ 三次循环正确 + localStorage 同步；拖动仍 Δ=80px；点铭牌不误触拖动。真机侧：`/pet.json` 显示光标移到宠物中心时 `interactive=true`、移开变 `false`（守卫读数与瞬移坐标逐像素一致）。
     - **环境限制**：本机 `CGPreflightPostEventAccess()=被拒`（无辅助功能权限），CGEvent 合成点击会被系统静默丢弃 —— 所以"真机点一下"这条路走不通，验证必须走 headless CDP 输入管线。
 
+15. **走路"像抽搐"**（用户反馈）。先排除素材：三张新雪碧图的逐帧顶/底完全对齐（极差 0px）、纵向重心只差 0.8~2.5px —— 素材没问题。问题是**运动是怎么驱动的**：
+    - 位移只在 110ms 的 tick 里一跳 1.6~4.2px（≈9Hz 阶梯），而腿部帧动画是 13Hz 硬切 —— 阶梯位移 + 逐帧跳变的腿叠在一起就是"抽搐"。
+    - 我上一轮把 `stepbob` 从 0.5s 提到 0.3s（为了配合 0.6s 的循环保持"每循环两次"），于是变成 **3.3Hz、上下抖 5px** 的高频抖动 —— 这是第二个抽搐源（幅度是我自己加倍的）。
+    - 修法：① 位移改为 `requestAnimationFrame` 逐帧积分（亚像素），并改用 `transform: translate3d()` 只走合成层（不触发布局/重绘）；CSS 里 `transition:left` 整条删掉 —— 顺带让"停下还在滑"那类 bug 不可能再出现；② `stepbob` 幅度砍半（2.5/1.5px → 1.2/0.8px），频率不变（四足对角步态本来就是每循环两次）；③ 状态机里留 rAF 兜底：`performance.now()-lastFrameTs>300` 就按 110ms 补一格，防窗口被完全遮挡时 rAF 被节流把宠物冻住。
+    - 实测（headless CDP 真实输入管线）：**61fps，每帧位移 0.53~0.55px（理论 32px/s ÷ 60 = 0.53），73 帧里只有 1 帧为 0，帧间隔 16.5~16.8ms**，样式为 `transform: translate3d(519px,0,0)`。回归：真实点击 ⇄ 两次 dog→cat→rabbit（localStorage 同步）、真实拖动 +80px 都正常。
+    - 真机复核：`/pet.json` 的 x 以稳定的 2~3px/120ms 推进（≈32px/s），守卫 ticks 正常。
+

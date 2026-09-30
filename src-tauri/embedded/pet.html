@@ -4,9 +4,9 @@ body{margin:0;background:transparent;overflow:hidden;user-select:none}
 /* 底部横条舞台：只有 220px 高，绝不全屏铺 absolute —— 全铺布局会触发
    透明窗合成死区（历史教训） */
 #stage{position:fixed;left:0;right:0;bottom:0;height:220px}
-.critter{position:absolute;bottom:110px;width:150px;height:170px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;transition:left 120ms linear;cursor:grab;touch-action:none}
+.critter{position:absolute;bottom:110px;width:150px;height:170px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;cursor:grab;touch-action:none;will-change:transform}
 /* 拖动中：去掉 left 的 1.2s 缓动（否则宠物追不上光标），并换成抓取光标 */
-body.dragging .critter{transition:none;cursor:grabbing}
+body.dragging .critter{cursor:grabbing}
 body.dragging .critter *{cursor:grabbing}
 /* ── 三只宠物：每只一对元素（跑/睡）。可见性只由 data-pet × data-state 决定，
    全程不换 img.src（铁律 2：高频换 src 会重绘风暴挤出铭牌层）。
@@ -39,7 +39,9 @@ body.walking .crit-run{animation:stepbob .3s ease-in-out infinite}
    狗的跑图是 div（雪碧图），原选择器把它漏掉了，走路态因此没有描边。 */
 .sprite{filter:drop-shadow(0 0 1.5px rgba(255,255,255,.9)) drop-shadow(0 2px 3px rgba(255,255,255,.5)) drop-shadow(0 5px 12px rgba(0,0,0,.5));transform-origin:center;-webkit-user-drag:none;user-select:none}
 
-@keyframes stepbob{0%,100%{transform:translateY(0)}25%{transform:translateY(-2.5px)}50%{transform:translateY(0)}75%{transform:translateY(-1.5px)}}
+/* 起伏幅度砍半：72px 精灵上抖 5px（3.3Hz）看起来是抽搐而不是走路。
+   频率保持每循环两次（四足对角步态本来如此），只压幅度。 */
+@keyframes stepbob{0%,100%{transform:translateY(0)}25%{transform:translateY(-1.2px)}50%{transform:translateY(0)}75%{transform:translateY(-0.8px)}}
 /* 铭牌贴住狗头顶：狗盒高 72px，bottom:80px ⇒ 与头顶留 8px（跑动 stepbob 抬 2.5px 仍有余量）。
    历史 bug：这里原用 top:-2px 钉在 170px 容器顶部，而狗被 flex-end 压在底部，中间空出 70px。 */
 .plate{position:absolute;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(22,22,28,.92);border:1px solid rgba(255,255,255,.15);border-radius:9px;padding:2px 7px;color:#e8e8e8;font-family:monospace;font-variant-numeric:tabular-nums;box-shadow:0 0 0 1px rgba(255,255,255,.12),0 3px 10px rgba(0,0,0,.45);text-align:center;line-height:1.25}
@@ -129,7 +131,12 @@ var lastLive=0, sleeping=false;
 /* 宠物底边距窗口底部的距离（拖动可改，之后就在这个高度上散步） */
 var roamBottom=110, PET_W=150, PET_H=170;
 function clampX(x){return Math.max(10,Math.min(SW-160,x));}
-function setDog(x){dogX=clampX(x);critter.style.left=dogX+'px';}
+function setDog(x){
+  dogX=clampX(x);
+  // 用 transform 而不是 left：位移只走合成层（不触发布局/重绘），
+  // 而且能承受 60fps 的逐帧推进 —— 详见 walkFrame() 的注释。
+  critter.style.transform='translate3d('+dogX+'px,0,0)';
+}
 function clampBottom(b){return Math.max(6,Math.min(window.innerHeight-PET_H-30,b));}   // 顶部留 30px 避开菜单栏
 function setPetBottom(b){roamBottom=clampBottom(b);critter.style.bottom=roamBottom+'px';}
 /* 位置持久化：记住拖动后的 (left, bottom)，下次启动就从那儿开始
@@ -210,10 +217,10 @@ var WALK_CYCLE_S=0.6;
 // 47~52，即平滑渲染），步幅也变大：狗 8.6→19.5、兔 21.7→23.1；猫 21.3→13.4
 // （猫这张步幅小了些，速度表会跟着降到 22px/s，仍然不打滑）。
 var PET_STRIDE={dog:19.5, cat:13.4, rabbit:23.1};
-function walkPxPerTick(){
+function walkPxPerSecond(){
   var pet=PETS[petIdx];                       // PETS 在下方定义，运行时才求值
-  var stride=PET_STRIDE[pet&&pet.id]||8.6;
-  return stride/WALK_CYCLE_S*0.110;           // 每 110ms tick 的位移
+  var stride=PET_STRIDE[pet&&pet.id]||19.5;
+  return stride/WALK_CYCLE_S;                 // 步幅 ÷ 循环时长 = 脚不打滑的地面速度
 }
 function liveNow(){return Date.now()-lastLive<8000;}
 setInterval(function(){
@@ -227,7 +234,12 @@ setInterval(function(){
     }
     if(state==='walk'){
       if((dir>0&&dogX>=walkTarget-2)||(dir<0&&dogX<=walkTarget+2)){state='pause';stateUntil=now+2000+Math.random()*3000;}
-      else setDog(dogX+dir*walkPxPerTick());
+      // 位移交给 walkFrame() 按帧推进：110ms 一跳的阶梯位移 + 13Hz 帧动画
+      // 叠在一起就是用户说的"抽搐"。这里只负责判断到没到。
+    }
+    // rAF 兜底：万一 rAF 被节流（窗口被完全遮挡等），也别让宠物卡在原地不动。
+    if(performance.now()-lastFrameTs>300&&state==='walk'&&!sleeping&&!dragging){
+      setDog(dogX+dir*walkPxPerSecond()*0.110);
     }
     // 转向只翻转宠物跑图（铭牌文字永不镜像）
     if(dir!==petFace)setFace(dir);
@@ -236,6 +248,18 @@ setInterval(function(){
   document.body.dataset.state=sleeping?'sleep':(walking?'run':'idle');
   document.body.classList.toggle('walking',walking);
 },110);
+/* 位移推进：requestAnimationFrame（60fps、亚像素增量）。
+   为什么不在 110ms 的 tick 里直接加像素：那是 9Hz 的阶梯位移，和 13Hz 的腿部帧动画
+   叠起来就成了"抽搐"（用户反馈）。rAF 只做位置积分；走/停/转向/睡觉的决策仍在 tick。 */
+var lastFrameTs=0;
+function walkFrame(ts){
+  requestAnimationFrame(walkFrame);
+  var dt=lastFrameTs?Math.min(0.05,(ts-lastFrameTs)/1000):0;   // 卡顿后最多按 50ms 计，避免瞬移
+  lastFrameTs=ts;
+  if(dragging||sleeping||state!=='walk')return;
+  setDog(dogX+dir*walkPxPerSecond()*dt);
+}
+requestAnimationFrame(walkFrame);
 /* 8 帧走路循环：CSS steps 雪碧图动画（零重排），walking 挂 body */
 
 /* 数据 */
@@ -314,8 +338,6 @@ setInterval(function(){
       lastSummon=n;
       // 召唤：移到屏幕中央 + 触发重绘（对冲任何合成异常）
       setDog(window.innerWidth/2-75);
-      critter.style.transition='none';critter.style.left=(window.innerWidth/2-75)+'px';
-      requestAnimationFrame(function(){critter.style.transition='';});
       document.body.style.opacity='0.99';
       setTimeout(function(){document.body.style.opacity='1';},60);
       savePos();
