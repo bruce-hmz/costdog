@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window capabilities. Grants the core default set plus window dragging. data-tauri-drag-region invokes the core start_dragging command, which core:window:default does NOT include — without this explicit permission the bar cannot be moved on any platform (macOS or Windows). Resize dragging is deliberately absent: the bar is a fixed 410px layout and the window is not resizable.",
-  "windows": ["main"],
+  "description": "Core capabilities for the windows that use plugin/core commands: 'main' (the retired bar, kept for window dragging) and 'panel' (the menu-bar insight panel, which calls plugin:event|listen and plugin:app|version — without listing it here those invokes are rejected by the ACL). Resize dragging is deliberately absent: windows have fixed layouts. The 'topbar' pet window only calls app commands, which are not ACL-gated, so it needs no entry.",
+  "windows": ["main", "panel"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

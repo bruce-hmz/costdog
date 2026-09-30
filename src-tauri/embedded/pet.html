@@ -224,28 +224,44 @@ plate.addEventListener('click',function(e){
   else{var i=ids.indexOf(lockedSession);next=(i>=0&&i<ids.length-1)?ids[i+1]:null;}
   lockedSession=next;
   proj.style.color=next?'#f97316':'#7fb8ff';
+  refreshSessions(true);           // 手选会话立刻生效，不等下一个慢 tick
 });
+// 慢数据（今日花费/会话名/CTX）分频拉取：它们本来每 2s 跟速率一起抢主线程，
+// 而 3 个 IPC 里有 1 个是 945ms 的跨库全表查询（见 lib.rs 里 list_recent_sessions
+// 的注释）——宠物因此"跑着跑着卡一下"。速率为王，其余降频。
+var tickNo=0,lastSrc=null;
+function refreshSessions(force){
+  if(!window.__TAURI_INTERNALS__)return;
+  var I=window.__TAURI_INTERNALS__.invoke;
+  I('list_recent_sessions',{source:lastSrc||'zcode'}).then(function(list){
+    if(force)SESSIONS=list||[];
+    else if(list&&list.length)SESSIONS=list;
+    var cur=lockedSession||(SESSIONS[0]&&SESSIONS[0].session_id);
+    var hit=SESSIONS.find(function(x){return x.session_id===cur;});
+    proj.textContent=hit?hit.project:'—';
+    I('get_session_metrics',{source:lastSrc||'zcode',sessionId:cur}).then(function(m){
+      ctx.textContent='CTX '+(m?fT(m.last_context_tokens||0):'—');
+    }).catch(function(){});
+  }).catch(function(){});
+}
 function tick(){
   if(!window.__TAURI_INTERNALS__)return;
   var I=window.__TAURI_INTERNALS__.invoke;
-  I('get_analytics',{range:'today',filters:null}).then(function(an){
-    cost.textContent='$'+(an&&an.totals?(an.totals.cost>=100?an.totals.cost.toFixed(0):an.totals.cost.toFixed(2)):'0');
-  }).catch(function(){});
+  tickNo++;
+  if(tickNo===1||tickNo%8===0){                 // 今日花费：16s 一次（分钟级指标）
+    I('get_analytics',{range:'today',filters:null}).then(function(an){
+      cost.textContent='$'+(an&&an.totals?(an.totals.cost>=100?an.totals.cost.toFixed(0):an.totals.cost.toFixed(2)):'0');
+    }).catch(function(){});
+  }
   I('get_live_stats').then(function(rows){
     var a=rows.slice().sort(function(x,y){return y.tokens_per_min-x.tokens_per_min;})[0];
     var live=a&&a.tokens_per_min>0.05;
     if(live)lastLive=Date.now();
     rate.innerHTML=live?('▲ '+Math.round(a.tokens_per_min/60)+'/s'):'<span style="color:#7fb8ff">zzz</span>';
     var src=a?a.source:'zcode';
-    I('list_recent_sessions',{source:src}).then(function(list){
-      SESSIONS=list||[];
-      var cur=lockedSession||(SESSIONS[0]&&SESSIONS[0].session_id);
-      var hit=SESSIONS.find(function(x){return x.session_id===cur;});
-      proj.textContent=hit?hit.project:'—';
-      I('get_session_metrics',{source:src,sessionId:cur}).then(function(m){
-        ctx.textContent='CTX '+(m?fT(m.last_context_tokens||0):'—');
-      }).catch(function(){});
-    }).catch(function(){});
+    // 会话名/CTX 变化慢：10s 一次；活跃源换了立刻刷（否则铭牌会挂着别的项目名）
+    if(src!==lastSrc){lastSrc=src;refreshSessions(true);}
+    else if(tickNo%5===0)refreshSessions(false);
   }).catch(function(){});
 }
 tick();

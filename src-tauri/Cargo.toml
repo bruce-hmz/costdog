@@ -23,4 +23,5 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 dirs = "5"
 objc2 = "0.6"
 chrono = "0.4"
+ruzstd = "0.9"   # 只读解码 DSH 的 zstd JSONL 会话记录（纯 Rust，无 C 依赖）
 tauri-plugin-window-state = "2"

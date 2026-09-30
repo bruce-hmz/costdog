@@ -22,9 +22,10 @@ activity-category features the bar has.
 | Codex CLI | `~/.codex/sessions/*/rollout-*.jsonl` | `token_count` events are cumulative — last value wins. `input_tokens` includes cached, so cached is subtracted |
 | ZCode | `~/.zcode/cli/db/db.sqlite` | `model_usage` rows aggregated per (session, local date) |
 | OpenCode | `~/.local/share/opencode/opencode.db` | `session` table is pre-aggregated and carries its own `cost` |
+| DeepSeek Harness | `~/.dsh/sessions/*/*/session.v4.jsonl.zstd` | zstd JSONL; `assistant/message.usage` per step is the billing unit. `inputTokens` is *uncached*, so cache hit is `cacheRead/(input+cacheRead)`. Sessions span days, so buckets are keyed by message timestamp's local date. Auxiliary `~/.dsh/storages/session_projcache/sessions/<id>.json` supplies model/CTX/timings without decompressing |
 
-Overrides: `CODEX_HOME`, `ZCODE_HOME`, `OPENCODE_DB`, `XDG_DATA_HOME`, `COSTDOG_DATA_DIR`,
-`COSTDOG_PORT`.
+Overrides: `CODEX_HOME`, `ZCODE_HOME`, `OPENCODE_DB`, `DSH_HOME`, `XDG_DATA_HOME`,
+`COSTDOG_DATA_DIR`, `COSTDOG_PORT`.
 
 Prices come from the OpenRouter API, cached 24h in `~/.costdog/pricing-cache.json` and
 shared with the TypeScript side.
@@ -33,8 +34,9 @@ shared with the TypeScript side.
 
 Scans are **incremental**, and the two mechanisms differ:
 
-- **Claude Code / Codex** — per-file fingerprints (size + mtime) in `scan_files`. Unchanged
-  files are skipped.
+- **Claude Code / Codex / DeepSeek Harness** — per-file fingerprints (size + mtime) in
+  `scan_files`. Unchanged files are skipped. DSH fingerprints each `session.v4.jsonl.zstd`
+  and only re-decompresses the sessions that actually changed.
 - **ZCode / OpenCode** — timestamp watermarks in `scan_watermarks`, minus a 24h lookback so
   rows that land after the timestamp they carry are not missed permanently.
 

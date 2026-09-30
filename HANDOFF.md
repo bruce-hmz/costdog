@@ -96,7 +96,9 @@ screencapture -x -R<x-25>,<y-40>,200,250 /tmp/dog.png  # 按 pet.json 坐标裁�
 
 本轮验证手段（不依赖屏幕录制权限）：`cargo test` 38/38；内联脚本 `node --check`；headless Chrome 读 computed style + canvas 复现 CSS 背景 → sleep 态 `#dog-sleep`=block / `#dog-run`=none，帧墨迹 84×72（新）vs 88×20（旧）；部署后 `/pet.json`、`/stats.json`、`lsof`（仅 127.0.0.1）、`pmset` 断言、unified log（宠物页 500ms IPC 节拍存活、无新增崩溃）。
 
-**仍未修**（优先级见 REVIEW 报告）：zcode 速率没有"生成中"（查询过滤掉 `status='running'`，`now<end` 分支是死代码）；claude-code/opencode 命中率 >1000%（分母只对 codex 分支修过）；面板窗口无 capability（事件订阅被 ACL 拒）；光标守卫重复 spawn 两份；`NSPoint` 编码写成 `{NSPoint=dd}`（真机 `{CGPoint=dd}`，debug 构建会让守卫线程 panic）；`full_scan()` 在主线程阻塞首帧；9.3MB 无引用素材（现在是 ~9.0MB，猫/兔素材已启用）；`npm run test:ts` 目前是红的（index.html 947 处 CJK vs 断言 null，且没有测试覆盖 pet.html）。
+**本轮（09-30）已修**：① zcode 速率纳入 `status='running'`，并把 `duration_ms` 为 0 的进行中行按"已流逝"折算（否则 `now<end` 分支对已完成行恒为假）；② 命中率分母改为**按源语义声明**（`input_includes_cache()`：只有 zcode 的 input 含缓存读），claude-code / opencode / dsh 一并修正（此前 claude-code 1432%、opencode 1204%）；③ 面板窗口 capability 补上（`windows: ["main","panel"]`，事件订阅与 app 版本查询不再被 ACL 拒）。
+
+**仍未修**（优先级见 REVIEW 报告）：光标守卫重复 spawn 两份；`NSPoint` 编码写成 `{NSPoint=dd}`（真机 `{CGPoint=dd}`，debug 构建会让守卫线程 panic）；`full_scan()` 在 setup 里同步跑、阻塞首帧；~9.0MB 无引用素材；`npm run test:ts` 目前是红的（index.html 947 处 CJK vs 断言 null，且没有测试覆盖 pet.html）；TS 侧（`src/parsers`）尚未接入 DSH。
 
 5. **铭牌离宠物 70px**（`embedded/pet.html`）：全文屏改写时留下的布局残留——铭牌 `top:-2px` 钉在 170px 容器顶部，而宠物被 `justify-content:flex-end` 压在底部。实测空隙 70.3px。改为贴底锚定：`.plate{bottom:80px}`（宠物盒高 72 + 8px 头顶间隙），`#switcher`/`#zzz` 移到 `bottom:114px`（铭牌上方一行，原来 `top:16px` 是**压在铭牌上**的）。Chrome 实测三只宠物 × 跑/睡/停 六种组合空隙均为 8.0px。
 6. **⇄ 芯片做成真切换**（`embedded/pet.html`）：原点击处理只有 `stopPropagation()`（三宠物切换逻辑在 9f2cc99 回滚时丢了，猫/兔素材完全不可达）。现为每只宠物一对元素（跑/睡共 6 个），可见性 = `body[data-pet] × body[data-state]` 的 CSS 矩阵，**全程不换 `img.src`**（铁律 2）；点击循环 柴犬→橘猫→灰兔 并写入 `localStorage['costdog.pet']`，标题动态提示"当前：X 点击换成 Y"。顺带修掉两个 review 里点出的老 bug：①转向改用独立 `scale` 属性（原行内 `scaleX(-1)` 被 `stepbob` 的 `transform` 动画覆盖 → 走动时宠物从不回头）；②白描边选择器 `img.sprite` → `.sprite`（狗的跑图是 div，原选择器把它漏掉，走路态没有描边）。
@@ -111,3 +113,18 @@ screencapture -x -R<x-25>,<y-40>,200,250 /tmp/dog.png  # 按 pet.json 坐标裁�
    - 新增 IPC `set_pet_dragging(bool)`：光标守卫在拖动期间**强制保持窗口可交互**。这是老问题（§6.3）的根因——快速拖动时光标会瞬时离开宠物矩形，守卫切回穿透 → pointermove 断流 → 拖动卡在中途。带 **10s 超时自愈**（`PET_DRAG_AT` 存时间戳而非 bool），万一 pointerup 丢了也不会让全屏窗一直吃掉用户点击。
    - 守卫轮询 **80ms → 40ms**：这个周期就是"光标移入宠物→解除穿透"的延迟，直接决定"按下能不能抓住"。
    - 验证：headless Chrome 合成 PointerEvent → 位移精确（抓点 +200/−60 得到 Δ=(200,−60)）、拖动中 `transition=0s`/`cursor=grabbing`/`body.dragging=true`、松手恢复 1.2s；拖到屏幕外夹取到 `left=innerWidth−160` / `top=30`（避开菜单栏）；拖后立刻点 ⇄ 不切换、2px 抖动不触发拖动；`cargo test` 38/38。
+
+9. **接入 DeepSeek Harness（DSH）数据源**（`src-tauri/src/dsh.rs` 新增 + `lib.rs` 五处接线）。用户日常主力已切到 DSH，CostDog 必须能算它的账。
+   - **数据源**：`~/.dsh/sessions/<project-slug>/<session-id>/session.v4.jsonl.zstd`（zstd 压缩 JSONL，每写一条事件追加一帧）+ 辅助的 `~/.dsh/storages/session_projcache/sessions/<id>.json`（几 KB，DSH 自己的会话缓存，给模型名/CTX/会话计时用，读它不用解压）。
+   - **语义（逐条校验过）**：① `assistant/message.data.usage.inputTokens` 是**未缓存输入**——`input + cacheRead == totalTokens - output` 恒成立，与 Codex 同族，所以命中率分母必须补回 cacheRead；② `totalTokens` 是**该步**合计（含 cacheRead），不是会话累计，累计要自己按步求和；③ 每一步都把整个上下文重新计费一次，逐条求和即真实计费口径；④ `provider/model` 在 `request/header.config` 里。
+   - **跨天必须分桶**：实测一个会话 22:14 → 次日 09:12，整会话塞给一天会让"今日花费"虚高。按消息时间戳取**本地日期**分桶，与其它源同口径。
+   - **坑（本轮最大）**：DSH 的会话文件是**多帧 zstd**（单文件实测 1032 帧），而 `ruzstd::decoding::StreamingDecoder` **只解第一帧**——真实文件第一帧只有 301 字节，正好是那条 `{"type":"session"}`，于是每个会话都被判成"没有用量"而静默跳过（`malformed_lines=4`、`scan_files` 里 0 条指纹、1ms 扫完）。改为 `FrameDecoder` 按帧循环：`init → decode_blocks(All) → collect_to_writer`，`init` 失败即结束。已加"两帧 zstd"单测（用 ruzstd 自带压缩器现造）锁死。
+   - **实时链路**：`dsh_live()` 解压**最近改动**的会话文件，取最后一条消息的"输出/生成耗时"算 TPS（首块 stream 时间 → 消息时间），45s HOLD 语义与 zcode 一致；CTX = 最后一条消息的 `input+cacheRead+cacheWrite`（实测等于 DSH 自己的 `contextPressure.pressureTokens`：443731 vs 443791）。解压有成本，所以 **3s 缓存**，且命令整体挪到线程池（见 §10）。
+   - **定价必须 provider 感知（否则高估 3.8 倍）**：`deepseek-v4.1-flash` 在 OpenRouter 缓存里是 0.3/1.2，而缓存读会被 `resolved_openrouter_price` 的 Anthropic 式启发（input×0.1=0.03）放大 10 倍；用户实际走 **opencode-go**，DSH 自带模型表写的是 **0.15/0.6/0.003/0**。新增 `provider_price()` + `sessions.provider` 列（DSH 填、其它源 NULL → 历史行为不变），定价顺序 = (provider,model) 表 → OpenRouter → 兜底表。实测该会话：**$3.88 → $1.03**。
+   - **前端**：面板客户端卡片显示名（`SRC_LABELS`：dsh→DSH）、诊断徽章 `.bds`；`list_recent_sessions`/`get_session_metrics` 的 dsh 分支读 projcache（不解压）。测试：`cargo test` 47/47（含 8 条 dsh 单测：多帧解压、跨天分桶、空会话丢弃、TPS、projcache 解析与缺省兜底）。
+
+10. **"跑着跑着卡一下"根因与修复**（本轮由用户提问驱动，`sample` 取证）。
+    - **取证**：`sample` 抓 4s 栈，主线程 2691 个样本里 **734 个在 `list_recent_sessions` → `sqlite3_step` → `pread`（真磁盘读）**。原因三连：① 该命令是普通 `#[tauri::command]`，Tauri 的同步命令**在主线程执行**（宏源码 `ExecutionContext::Blocking`；`(async)` 才走 `sync_threadpool`），sample 栈里整条链就在 wry 的 IPC 回调内；② 宠物页 `tick()` **每 2s** 调它一次；③ 它对 ZCode 库的 SQL 是 `JOIN session ... GROUP BY s.id ORDER BY MAX(started_at)`，真库 28,946 行上实测 **945ms**（全表扫 + 临时 B 树）。
+    - **修复四件**：① SQL 改为"先用 `(started_at)` 索引取最近 300 条请求定位候选会话，再只在候选会话内聚合"（`SCAN ... USING INDEX model_usage_started_model_idx`，冷缓存 ~50ms、热 <5ms，仍返回最近活跃 5 个会话）；② `get_live_stats` / `list_recent_sessions` / `get_session_metrics` / `get_analytics` / `scan` 全部改 `#[tauri::command(async)]`（挪到线程池，主线程再不会被查询堵住）；③ `list_recent_sessions` 加 3s 结果缓存；④ 宠物页分频：速率仍 2s，今日花费 16s，会话名/CTX 10s（或活跃源变化时立即刷）。
+    - **顺带**：3s 一次的属性看门狗原来**无条件** `setStyleMask:/setLevel:/setCollectionBehavior:`——`setStyleMask:` 会重建窗口 frame/backing 并触发 WindowServer 往返，等于每 3s 主动卡一下；改为**先读后写**（值已正确就什么都不做，职责仍是"被清掉时补回来"）。另外差分速率的 `MIN_DELTA_SECS` 2.0 → 1.0（宠物 2s + 面板 5s 交错时相邻采样只差 1.x 秒，旧值会把这类差分全丢掉）。
+    - 复验：部署后 `sample` 主线程不再出现 `list_recent_sessions`（已在线程池线程），`/stats.json` 三源并存（codex / zcode / dsh，dsh 速率与 CTX 正常）。

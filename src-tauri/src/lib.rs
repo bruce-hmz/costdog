@@ -2,6 +2,7 @@ mod analytics;
 mod budget;
 mod cost_ledger;
 mod dock;
+mod dsh;
 mod source_status;
 
 use cost_ledger::{build_cost_record, ResolvedPrice};
@@ -137,6 +138,9 @@ struct SessionData {
     source: String,
     date: String,
     model: String,
+    /// 会话使用的 provider（只有能从日志里读出来的源才有）。定价优先用它：
+    /// 同一模型 id 在不同 provider 下单价能差 2~10 倍。
+    provider: Option<String>,
     project: String,
     start_time: String,
     end_time: String,
@@ -486,6 +490,9 @@ fn ensure_db_exists_at(db_path: &Path) -> Result<rusqlite::Connection, String> {
         ("git_branch",        "ALTER TABLE sessions ADD COLUMN git_branch TEXT"),
         ("project_key",       "ALTER TABLE sessions ADD COLUMN project_key TEXT"),
         ("project_display",   "ALTER TABLE sessions ADD COLUMN project_display TEXT"),
+        // provider：定价用（同一模型在不同 provider 下单价不同）。DSH 会填，
+        // 其它源为 NULL —— 为 NULL 时定价与历史行为完全一致。
+        ("provider",          "ALTER TABLE sessions ADD COLUMN provider TEXT"),
     ] {
         if need(&conn, col) {
             match conn.execute(ddl, []) {
@@ -750,6 +757,7 @@ fn parse_claude_jsonl_with_diagnostics(
                 source: "claude-code".to_string(),
                 date: date.clone(),
                 model: "unknown".to_string(),
+                provider: None,
                 project,
                 start_time: timestamp.clone(),
                 end_time: timestamp.clone(),
@@ -1057,6 +1065,8 @@ fn parse_codex_rollout_with_diagnostics(
         source: "codex".to_string(),
         date,
         model,
+        // Codex 的 rollout 不落 provider（模型 id 已足够唯一），保持 None。
+        provider: None,
         project,
         start_time,
         end_time,
@@ -1326,6 +1336,7 @@ fn scan_zcode_db(
             source: "zcode".to_string(),
             date: key.split('\u{0}').nth(1).unwrap_or("").to_string(),
             model: if b.model.is_empty() { "unknown".to_string() } else { b.model },
+            provider: None,
             project,
             start_time: iso_from_ms(b.start_ms),
             end_time: iso_from_ms(b.end_ms),
@@ -1359,6 +1370,138 @@ fn scan_zcode_db(
 // by their update time cannot produce a partial session the way ZCode's usage rows would.
 fn scan_opencode_sessions(costdog: &rusqlite::Connection) -> Result<FileScanResult, String> {
     scan_opencode_db(costdog, &get_opencode_db_path())
+}
+
+
+fn get_dsh_sessions_dir() -> PathBuf {
+    dsh::sessions_root()
+}
+
+/// DeepSeek Harness 扫描：把 `session.v4.jsonl.zstd` 解压后按**本地日期**聚合成行。
+/// 会话会跨天（实测 22:14 → 次日 09:12），整会话塞给一天会让"今日花费"虚高。
+/// 增量：按文件 size+mtime 指纹跳过没变化的会话，只有活跃会话会被重新解压。
+fn scan_dsh_sessions(costdog: &rusqlite::Connection) -> Result<FileScanResult, String> {
+    let root = get_dsh_sessions_dir();
+    let mut result = FileScanResult::default();
+    let mut parsed = 0usize;
+    for file in dsh::find_session_files(&root) {
+        let fingerprint = source_status::fingerprint(&file, dsh::SOURCE)?;
+        if !source_status::file_changed(costdog, &fingerprint)? {
+            result.skipped_files += 1;
+            continue;
+        }
+        let id_hint = file
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let session = match dsh::read_session_file(&file, &id_hint) {
+            Ok(Some(session)) => session,
+            // 空壳会话（还没有带用量的消息）：记指纹跳过，别每轮重解压。
+            Ok(None) => {
+                result.skipped_files += 1;
+                result.fingerprints.push(fingerprint);
+                continue;
+            }
+            Err(_) => {
+                result.malformed_lines += 1;
+                continue;
+            }
+        };
+        parsed += 1;
+        let model = if session.model.is_empty() {
+            "unknown".to_string()
+        } else {
+            session.model.clone()
+        };
+        for bucket in dsh::day_buckets(&session, local_date_from_ms) {
+            result.sessions.push(SessionData {
+                session_id: session.id.clone(),
+                source: dsh::SOURCE.to_string(),
+                date: bucket.date,
+                model: model.clone(),
+                // provider 参与定价：同一个 deepseek-v4.1-flash 在 opencode-go(0.15/0.6)
+                // 与 opencode(0.3/1.2) 下单价不同，OpenRouter 缓存里那条并不适用。
+                provider: if session.provider.is_empty() {
+                    None
+                } else {
+                    Some(session.provider.clone())
+                },
+                project: session.cwd.clone(),
+                start_time: iso_from_ms(bucket.start_ms),
+                end_time: iso_from_ms(bucket.end_ms),
+                input_tokens: bucket.input,
+                output_tokens: bucket.output,
+                cache_read_tokens: bucket.cache_read,
+                cache_creation_tokens: bucket.cache_write,
+                reasoning_tokens: 0,
+                disk_write_bytes: 0,
+                // DSH 只落 token 与模型，不落账单 → 成本交给 full_scan 按定价表估算。
+                cost: 0.0,
+                provider_cost_amount: None,
+                usage_complete: true,
+                tool_calls: HashMap::new(),
+                git_branch: None,
+                activity_category: String::new(),
+                user_intent: String::new(),
+            });
+        }
+        result.fingerprints.push(fingerprint);
+    }
+    eprintln!(
+        "[CostDog] DSH scan: {} sessions parsed, {} skipped",
+        parsed, result.skipped_files
+    );
+    Ok(result)
+}
+
+/// 最近改动过的 DSH 会话文件（实时速率/CTX 只看它）。
+fn dsh_newest_session_file() -> Option<PathBuf> {
+    dsh::find_session_files(&get_dsh_sessions_dir())
+        .into_iter()
+        .filter_map(|path| Some((fs::metadata(&path).ok()?.modified().ok()?, path)))
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path)
+}
+
+/// DSH 实时状态：(tok/s, 上下文规模)。解压最近会话取最后一条消息。
+/// 解压有成本（最大会话 ~1.8MB 压缩），所以缓存 3 秒——宠物 2s / 面板 5s 轮询不会重复解压。
+/// HOLD 语义与 zcode 一致：生成完成后保留 45s，之后归零。
+static DSH_LIVE_CACHE: std::sync::Mutex<Option<(std::time::Instant, f64, u64)>> =
+    std::sync::Mutex::new(None);
+
+fn dsh_live() -> (f64, u64) {
+    const TTL_MS: u128 = 3_000;
+    const HOLD_MS: i64 = 45_000;
+    if let Ok(guard) = DSH_LIVE_CACHE.lock() {
+        if let Some((at, tps, ctx)) = *guard {
+            if at.elapsed().as_millis() < TTL_MS {
+                return (tps, ctx);
+            }
+        }
+    }
+    let mut tps = 0.0f64;
+    let mut ctx = 0u64;
+    if let Some(path) = dsh_newest_session_file() {
+        let id_hint = path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if let Ok(Some(session)) = dsh::read_session_file(&path, &id_hint) {
+            ctx = session.last_context_tokens();
+            if let Some(last) = session.last_message() {
+                let age_ms = chrono::Utc::now().timestamp_millis() - last.time_ms;
+                if age_ms >= 0 && age_ms <= HOLD_MS {
+                    tps = session.last_tps().unwrap_or(0.0);
+                }
+            }
+        }
+    }
+    if let Ok(mut guard) = DSH_LIVE_CACHE.lock() {
+        *guard = Some((std::time::Instant::now(), tps, ctx));
+    }
+    (tps, ctx)
 }
 
 fn scan_opencode_db(
@@ -1460,6 +1603,7 @@ fn scan_opencode_db(
             source: "opencode".to_string(),
             date,
             model: if model.is_empty() { "unknown".to_string() } else { model },
+            provider: None,
             project,
             start_time: iso_from_ms(tc.or(tu).unwrap_or(0)),
             end_time: iso_from_ms(tu.or(tc).unwrap_or(0)),
@@ -1622,12 +1766,18 @@ fn normalize_digit_dashes(s: &str) -> String {
 fn fallback_price(model_id: &str) -> Option<ResolvedPrice> {
     let lower = model_id.to_lowercase();
     let suffix = lower.split('/').last().unwrap_or("");
-    const TABLE: &[(&str, f64, f64)] = &[
-        ("mimo-v2.5-pro", 0.5, 2.0),
-        ("glm-5.1", 1.0, 3.0),
-        ("glm-5.2", 0.95, 3.0),
+    // (模型 id, $/M 未缓存输入, $/M 输出, $/M 缓存读, $/M 缓存写)
+    // DSH 那行取自 DeepSeek Harness 自带模型表（provider=opencode-go,
+    // baseUrl https://opencode.ai/zen/go/v1）：input 0.15 / output 0.6 /
+    // cacheRead 0.003 / cacheWrite 0。注意它的缓存读只有输入的 1/50 —— 代码里
+    // 默认的 input×0.1 会把 DSH 成本高估 5 倍（实测 DSH 92% 都是缓存读）。
+    const TABLE: &[(&str, f64, f64, f64, f64)] = &[
+        ("mimo-v2.5-pro", 0.5, 2.0, 0.05, 0.625),
+        ("glm-5.1", 1.0, 3.0, 0.1, 1.25),
+        ("glm-5.2", 0.95, 3.0, 0.095, 1.1875),
+        ("deepseek-v4.1-flash", 0.15, 0.6, 0.003, 0.0),
     ];
-    for (id, pin, pout) in TABLE {
+    for (id, pin, pout, pcache, pwrite) in TABLE {
         let id_l = id.to_lowercase();
         if lower == id_l || suffix == id_l {
             return Some(ResolvedPrice {
@@ -1635,8 +1785,8 @@ fn fallback_price(model_id: &str) -> Option<ResolvedPrice> {
                 match_kind: "fallback",
                 input_per_m: *pin,
                 output_per_m: *pout,
-                cache_read_per_m: *pin * 0.1,
-                cache_creation_per_m: *pin * 1.25,
+                cache_read_per_m: *pcache,
+                cache_creation_per_m: *pwrite,
             });
         }
     }
@@ -1656,6 +1806,50 @@ fn resolved_openrouter_price(model: &PricedModel, match_kind: &'static str) -> R
 
 /// Match a model id to an auditable price snapshot. Deliberately avoid fuzzy
 /// `contains` matching: an unmatched model is safer than a silently wrong bill.
+/// 工具自带模型表里的 **provider 级** 单价（$/M：输入、输出、缓存读、缓存写）。
+///
+/// 比 OpenRouter 缓存更贴近实际账单：OpenRouter 只有一个 provider 的标价，而同一模型 id
+/// 在不同 provider 下差 2~10 倍。实测 `deepseek-v4.1-flash`：opencode-go 0.15/0.6/0.003、
+/// opencode 0.3/1.2/0.006、OpenRouter 0.3/1.2 —— 而 OpenRouter 那条还会被
+/// `resolved_openrouter_price` 的 Anthropic 式启发（缓存读 = 输入×0.1 = 0.03）放大 10 倍，
+/// 对一个 94% 都是缓存读的 DSH 会话，成本会被估成真值的 3.8 倍（$3.88 vs $1.03）。
+/// 数据来源：DeepSeek Harness 自带模型注册表（app.asar 中各 provider 条目的 cost 字段）。
+fn provider_price(provider: &str, model_id: &str) -> Option<ResolvedPrice> {
+    const TABLE: &[(&str, &str, f64, f64, f64, f64)] = &[
+        ("opencode-go", "deepseek-v4.1-flash", 0.15, 0.6, 0.003, 0.0),
+        ("opencode", "deepseek-v4.1-flash", 0.3, 1.2, 0.006, 0.0),
+        ("openrouter", "deepseek-v4.1-flash", 0.15, 0.6, 0.003, 0.0),
+    ];
+    let provider = provider.to_lowercase();
+    let model = model_id.to_lowercase();
+    let suffix = model.split('/').last().unwrap_or("").to_string();
+    TABLE
+        .iter()
+        .find(|(p, m, ..)| *p == provider && (*m == model || *m == suffix))
+        .map(|(p, m, pin, pout, pcache, pwrite)| ResolvedPrice {
+            model_id: format!("{m}@{p}"),
+            match_kind: "provider",
+            input_per_m: *pin,
+            output_per_m: *pout,
+            cache_read_per_m: *pcache,
+            cache_creation_per_m: *pwrite,
+        })
+}
+
+/// 定价入口：先按 (provider, model) 查工具自带表，再回落到 OpenRouter 缓存与兜底表。
+fn find_model_price_with_provider(
+    model_id: &str,
+    provider: Option<&str>,
+    prices: &[PricedModel],
+) -> Option<ResolvedPrice> {
+    if let Some(provider) = provider.filter(|value| !value.is_empty()) {
+        if let Some(price) = provider_price(provider, model_id) {
+            return Some(price);
+        }
+    }
+    find_model_price(model_id, prices)
+}
+
 fn find_model_price(model_id: &str, prices: &[PricedModel]) -> Option<ResolvedPrice> {
     if model_id.is_empty() {
         return None;
@@ -1694,13 +1888,14 @@ fn upsert_session(conn: &rusqlite::Connection, session: &SessionData) -> Result<
     let (project_key, project_display) =
         normalize_project_identity(&session.source, &session.project);
     conn.execute(
-        "INSERT INTO sessions (session_id, source, date, model, project, project_key,
+        "INSERT INTO sessions (session_id, source, date, model, provider, project, project_key,
             project_display, start_time, end_time,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             reasoning_output_tokens, disk_write_bytes, cost, activity_category, tool_calls, git_branch)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_id, source, date) DO UPDATE SET
             model = excluded.model,
+            provider = excluded.provider,
             project = excluded.project,
             project_key = excluded.project_key,
             project_display = excluded.project_display,
@@ -1717,7 +1912,8 @@ fn upsert_session(conn: &rusqlite::Connection, session: &SessionData) -> Result<
             git_branch = excluded.git_branch,
             scanned_at = datetime('now')",
         rusqlite::params![
-            session.session_id, session.source, session.date, session.model, session.project,
+            session.session_id, session.source, session.date, session.model, session.provider,
+            session.project,
             project_key, project_display, session.start_time, session.end_time, session.input_tokens,
             session.output_tokens, session.cache_read_tokens,
             session.cache_creation_tokens, session.reasoning_tokens,
@@ -1798,6 +1994,12 @@ fn full_scan() -> Result<usize, String> {
             Some("session"),
             || scan_opencode_sessions(&conn),
         ),
+        scan_source(
+            "dsh",
+            &get_dsh_sessions_dir(),
+            None,
+            || scan_dsh_sessions(&conn),
+        ),
     ];
     let mut scanned_sessions = Vec::new();
     for outcome in &mut outcomes {
@@ -1836,7 +2038,7 @@ fn full_scan() -> Result<usize, String> {
             s.reasoning_tokens,
             s.provider_cost_amount,
             s.usage_complete,
-            find_model_price(&s.model, &prices),
+            find_model_price_with_provider(&s.model, s.provider.as_deref(), &prices),
         );
         s.cost = cost_record.cost;
         upsert_session(&tx, &s)?;
@@ -2249,15 +2451,17 @@ fn get_data() -> Result<String, String> {
     serde_json::to_string(&data).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn scan() -> Result<String, String> {
     let count = full_scan()?;
     Ok(format!("Scanned {} sessions", count))
 }
 
-/// Drop the pricing cache and re-price stored sessions, so rows that were unpriced because
-/// the 24h cache predated a model's listing get a second chance. Models OpenRouter does not
-/// carry at all stay unpriced — the UI lists them so the user can tell the cases apart.
+/// Drop the pricing cache and re-price **every stored session** against the fresh prices.
+///
+/// 候选集是"所有有 token 的行"，而不是只有 unpriced —— 因为价格表变化（新增 provider 级
+/// 单价、OpenRouter 改了标价）会让已计价的行也变贵/变便宜。是否真的改写由 cost_ledger 的
+/// 指纹守卫决定：用法与价格都没变就保持原样（priced_at 是价格快照时间，不该被刷掉）。
 ///
 /// Re-prices from the sessions table rather than by rescanning: scans are incremental now,
 /// so a rescan would only revisit the last day of source rows and would leave older
@@ -2286,6 +2490,7 @@ fn reprice_unpriced_sessions(
         source: String,
         date: String,
         model: String,
+        provider: Option<String>,
         input: u64,
         output: u64,
         cache_read: u64,
@@ -2299,11 +2504,12 @@ fn reprice_unpriced_sessions(
             "SELECT s.session_id, s.source, s.date, COALESCE(NULLIF(s.model,''),'unknown'),
                     s.input_tokens, s.output_tokens, s.cache_read_tokens,
                     s.cache_creation_tokens, s.reasoning_output_tokens,
-                    sc.usage_completeness
+                    sc.usage_completeness, s.provider
              FROM sessions s
              JOIN session_costs sc
                ON sc.session_id = s.session_id AND sc.source = s.source AND sc.date = s.date
-             WHERE sc.cost_basis = 'unpriced'",
+             WHERE s.input_tokens + s.output_tokens + s.cache_read_tokens
+                   + s.cache_creation_tokens > 0",
         )
         .map_err(|e| e.to_string())?;
     let pending: Vec<Unpriced> = stmt
@@ -2313,6 +2519,7 @@ fn reprice_unpriced_sessions(
                 source: row.get(1)?,
                 date: row.get(2)?,
                 model: row.get(3)?,
+                provider: row.get(10)?,
                 input: row.get(4)?,
                 output: row.get(5)?,
                 cache_read: row.get(6)?,
@@ -2339,7 +2546,7 @@ fn reprice_unpriced_sessions(
             session.reasoning,
             None,
             session.usage_complete,
-            find_model_price(&session.model, prices),
+            find_model_price_with_provider(&session.model, session.provider.as_deref(), prices),
         );
         if record.cost_basis == "unpriced" {
             continue;
@@ -2374,11 +2581,12 @@ fn get_source_status() -> Result<Vec<source_status::SourceStatus>, String> {
             ("codex", get_codex_sessions_dir()),
             ("zcode", get_zcode_db_path()),
             ("opencode", get_opencode_db_path()),
+            ("dsh", get_dsh_sessions_dir()),
         ],
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_analytics(
     range: String,
     filters: Option<analytics::AnalyticsFilters>,
@@ -2685,10 +2893,69 @@ struct SessionMetrics {
     session_id: String,
 }
 
-#[tauri::command]
+/// DSH 会话指标：直接读它自己的会话缓存（几 KB JSON），不必解压 zstd 记录。
+/// 字段对应 DSH 的 sessionStats：llmMs=模型耗时、toolMs=工具耗时、
+/// ttftMs/ttftSteps=平均首 token、decodeTokens/decodeMs=解码吞吐。
+fn dsh_session_metrics(session_id: Option<&str>) -> Option<SessionMetrics> {
+    let cached = match session_id {
+        Some(id) if !id.is_empty() => {
+            dsh::find_cached_session(id).or_else(|| dsh::list_cached_sessions().into_iter().next())?
+        }
+        _ => dsh::list_cached_sessions().into_iter().next()?,
+    };
+    let input = cached.totals.input;
+    let cache_read = cached.totals.cache_read;
+    let denominator = input + cache_read;
+    Some(SessionMetrics {
+        model_ms: cached.llm_ms.max(0) as u64,
+        tool_ms: cached.tool_ms.max(0) as u64,
+        ttft_ms: cached.avg_ttft_ms().max(0) as u64,
+        tps: cached.decode_tps(),
+        output_tokens: cached.totals.output,
+        uncached_input_tokens: input,
+        cache_read_tokens: cache_read,
+        cache_hit_pct: if denominator == 0 {
+            0.0
+        } else {
+            cache_read as f64 / denominator as f64 * 100.0
+        },
+        // DSH 的会话缓存不暴露逐工具计数（只有 transcript 里有 tool/call 记录），先给 0。
+        tool_calls: 0,
+        started_at_ms: 0,
+        last_context_tokens: cached.context_tokens,
+        session_id: cached.id.clone(),
+    })
+}
+
+/// DSH 最近会话（读 projcache，按最近活跃倒序）。
+fn dsh_recent_sessions() -> Vec<SessionSummary> {
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    dsh::list_cached_sessions()
+        .into_iter()
+        .filter(|session| session.totals.input + session.totals.output + session.totals.cache_read > 0)
+        .take(5)
+        .map(|session| SessionSummary {
+            session_id: session.id.clone(),
+            project: if session.project.is_empty() {
+                "未命名".to_string()
+            } else {
+                session.project.clone()
+            },
+            last_active_ms: session.last_active_ms,
+            total_tokens: session.totals.input + session.totals.output + session.totals.cache_read,
+            active: now_ms - session.last_active_ms < 10 * 60 * 1000,
+        })
+        .collect()
+}
+
+/// 会话 8 项指标。codex 解析 rollout、zcode 查 model_usage、dsh 读 projcache，其余源暂不支持。
+#[tauri::command(async)]
 fn get_session_metrics(source: String, session_id: Option<String>) -> Option<SessionMetrics> {
     if source == "codex" {
         return codex_session_metrics_cached(session_id.as_deref());
+    }
+    if source == "dsh" {
+        return dsh_session_metrics(session_id.as_deref());
     }
     if source != "zcode" {
         return None;
@@ -2913,7 +3180,7 @@ fn codex_parse_metrics(path: &Path, _want: Option<&str>) -> Option<SessionMetric
 }
 
 /// 最近会话清单（前端展开面板的会话切换芯片）。
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct SessionSummary {
     session_id: String,
     /// 项目显示名 = 会话目录 basename
@@ -2924,10 +3191,32 @@ struct SessionSummary {
     active: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_recent_sessions(source: String) -> Vec<SessionSummary> {
+    // 3s 结果缓存：宠物（2s）与面板（5s）会同时轮询本命令，而它要读别的工具的
+    // 数据库/日志文件。缓存只影响会话芯片的刷新粒度，"10 分钟内活跃"标记不受影响。
+    static CACHE: std::sync::Mutex<Option<(std::time::Instant, String, Vec<SessionSummary>)>> =
+        std::sync::Mutex::new(None);
+    if let Ok(guard) = CACHE.lock() {
+        if let Some((at, cached_source, rows)) = guard.as_ref() {
+            if cached_source == &source && at.elapsed().as_millis() < 3_000 {
+                return rows.clone();
+            }
+        }
+    }
+    let rows = list_recent_sessions_uncached(&source);
+    if let Ok(mut guard) = CACHE.lock() {
+        *guard = Some((std::time::Instant::now(), source, rows.clone()));
+    }
+    rows
+}
+
+fn list_recent_sessions_uncached(source: &str) -> Vec<SessionSummary> {
     if source == "codex" {
         return codex_recent_sessions();
+    }
+    if source == "dsh" {
+        return dsh_recent_sessions();
     }
     if source != "zcode" {
         return Vec::new();
@@ -2935,10 +3224,19 @@ fn list_recent_sessions(source: String) -> Vec<SessionSummary> {
     let Some(conn) = open_readonly_db(&get_zcode_db_path(), "model_usage") else {
         return Vec::new();
     };
+    // 先用 (started_at) 索引取最近 300 条请求定位候选会话，再只在候选会话内聚合。
+    // 旧写法直接 `JOIN session ... GROUP BY s.id ORDER BY MAX(started_at)` 在真库
+    // （model_usage 28,946 行）上实测 945ms：全表扫 + 临时 B 树（EXPLAIN 里
+    // "SCAN s USING INDEX sqlite_autoindex_session_1"），而且它跑在主线程上、
+    // 宠物每 2s 轮询一次 —— 这就是"跑着跑着卡一下"的元凶。
+    // 改后 SCAN model_usage USING INDEX model_usage_started_model_idx，冷缓存 ~50ms、
+    // 热缓存 <5ms，返回的仍是最近活跃的 5 个会话（300 条请求通常覆盖 5+ 个会话）。
     let sql = "SELECT s.id, COALESCE(s.directory, ''), MAX(m.started_at), \
                COALESCE(SUM(m.input_tokens + m.output_tokens), 0) \
-               FROM model_usage m JOIN session s ON s.id = m.session_id \
-               WHERE m.status IN ('completed','error','cancelled') \
+               FROM session s JOIN model_usage m ON m.session_id = s.id \
+               WHERE s.id IN (SELECT session_id FROM model_usage \
+                              WHERE status IN ('completed','error','cancelled') \
+                              ORDER BY started_at DESC LIMIT 300) \
                GROUP BY s.id ORDER BY 3 DESC LIMIT 5";
     let Ok(mut stmt) = conn.prepare(sql) else {
         return Vec::new();
@@ -3004,6 +3302,27 @@ fn zcode_last_context_tokens() -> u64 {
     .unwrap_or(0)
 }
 
+/// 命中率分母的**源语义**：只有 zcode 的 input_tokens 含缓存读
+/// （实测其 provider_total_tokens == input+output）。codex / claude-code /
+/// opencode / dsh 存的都是"未缓存输入"，分母必须补回 cache_read ——
+/// 早期只对 codex 特判，claude-code 命中率因此爆到 1432%、opencode 1204%。
+fn input_includes_cache(source: &str) -> bool {
+    source == "zcode"
+}
+
+fn cache_hit_pct(source: &str, input: u64, cache_read: u64) -> f64 {
+    let denominator = if input_includes_cache(source) {
+        input
+    } else {
+        input + cache_read
+    };
+    if denominator == 0 {
+        0.0
+    } else {
+        cache_read as f64 / denominator as f64 * 100.0
+    }
+}
+
 /// zcode 实时输出速率（tokens/min）：直读 ZCode DB 最近 60 秒的 output_tokens。
 /// 30s 扫描节拍下差分会长时间为 0、扫描落地时虚高，必须绕开扫描直查。
 fn zcode_live_output_rate() -> f64 {
@@ -3017,8 +3336,11 @@ fn zcode_live_output_rate() -> f64 {
     let row = conn.query_row(
         // 过滤辅助小请求（标题/摘要类，output<50）：它们的低 TPS 会污染
         // 主对话的真实生成速度显示。
-        "SELECT started_at, duration_ms, output_tokens FROM model_usage
-         WHERE status IN ('completed','error','cancelled') AND output_tokens >= 50
+        // 含 running：ZCode 可能先落一条进行中的行（duration_ms 为 0/NULL）。
+        // 只取终态行的话"生成中"永远读不到——实测 completed_at == started_at +
+        // duration_ms（28791/28791 行），已完成行永远落不进 now < end 分支。
+        "SELECT started_at, COALESCE(duration_ms, 0), output_tokens FROM model_usage
+         WHERE status IN ('completed','error','cancelled','running') AND output_tokens >= 50
          ORDER BY started_at DESC LIMIT 1",
         [],
         |row| {
@@ -3033,7 +3355,13 @@ fn zcode_live_output_rate() -> f64 {
     if output <= 0 { return 0.0; }
     let now = chrono::Utc::now().timestamp_millis() as f64;
     let start = started as f64;
-    let dur = (duration_ms as f64).max(1.0);
+    // 进行中的行没有最终耗时：用"已流逝"当耗时，于是 end≈now，
+    // 落到下面的保持期分支正好得到 已产出/已耗时 = 实时 TPS。
+    let dur = if duration_ms > 0 {
+        duration_ms as f64
+    } else {
+        (now - start).max(1.0)
+    };
     let end = start + dur;
     let rate = if now < end {
         // 生成中：已产出 / 已流逝
@@ -3047,9 +3375,13 @@ fn zcode_live_output_rate() -> f64 {
     if rate < 0.05 { 0.0 } else { rate }
 }
 
-#[tauri::command]
-fn get_live_stats() -> Vec<LiveSourceStat> {    const WINDOW_MINUTES: i64 = 10;
-    const MIN_DELTA_SECS: f64 = 2.0;
+#[tauri::command(async)]
+fn get_live_stats() -> Vec<LiveSourceStat> {
+    const WINDOW_MINUTES: i64 = 10;
+    // 差分速率的下限必须低于**最快**的轮询间隔：宠物 2s、面板 5s，两者交错时相邻
+    // 两次采样可能只差 1.x 秒；旧值 2.0 会把这类差分全部丢掉（速率停在上一次读数）。
+    // 1.0s 仍能滤掉同一毫秒内的重复调用。
+    const MIN_DELTA_SECS: f64 = 1.0;
     const MAX_DELTA_SECS: f64 = 120.0;
     const EMA_ALPHA: f64 = 0.35;
     let Ok(conn) = ensure_db_exists() else {
@@ -3120,6 +3452,14 @@ fn get_live_stats() -> Vec<LiveSourceStat> {    const WINDOW_MINUTES: i64 = 10;
     }
     per_source.sort_by(|a, b| b.1.last.cmp(&a.1.last));
 
+    // DSH 的实时快照（tok/s + 上下文）只在确实有 dsh 行时取一次；
+    // dsh_live() 内部有 3s 缓存，循环里多次取用也不会重复解压。
+    let dsh_snapshot = if per_source.iter().any(|(name, _)| name == "dsh") {
+        Some(dsh_live())
+    } else {
+        None
+    };
+
     let now = std::time::Instant::now();
     let mut prev_map = LIVE_PREV
         .lock()
@@ -3149,28 +3489,25 @@ fn get_live_stats() -> Vec<LiveSourceStat> {    const WINDOW_MINUTES: i64 = 10;
             project: acc.project.clone(),
             tokens_per_min: raw_rate,
             tokens_in_window: acc.tokens,
-            // 命中率分母按源语义：codex 的 input_tokens 存的是"未缓存输入"
-            //（parser 刻意减去 cached 以正确计价），分母需补回 cache_read；
-            // zcode/claude 的 input 本身含缓存读，直接除。
-            cache_hit_pct: if source == "codex" {
-                let total_input = acc.input + acc.cache_read;
-                if total_input > 0 { acc.cache_read as f64 / total_input as f64 * 100.0 } else { 0.0 }
-            } else if acc.input > 0 {
-                acc.cache_read as f64 / acc.input as f64 * 100.0
-            } else {
-                0.0
-            },
-            last_context_tokens: if source == "zcode" {
-                zcode_last_context_tokens()
-            } else {
-                0
+            // 命中率分母按源语义分支（见 input_includes_cache）。
+            cache_hit_pct: cache_hit_pct(&source, acc.input, acc.cache_read),
+            last_context_tokens: match source.as_str() {
+                "zcode" => zcode_last_context_tokens(),
+                "dsh" => dsh_snapshot.map(|snapshot| snapshot.1).unwrap_or(0),
+                _ => 0,
             },
         });
-        // zcode 速率用实时 TPS 覆盖。字段单位是 tokens/min，而
-        // zcode_live_output_rate 返回 tok/s——×60 换算（此前漏乘，显示恒为 0~1）。
-        if source == "zcode" {
+        // 实时速率覆盖：字段单位是 tokens/min，源函数返回 tok/s → ×60 换算
+        //（此前漏乘 60，显示恒为 0~1）。zcode 直读自己的 DB；DSH 读最近会话
+        // 最后一条消息的 输出/生成耗时。
+        let live_tps = match source.as_str() {
+            "zcode" => Some(zcode_live_output_rate()),
+            "dsh" => dsh_snapshot.map(|snapshot| snapshot.0),
+            _ => None,
+        };
+        if let Some(tps) = live_tps {
             if let Some(stat) = out.last_mut() {
-                stat.tokens_per_min = zcode_live_output_rate() * 60.0;
+                stat.tokens_per_min = tps * 60.0;
             }
         }
     }
@@ -4029,6 +4366,7 @@ mod tests {
                 source: "claude-code".to_string(),
                 date: old_date.to_string(),
                 model: model.to_string(),
+                provider: None,
                 project: "proj".to_string(),
                 start_time: format!("{old_date}T01:00:00Z"),
                 end_time: format!("{old_date}T01:05:00Z"),
@@ -4602,7 +4940,7 @@ mod tests {
         conn.execute_batch(
             "CREATE TABLE sessions (
                 session_id TEXT NOT NULL, source TEXT NOT NULL, date TEXT NOT NULL,
-                model TEXT, project TEXT, project_key TEXT, project_display TEXT,
+                model TEXT, provider TEXT, project TEXT, project_key TEXT, project_display TEXT,
                 start_time TEXT, end_time TEXT,
                 input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
                 cache_read_tokens INTEGER DEFAULT 0, cache_creation_tokens INTEGER DEFAULT 0,
@@ -4620,6 +4958,7 @@ mod tests {
         SessionData {
             session_id: "session-1".to_string(), source: "codex".to_string(),
             date: "2026-07-16".to_string(), model: "gpt-test".to_string(),
+            provider: None,
             project: "costdog".to_string(), start_time: "2026-07-16T08:00:00".to_string(),
             end_time: "2026-07-16T08:05:00".to_string(), input_tokens: 100,
             output_tokens: 20, cache_read_tokens: 5, cache_creation_tokens: 0,
@@ -4829,12 +5168,36 @@ mod tests {
     }
 
     #[test]
+    fn provider_price_beats_openrouter_list_price() {
+        // OpenRouter 缓存里 deepseek/deepseek-v4.1-flash 是 0.3/1.2（缓存读再按 input×0.1
+        // 估成 0.03），但 DSH 实际走的是 opencode-go：0.15/0.6/0.003。provider 表必须优先，
+        // 否则一个 94% 都是缓存读的会话成本会被高估 3.8 倍（$3.88 vs $1.03，实测）。
+        let prices = vec![PricedModel {
+            model_id: "deepseek/deepseek-v4.1-flash".to_string(),
+            input: 0.3,
+            output: 1.2,
+        }];
+        let price = find_model_price_with_provider("deepseek-v4.1-flash", Some("opencode-go"), &prices)
+            .expect("provider price");
+        assert_eq!(price.match_kind, "provider");
+        assert_eq!(price.input_per_m, 0.15);
+        assert_eq!(price.output_per_m, 0.6);
+        assert_eq!(price.cache_read_per_m, 0.003);
+        // 没有 provider 信息时保持历史行为（回落 OpenRouter 缓存）
+        let fallback = find_model_price_with_provider("deepseek-v4.1-flash", None, &prices)
+            .expect("openrouter price");
+        assert_eq!(fallback.match_kind, "suffix");
+        assert_eq!(fallback.input_per_m, 0.3);
+    }
+
+    #[test]
     fn session_data_serde_skips_user_intent() {
         let session = SessionData {
             session_id: "s1".to_string(),
             source: "codex".to_string(),
             date: "2026-07-15".to_string(),
             model: "test".to_string(),
+            provider: None,
             project: "costdog".to_string(),
             start_time: String::new(),
             end_time: String::new(),

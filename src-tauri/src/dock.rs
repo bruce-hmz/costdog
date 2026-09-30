@@ -350,14 +350,25 @@ pub fn reinforce_hud_window(window: &tauri::WebviewWindow) {
         use objc2::msg_send;
         use objc2::runtime::AnyObject;
         let obj = ns_window as *mut AnyObject;
-        // nonactivating panel mask
+        // 先读后写：setStyleMask: 会重建窗口 frame/backing 并触发 WindowServer 往返，
+        // 每 3s 无条件调它（外加 setLevel/setCollectionBehavior）会让宠物动画周期性卡顿。
+        // 读回来的值已经正确就什么都不做——看门狗的职责是"被清掉时补回来"，不是刷属性。
+        let desired_mask: usize = 1 << 7; // NSNonactivatingPanelMask
         let mask: usize = msg_send![obj, styleMask];
-        let _: () = msg_send![obj, setStyleMask: mask | (1 << 7)];
+        if mask & desired_mask == 0 {
+            let _: () = msg_send![obj, setStyleMask: mask | desired_mask];
+        }
         // 状态栏级（高于 Dock 的 20），确保永远在最前
-        let _: () = msg_send![obj, setLevel: 25i64];
+        let level: i64 = msg_send![obj, level];
+        if level != 25 {
+            let _: () = msg_send![obj, setLevel: 25i64];
+        }
         // canJoinAllSpaces | fullScreenAuxiliary
-        let behavior: usize = (1 << 0) | (1 << 8);
-        let _: () = msg_send![obj, setCollectionBehavior: behavior];
+        let desired_behavior: usize = (1 << 0) | (1 << 8);
+        let behavior: usize = msg_send![obj, collectionBehavior];
+        if behavior != desired_behavior {
+            let _: () = msg_send![obj, setCollectionBehavior: desired_behavior];
+        }
     }
 }
 

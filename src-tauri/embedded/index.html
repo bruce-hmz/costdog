@@ -348,7 +348,7 @@ th{position:sticky;top:0;z-index:1;text-align:left;padding:5px 6px;color:var(--d
 td{padding:4px 6px;border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent)}
 tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
 .badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700}
-.bcc{background:rgba(137,180,250,.12);color:var(--accent)}.bcx{background:rgba(166,227,161,.12);color:var(--green)}.bzc{background:rgba(200,160,255,.14);color:#b78cff}.boc{background:rgba(255,190,120,.14);color:#ffb878}
+.bcc{background:rgba(137,180,250,.12);color:var(--accent)}.bcx{background:rgba(166,227,161,.12);color:var(--green)}.bzc{background:rgba(200,160,255,.14);color:#b78cff}.boc{background:rgba(255,190,120,.14);color:#ffb878}.bds{background:rgba(120,200,255,.14);color:#78c8ff}
 .catpick{width:34px;height:22px;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text);font-family:inherit;font-size:11px;cursor:pointer;-webkit-app-region:no-drag}
 .catpick:hover,.catpick:focus{background:var(--card);border-color:var(--border);outline:none}
 .catpick.manual{border-color:var(--accent);background:var(--accent-soft)}
@@ -626,7 +626,7 @@ function render(){
   const ss=D.recentSessions||[];
   let th='';
   if(!ss.length) th='<tr><td colspan="7" style="color:var(--dim);text-align:center;padding:12px">No data</td></tr>';
-  else ss.slice(0,15).forEach((s,i)=>{const bc={'claude-code':'bcc','codex':'bcx','zcode':'bzc','opencode':'boc'}[s.source]||'bcx',bl={'claude-code':'CC','codex':'CX','zcode':'ZC','opencode':'OC'}[s.source]||'CX',auto=s.automaticActivityCategory||'other',manual=s.activityCategoryOverride||'';let opts='<option value=""'+(!manual?' selected':'')+'>↺ Auto · '+(CATNAMES[auto]||'Other')+'</option>';Object.keys(CATS).forEach(k=>{opts+='<option value="'+k+'"'+(manual===k?' selected':'')+'>'+CATS[k][0]+' '+CATNAMES[k]+'</option>'});th+='<tr><td><span class="badge '+bc+'">'+bl+'</span></td><td><select class="catpick'+(manual?' manual':'')+'" data-session-index="'+i+'" title="Activity: '+(CATNAMES[s.activityCategory]||'Other')+(manual?' (manual)':' (auto)')+'" aria-label="Change session activity">'+opts+'</select></td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
+  else ss.slice(0,15).forEach((s,i)=>{const bc={'claude-code':'bcc','codex':'bcx','zcode':'bzc','opencode':'boc','dsh':'bds'}[s.source]||'bcx',bl={'claude-code':'CC','codex':'CX','zcode':'ZC','opencode':'OC','dsh':'DS'}[s.source]||'CX',auto=s.automaticActivityCategory||'other',manual=s.activityCategoryOverride||'';let opts='<option value=""'+(!manual?' selected':'')+'>↺ Auto · '+(CATNAMES[auto]||'Other')+'</option>';Object.keys(CATS).forEach(k=>{opts+='<option value="'+k+'"'+(manual===k?' selected':'')+'>'+CATS[k][0]+' '+CATNAMES[k]+'</option>'});th+='<tr><td><span class="badge '+bc+'">'+bl+'</span></td><td><select class="catpick'+(manual?' manual':'')+'" data-session-index="'+i+'" title="Activity: '+(CATNAMES[s.activityCategory]||'Other')+(manual?' (manual)':' (auto)')+'" aria-label="Change session activity">'+opts+'</select></td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.model||'-')+'</td><td style="max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.project||'-')+'</td><td class="ti">'+fT(s.input_tokens||0)+'</td><td class="to">'+fT(s.output_tokens||0)+'</td><td class="c">'+fC(s.cost||0)+'</td></tr>'});
   document.getElementById('dt').innerHTML=th;
 }
 function renderDetails(){
@@ -1055,7 +1055,8 @@ if(IS_PET){
   document.body.classList.add('topbar-mode');
   const tb=document.getElementById('topbarview');
   tb.style.display='flex';
-  const HOST_META={zcode:['Z','zcode'],codex:['C','codex'],claude:['K','claude'],'claude-code':['K','claude-code'],opencode:['O','opencode']};
+  const HOST_META={zcode:['Z','zcode'],codex:['C','codex'],claude:['K','claude'],'claude-code':['K','claude-code'],opencode:['O','opencode'],dsh:['D','dsh']};
+const SRC_LABELS={'claude-code':'Claude Code',codex:'Codex',zcode:'ZCode',opencode:'OpenCode',dsh:'DSH'};
   async function renderTopbar(){
     if(!window.__TAURI_INTERNALS__)return;
     let an=null,rows=[];
@@ -1135,7 +1136,7 @@ if(IS_PET){
     }).join('');
     // ── 7 天趋势 ──
     const trend=(anw&&anw.daily_series&&anw.daily_series.length>1)?barSpark(anw.daily_series.map(d=>d.cost),380,36):'';
-    const cards=rows.map(r=>'<div class="pv-card"><div class="row1"><span class="src">'+esc(r.source)+'</span><span class="proj" title="'+esc(r.project)+'">'+esc(r.project)+'</span></div><div class="row2"><span>Σ <b>'+fT(r.tokens_in_window)+'</b></span><span>⚡ <b>'+r.cache_hit_pct.toFixed(0)+'%</b></span>'+(r.last_context_tokens>0?'<span>CTX <b>'+fT(r.last_context_tokens)+'</b></span>':'')+'</div></div>').join('');
+    const cards=rows.map(r=>'<div class="pv-card"><div class="row1"><span class="src">'+esc(SRC_LABELS[r.source]||r.source)+'</span><span class="proj" title="'+esc(r.project)+'">'+esc(r.project)+'</span></div><div class="row2"><span>Σ <b>'+fT(r.tokens_in_window)+'</b></span><span>⚡ <b>'+r.cache_hit_pct.toFixed(0)+'%</b></span>'+(r.last_context_tokens>0?'<span>CTX <b>'+fT(r.last_context_tokens)+'</b></span>':'')+'</div></div>').join('');
     let sess='';
     if(metrics){
       sess='<div class="pv-sec">当前会话</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px">'

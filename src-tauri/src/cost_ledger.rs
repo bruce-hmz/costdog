@@ -44,6 +44,23 @@ pub fn build_cost_record(
     } else {
         "partial"
     };
+    // 指纹要覆盖**所有影响成本的输入**，包括解析出的单价：只放 token 的话，
+    // 价格表变了（新增 provider 级单价 / 换了匹配规则 / 重取了 OpenRouter 缓存）
+    // 账本不会更新，于是 sessions.cost 与 session_costs.cost 长期不一致——
+    // 实测 DSH 那行：sessions 0.3714 vs 账本 1.3587（同一 (session,date)）。
+    let price_key = resolved_price
+        .as_ref()
+        .map(|price| {
+            (
+                price.model_id.clone(),
+                price.match_kind,
+                price.input_per_m,
+                price.output_per_m,
+                price.cache_read_per_m,
+                price.cache_creation_per_m,
+            )
+        })
+        .unwrap_or_else(|| (String::new(), "", 0.0, 0.0, 0.0, 0.0));
     let usage_fingerprint = serde_json::to_string(&(
         COST_FORMULA_VERSION,
         model,
@@ -53,6 +70,7 @@ pub fn build_cost_record(
         cache_creation_tokens,
         reasoning_tokens,
         provider_cost_amount,
+        price_key,
     ))
     .expect("serializing a pricing fingerprint should not fail");
 
@@ -315,6 +333,44 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn price_change_updates_the_ledger_even_when_usage_is_unchanged() {
+        // 真实事故：DSH 的会话按 OpenRouter 标价（0.3/1.2/0.03）记了账，后来
+        // 定价改成 provider 级（0.15/0.6/0.003），sessions.cost 变了但账本没变
+        // （指纹只覆盖 token）→ 同一 (session,date) 两处成本不一致。
+        let conn = test_connection();
+        let dear = build_cost_record(
+            "deepseek-v4.1-flash", 1_000_000, 0, 0, 0, 0, None, true,
+            Some(ResolvedPrice {
+                model_id: "deepseek/deepseek-v4.1-flash".to_string(),
+                match_kind: "suffix",
+                input_per_m: 0.3, output_per_m: 1.2,
+                cache_read_per_m: 0.03, cache_creation_per_m: 0.0,
+            }),
+        );
+        let cheap = build_cost_record(
+            "deepseek-v4.1-flash", 1_000_000, 0, 0, 0, 0, None, true,
+            Some(ResolvedPrice {
+                model_id: "deepseek-v4.1-flash@opencode-go".to_string(),
+                match_kind: "provider",
+                input_per_m: 0.15, output_per_m: 0.6,
+                cache_read_per_m: 0.003, cache_creation_per_m: 0.0,
+            }),
+        );
+        upsert(&conn, "s1", "dsh", "2026-09-30", &dear).unwrap();
+        upsert(&conn, "s1", "dsh", "2026-09-30", &cheap).unwrap();
+        let (cost, match_kind, model_id): (f64, String, Option<String>) = conn
+            .query_row(
+                "SELECT cost, pricing_match, pricing_model_id FROM session_costs WHERE session_id = 's1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert!((cost - 0.15).abs() < 1e-9, "cost={cost}");
+        assert_eq!(match_kind, "provider");
+        assert_eq!(model_id.as_deref(), Some("deepseek-v4.1-flash@opencode-go"));
+    }
+
     fn unpriced_session_is_upgraded_when_pricing_becomes_available() {
         let conn = test_connection();
         let unpriced = build_cost_record("provider/model", 100, 20, 0, 0, 0, None, true, None);
@@ -337,7 +393,9 @@ mod tests {
             }),
         );
 
-        assert_eq!(unpriced.usage_fingerprint, priced.usage_fingerprint);
+        // 价格进入指纹后，unpriced → priced 本身就会改变指纹（正常路径）；
+        // 另一条 WHERE 子句（unpriced → priced）保留作为双保险。
+        assert_ne!(unpriced.usage_fingerprint, priced.usage_fingerprint);
         upsert(&conn, "s1", "codex", "2026-07-27", &unpriced).unwrap();
         upsert(&conn, "s1", "codex", "2026-07-27", &priced).unwrap();
 

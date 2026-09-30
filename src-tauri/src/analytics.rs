@@ -3,7 +3,7 @@ use rusqlite::{params_from_iter, types::Value, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
-const SOURCES: &[&str] = &["claude-code", "codex", "zcode", "opencode"];
+const SOURCES: &[&str] = &["claude-code", "codex", "zcode", "opencode", "dsh"];
 const ACTIVITIES: &[&str] = &[
     "feature", "bugfix", "refactor", "docs", "research", "debug", "agent", "explore", "other",
 ];
