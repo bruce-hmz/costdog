@@ -20,28 +20,32 @@ body.dragging .critter *{cursor:grabbing}
 @keyframes walkcycle{from{background-position:0 0}to{background-position:-824px 0}}
 body:not(.walking) #dog-run.sheet{animation:none;background-position:0 0}
 #dog-run{transition:transform .3s}
-body.walking #dog-run{animation:walkcycle .6s steps(8) infinite,stepbob .3s ease-in-out infinite}
+body.walking #dog-run{animation:walkcycle .6s steps(8) infinite}
 /* 橘猫走路雪碧图：8 帧 × 107px = 856×72（生成图 2172×724 → 去白底 → 等分切帧 → 缩放到 72 高） */
-#cat-run.sheet{width:93px;height:72px;background-image:url("cat-walk-sheet.png");background-size:768px 72px;background-repeat:no-repeat;animation:catwalk .6s steps(8) infinite}
-@keyframes catwalk{from{background-position:0 0}to{background-position:-768px 0}}
+#cat-run.sheet{width:79px;height:72px;background-image:url("cat-walk-sheet.png");background-size:656px 72px;background-repeat:no-repeat;animation:catwalk .6s steps(8) infinite}
+@keyframes catwalk{from{background-position:0 0}to{background-position:-656px 0}}
 body:not(.walking) #cat-run.sheet{animation:none;background-position:0 0}
-body.walking #cat-run{animation:catwalk .6s steps(8) infinite,stepbob .3s ease-in-out infinite}
+body.walking #cat-run{animation:catwalk .6s steps(8) infinite}
 /* 灰兔走路雪碧图：8 帧 × 88px = 704×72 */
-#rabbit-run.sheet{width:79px;height:72px;background-image:url("rabbit-walk-sheet.png");background-size:656px 72px;background-repeat:no-repeat;animation:rabbitwalk .6s steps(8) infinite}
-@keyframes rabbitwalk{from{background-position:0 0}to{background-position:-656px 0}}
+#rabbit-run.sheet{width:83px;height:72px;background-image:url("rabbit-walk-sheet.png");background-size:688px 72px;background-repeat:no-repeat;animation:rabbitwalk .6s steps(8) infinite}
+@keyframes rabbitwalk{from{background-position:0 0}to{background-position:-688px 0}}
 body:not(.walking) #rabbit-run.sheet{animation:none;background-position:0 0}
-body.walking #rabbit-run{animation:rabbitwalk .6s steps(8) infinite,stepbob .3s ease-in-out infinite}
+body.walking #rabbit-run{animation:rabbitwalk .6s steps(8) infinite}
 /* .crit-run 只是"当前跑图"的标记类（三个跑图元素都是雪碧图 div.sheet，尺寸与帧动画各自声明），
    setFace() 用它统一施加转向 scale */
 .crit-run{height:72px}
-body.walking .crit-run{animation:stepbob .3s ease-in-out infinite}
+/* 曾经这里给所有跑图挂了一个自由运转的 stepbob（0.3s 正弦）。已删除：
+   素材本身就有身体起伏（实测背线极差：狗 4px / 猫 2px / 兔 15px），再叠一个
+   与帧相位无关的正弦，两个起伏互相打架 —— 用户反馈的"不协调"就是这么来的。
+   想要起伏，应该在出图时让它由腿部姿态体现（见 scripts/check-walk-sheet.py
+   的"body height stable"判据），而不是在 CSS 里补一个。 */
 /* 白描边+投影让宠物在任何背景上都看得见。注意用 .sprite 而非 img.sprite——
    狗的跑图是 div（雪碧图），原选择器把它漏掉了，走路态因此没有描边。 */
 .sprite{filter:drop-shadow(0 0 1.5px rgba(255,255,255,.9)) drop-shadow(0 2px 3px rgba(255,255,255,.5)) drop-shadow(0 5px 12px rgba(0,0,0,.5));transform-origin:center;-webkit-user-drag:none;user-select:none}
 
 /* 起伏幅度砍半：72px 精灵上抖 5px（3.3Hz）看起来是抽搐而不是走路。
    频率保持每循环两次（四足对角步态本来如此），只压幅度。 */
-@keyframes stepbob{0%,100%{transform:translateY(0)}25%{transform:translateY(-1.2px)}50%{transform:translateY(0)}75%{transform:translateY(-0.8px)}}
+
 /* 铭牌贴住狗头顶：狗盒高 72px，bottom:80px ⇒ 与头顶留 8px（跑动 stepbob 抬 2.5px 仍有余量）。
    历史 bug：这里原用 top:-2px 钉在 170px 容器顶部，而狗被 flex-end 压在底部，中间空出 70px。 */
 .plate{position:absolute;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(22,22,28,.92);border:1px solid rgba(255,255,255,.15);border-radius:9px;padding:2px 7px;color:#e8e8e8;font-family:monospace;font-variant-numeric:tabular-nums;box-shadow:0 0 0 1px rgba(255,255,255,.12),0 3px 10px rgba(0,0,0,.45);text-align:center;line-height:1.25}
@@ -206,8 +210,9 @@ window.addEventListener('pointercancel',endDrag);
 window.addEventListener('blur',endDrag);
 // 步速必须与雪碧图的步幅自洽，否则就是"冰上滑"（用户反馈的"滑步"）。
 // 实测「一个 8 帧循环里，脚（最低墨迹重心）相对身体前后移动多少像素」：
-//   狗 19.5px（20%，换图前 8.6px）/ 猫 13.4px（14%，换图前 21.3px）/ 兔 23.1px（29%）
-// 循环 0.6s 时，脚踩住地面的速度上限 = 步幅 ÷ 0.6s → 狗 32.5 / 猫 22.3 / 兔 38.4 px/s。
+//   狗 19.5px（20%）/ 猫 12.9px（16%）/ 兔 23.4px（28%）—— 猫兔于 09-30 二版重画
+//   （第一版猫是"四脚全贴地搓腿"、兔是"身体整体弹跳 15px"，见 scripts/check-walk-sheet.py）
+// 循环 0.6s 时，脚踩住地面的速度上限 = 步幅 ÷ 0.6s → 狗 32.5 / 猫 21.5 / 兔 39.0 px/s。
 // 旧参数 SW*0.004（1920 屏 ≈70px/s）对狗曾经是上限的 4.9 倍 —— 整段路都在打滑。
 // 所以按宠物分别取速度（换素材就改这张表；想跑更快只能重画步幅更大的雪碧图）；
 // 另外用绝对像素而不是 SW 比例，否则 4K 屏上会自己加速到 140px/s。
@@ -216,7 +221,7 @@ var WALK_CYCLE_S=0.6;
 // → 必须慢跑到 14px/s 才不打滑）。新图边缘锐度 42~50（≈参考图缩到 72 高的基准
 // 47~52，即平滑渲染），步幅也变大：狗 8.6→19.5、兔 21.7→23.1；猫 21.3→13.4
 // （猫这张步幅小了些，速度表会跟着降到 22px/s，仍然不打滑）。
-var PET_STRIDE={dog:19.5, cat:13.4, rabbit:23.1};
+var PET_STRIDE={dog:19.5, cat:12.9, rabbit:23.4};
 function walkPxPerSecond(){
   var pet=PETS[petIdx];                       // PETS 在下方定义，运行时才求值
   var stride=PET_STRIDE[pet&&pet.id]||19.5;

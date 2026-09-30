@@ -101,7 +101,14 @@ async function sentEvidence() {
   if (composer === 0) return 'composer 清空';
   const stop = await ev(`!!document.querySelector('button[data-testid="stop-button"],button[aria-label*="停止"],button[aria-label*="Stop"]')`);
   if (stop) return '出现停止按钮';
-  const echoed = await ev(`(document.body.innerText||'').includes(${JSON.stringify(prompt.slice(0, 24))})`);
+  // 注意：不能用 body.innerText 找提示词 —— **输入框里的文字本身就在 innerText 里**，
+  // 于是"没发出去"也会被判成已发送（实测踩过：提示词卡在 composer，脚本却报发送成功）。
+  // 只认真正进了会话的消息节点。
+  const echoed = await ev(`(()=>{
+    const t=${JSON.stringify(prompt.slice(0, 24))};
+    return [...document.querySelectorAll('[data-message-author-role], article, .markdown')]
+      .some(e=>e.innerText && e.innerText.includes(t));
+  })()`);
   if (echoed) return '消息已出现在会话里';
   return null;
 }
