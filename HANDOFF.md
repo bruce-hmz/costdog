@@ -152,3 +152,11 @@ screencapture -x -R<x-25>,<y-40>,200,250 /tmp/dog.png  # 按 pet.json 坐标裁�
     - 渲染矩阵复核（headless）：三只 × 睡/跑 六种组合都**只显示一个元素**，尺寸 跑 79~100px / 睡 134~147px，同为 72 高。
     - **生图脚本新坑**：单角色图只有 ~1254px 宽，低于脚本默认 `--minw 1500` 的过滤门槛 → 图明明生成了却报"超时"。单张立绘要 `--minw 900`（该参数本意是滤掉参考图缩略图）。对比图 `sleep-old-vs-new.png`。
 
+14. **⇄ 切换动物"失效"**（用户反馈）。根因是**指针捕获把 click 抢走了**，不是切换逻辑坏了。
+    - 机制：`onDragDown`（critter 的 pointerdown）无条件 `critter.setPointerCapture(e.pointerId)`。一旦捕获，后续指针事件的 target 都变成 critter，浏览器把 `click` 派发到"按下目标与抬起目标的最近公共祖先"= critter —— 于是 ⇄ 芯片（和铭牌）的 click 处理器**永远收不到**。这条是拖动功能引入的（比用户上一次成功切换更晚），所以表现为"以前能切，现在切不动"。
+    - 为什么我前两次测试没抓到：我用的是 `element.click()` / `dispatchEvent(new MouseEvent('click'))`，这两条都**绕过浏览器的命中测试与捕获重定向**，处理器照样触发 —— 测试通过但线上是坏的。**权威做法是用 CDP `Input.dispatchMouseEvent` 走真实输入管线**（这次的 A/B：修前点击后 `pet`/localStorage 都不变；修后单击三下 dog→cat→rabbit→dog，localStorage 同步）。
+    - 修法：① 捕获改到 `onDragMove` 里、越过 4px 阈值确认是真拖动之后再做（普通点击不再被夺走 click）；② `pointermove/up/cancel` 改挂 `window` —— 捕获发生前那几像素位移也要收得到，否则从宠物边缘往外拖会丢事件起不来。
+    - 顺带三处硬化（同一条"点了没反应"的排查链）：① 宠物矩形上报 **500ms → 120ms**（换素材后狗走 32px/s，500ms 滞后就是 16px，光标压在狗身上、守卫拿的却是过期矩形 → 窗口保持穿透 → 点击丢失）；② 守卫命中 margin **12 → 20px**；③ 守卫状态变成**可观测**：`/pet.json` 增加 `guard_ticks`（线程活着吗）/`interactive`（窗口当前可点击吗）/`cx,cy`（它看到的光标位置），并且 `set_ignore_cursor_events` 写失败时不再更新本地状态（以前写失败也照样翻 `pass_through`，会让窗口**永久**停在穿透态且再不重试）。
+    - 验证：CDP 真实输入 单击⇄ 三次循环正确 + localStorage 同步；拖动仍 Δ=80px；点铭牌不误触拖动。真机侧：`/pet.json` 显示光标移到宠物中心时 `interactive=true`、移开变 `false`（守卫读数与瞬移坐标逐像素一致）。
+    - **环境限制**：本机 `CGPreflightPostEventAccess()=被拒`（无辅助功能权限），CGEvent 合成点击会被系统静默丢弃 —— 所以"真机点一下"这条路走不通，验证必须走 headless CDP 输入管线。
+

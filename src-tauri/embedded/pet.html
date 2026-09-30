@@ -162,7 +162,10 @@ function onDragDown(e){
   grabDX=e.clientX-dogX;
   grabDY=e.clientY-(window.innerHeight-roamBottom-PET_H);   // 光标相对宠物框左上角
   dragX0=e.clientX; dragY0=e.clientY;
-  try{critter.setPointerCapture(e.pointerId);}catch(err){}
+  // 这里**不能**急着 setPointerCapture：一旦捕获，指针后续事件的 target 都变成
+  // critter，浏览器会把 click 派发到"按下/抬起目标的最近公共祖先"= critter，
+  // 于是 ⇄ 芯片和铭牌的 click 永远收不到 —— 用户看到的就是"切换动物失效"。
+  // 改成越过 4px 阈值、确认是真拖动之后再捕获（见 onDragMove）。
   setDragMode(true);
 }
 function onDragMove(e){
@@ -170,6 +173,9 @@ function onDragMove(e){
   if(!dragMoved){
     if(Math.abs(e.clientX-dragX0)<4&&Math.abs(e.clientY-dragY0)<4)return;   // 4px 阈值：之内算点击
     dragMoved=true;
+    // 确认是真拖动后才捕获指针：这样光标跑出宠物框也收得到 move，而普通点击
+    // 不会被捕获夺走 click（见 onDragDown 的注释）。
+    try{critter.setPointerCapture(e.pointerId);}catch(err){}
     document.body.classList.add('dragging');
     state='pause'; stateUntil=Date.now()+1e9;    // 冻结漫游，别和手指抢位置
   }
@@ -185,9 +191,11 @@ function endDrag(){
   if(dragMoved){ state='pause'; stateUntil=Date.now()+3000; walkTarget=null; setDog(dogX); savePos(); }
 }
 critter.addEventListener('pointerdown',onDragDown);
-critter.addEventListener('pointermove',onDragMove);
-critter.addEventListener('pointerup',endDrag);
-critter.addEventListener('pointercancel',endDrag);
+// move/up 挂在 window：捕获发生在越过阈值之后，之前这段位移也必须收得到
+// （否则从宠物边缘按下再往外拖，头几像素会丢事件，拖动起不来）。
+window.addEventListener('pointermove',onDragMove);
+window.addEventListener('pointerup',endDrag);
+window.addEventListener('pointercancel',endDrag);
 window.addEventListener('blur',endDrag);
 // 步速必须与雪碧图的步幅自洽，否则就是"冰上滑"（用户反馈的"滑步"）。
 // 实测「一个 8 帧循环里，脚（最低墨迹重心）相对身体前后移动多少像素」：
@@ -288,11 +296,18 @@ setInterval(tick,2000);
 // 召唤计数走 IPC：本页受 app CSP 约束（connect-src 'self' ipc: http://ipc.localhost），
 // 直接 fetch http://127.0.0.1:9401/pet.json 会被 CSP 拒掉（历史 bug：自救开关因此失效）。
 var lastSummon=-1;
+// 矩形上报必须"跟得上宠物"：光标守卫靠它判断"光标是不是在宠物身上"，而狗现在走
+// 32px/s —— 500ms 的滞后就是 16px，光标明明压在狗身上、守卫手里的却是过期矩形，
+// 于是窗口保持穿透，点 ⇄ / 拖拽都像"失效"（实测反馈）。拆成两条定时器：
+// 矩形 120ms（只发 4 个数，IPC 极廉价），召唤检测仍 500ms。
 setInterval(function(){
   var r=critter.getBoundingClientRect();
   if(!window.__TAURI_INTERNALS__)return;
+  window.__TAURI_INTERNALS__.invoke('set_pet_rect',{x:r.left,y:r.top,w:r.width,h:r.height}).catch(function(){});
+},120);
+setInterval(function(){
+  if(!window.__TAURI_INTERNALS__)return;
   var I=window.__TAURI_INTERNALS__.invoke;
-  I('set_pet_rect',{x:r.left,y:r.top,w:r.width,h:r.height}).catch(function(){});
   I('get_summon_count').then(function(n){
     if(lastSummon<0||typeof n!=='number'){lastSummon=n;return;}
     if(n>lastSummon){

@@ -246,6 +246,26 @@ fn rand_range(max: f64) -> f64 {
 
 /// 光标守卫：光标在小狗范围（±12px 余量）内才解除全窗穿透，
 /// 其余时间整窗穿透——桌面上只有小狗本身可交互。
+/// 守卫的可观测状态：排查"点了没反应"时，先看这三个数——
+/// ticks 不涨 = 线程没跑；inside 一直 false = 它没看到光标进宠物；
+/// interactive 与 inside 不一致 = set_ignore_cursor_events 没生效。
+pub static PET_GUARD_TICKS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub static PET_INTERACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+pub static PET_GUARD_CURSOR: std::sync::Mutex<(f64, f64, bool)> =
+    std::sync::Mutex::new((0.0, 0.0, false));
+
+pub fn guard_diagnostics() -> (u64, bool, f64, f64) {
+    let ticks = PET_GUARD_TICKS.load(std::sync::atomic::Ordering::Relaxed);
+    let interactive = PET_INTERACTIVE.load(std::sync::atomic::Ordering::Relaxed);
+    let (x, y, _inside) = PET_GUARD_CURSOR
+        .lock()
+        .map(|g| *g)
+        .unwrap_or((0.0, 0.0, false));
+    (ticks, interactive, x, y)
+}
+
 pub fn spawn_cursor_guard(app: tauri::AppHandle) {
     // 只允许一份：两处调用点（setup 与 ensure_topbar_window）曾各起一条线程，
     // 各自维护自己的 pass_through 状态，于是每次边界穿越都要写两遍
@@ -269,8 +289,13 @@ pub fn spawn_cursor_guard(app: tauri::AppHandle) {
             if pw <= 0.0 {
                 continue;
             }
+            PET_GUARD_TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let Some((mx, my)) = cursor_point() else { continue };
-            let margin = 12.0;
+            // 命中范围要给足：页面每 500ms 才上报一次宠物矩形，而狗现在走 32px/s
+            // （换素材后快了 2.3 倍）→ 矩形最旧会滞后 500ms ≈ 16px。margin 若只有
+            // 12px，光标明明在宠物身上、守卫拿到的却是过期矩形 → 窗口保持穿透 →
+            // 点 ⇄ 像"失效"。20px 覆盖这段滞后 + 手抖。
+            let margin = 20.0;
             // 拖动期间不看命中：指针捕获 + 快速位移会让光标瞬时离开矩形，
             // 一旦切回穿透，pointermove 就断流，拖动会卡住。
             let inside = pet_dragging()
@@ -278,11 +303,21 @@ pub fn spawn_cursor_guard(app: tauri::AppHandle) {
                     && mx <= px + pw + margin
                     && my >= py - margin
                     && my <= py + ph + margin);
+            if let Ok(mut guard) = PET_GUARD_CURSOR.lock() {
+                *guard = (mx, my, inside);
+            }
             if inside == pass_through {
                 if let Some(w) = app.get_webview_window("topbar") {
-                    w.set_ignore_cursor_events(!inside).ok();
+                    match w.set_ignore_cursor_events(!inside) {
+                        Ok(()) => {
+                            PET_INTERACTIVE.store(inside, std::sync::atomic::Ordering::Relaxed);
+                            pass_through = !inside;
+                        }
+                        // 写失败就别改本地状态：否则 pass_through 会与真机状态背离，
+                        // 之后再也不重试这一侧（曾经"窗口永远穿透"就是这么来的）。
+                        Err(error) => eprintln!("[CostDog] set_ignore_cursor_events failed: {error}"),
+                    }
                 }
-                pass_through = !inside;
             }
         }
     });

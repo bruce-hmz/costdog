@@ -3589,10 +3589,13 @@ fn spawn_pet_data_server() {
                 "/stats.json" => { let (b, t) = serve_stats_body(); (t, b.into_bytes()) }
                 "/pet.json" => {
                     let rect = dock::pet_rect();
+                    // 附上守卫状态：ticks（线程活着吗）/ interactive（窗口当前可点击吗）
+                    // / cx,cy（守卫看到的光标位置）。"点宠物没反应"先看这三个数。
+                    let (ticks, interactive, cx, cy) = dock::guard_diagnostics();
                     let body = format!(
-                        "{{\"x\":{:.0},\"y\":{:.0},\"w\":{:.0},\"h\":{:.0},\"summon\":{}}}",
+                        "{{\"x\":{:.0},\"y\":{:.0},\"w\":{:.0},\"h\":{:.0},\"summon\":{},\"guard_ticks\":{},\"interactive\":{},\"cx\":{:.0},\"cy\":{:.0}}}",
                         rect.0, rect.1, rect.2, rect.3,
-                        dock::summon_count()
+                        dock::summon_count(), ticks, interactive, cx, cy
                     );
                     ("application/json", body.into_bytes())
                 }
