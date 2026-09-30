@@ -7,8 +7,11 @@ body{margin:0;background:transparent;overflow:hidden;user-select:none}
 .critter{position:absolute;bottom:110px;width:150px;height:170px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;transition:left 1.2s linear}
 #dog-sleep{height:72px!important;animation:sleepbreath 3.4s ease-in-out infinite}
 @keyframes sleepbreath{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
-#dog-run.sheet{width:88px;height:72px;background-image:url("walk-sheet.png");background-size:5552px 72px;background-repeat:no-repeat;animation:walkcycle 1s steps(8) infinite}
-@keyframes walkcycle{from{background-position:0 0}to{background-position:-5552px 0}}
+/* 雪碧图真值：8 帧 × 86.75px = 694×218，帧内容在纵向 0..71。元素只开 86px 视窗，
+   steps(8) 总位移 694px ⇒ 每步 86.75px = 恰好一帧。此两处若写成 5552(=694×8)，
+   素材会被横向拉伸 8 倍、纵向压扁 3 倍，狗变成一条涂抹（历史 bug）。 */
+#dog-run.sheet{width:86px;height:72px;background-image:url("walk-sheet.png");background-size:694px 218px;background-repeat:no-repeat;animation:walkcycle 1s steps(8) infinite}
+@keyframes walkcycle{from{background-position:0 0}to{background-position:-694px 0}}
 body:not(.walking) #dog-run.sheet{animation:none;background-position:0 0}
 img.sprite{height:64px;width:auto;filter:drop-shadow(0 0 1.5px rgba(255,255,255,.9)) drop-shadow(0 2px 3px rgba(255,255,255,.5)) drop-shadow(0 5px 12px rgba(0,0,0,.5))}
 img.sprite{transform-origin:center}
@@ -27,9 +30,11 @@ body.walking #dog-run{animation:walkcycle 1s steps(8) infinite,stepbob .5s ease-
 #zzz{position:absolute;top:28px;right:6px;font-family:monospace;color:#7fb8ff;font-size:10px;text-shadow:0 1px 3px #000;display:none;animation:floatz 2.2s ease-in-out infinite}
 body[data-state="sleep"] #zzz{display:block}
 @keyframes floatz{0%,100%{transform:translate(0,0);opacity:.35}50%{transform:translate(5px,-7px);opacity:1}}
-img.sprite[hidden]{display:none}
+/* 可见性只由 data-state 决定：#dog-sleep 在非 sleep 态隐藏，其余状态显示。
+   （历史 bug：这里曾给 <img> 加 hidden 属性 + img.sprite[hidden]{display:none}，
+   而没有任何代码移除它 —— sleep 态下两个精灵都被隐藏，狗彻底消失。） */
+body:not([data-state="sleep"]) #dog-sleep{display:none}
 body[data-state="sleep"] #dog-run{display:none}
-body[data-state="run"] #dog-sleep{display:none}
 </style></head>
 <body data-ani="dog" data-state="idle">
 <div id="stage">
@@ -38,7 +43,7 @@ body[data-state="run"] #dog-sleep{display:none}
     <span id="zzz">Z z z</span>
     <span id="switcher" title="切换宠物">⇄</span>
     <div id="dog-run" class="sprite sheet"></div>
-    <img id="dog-sleep" class="sprite" src="pet-sleep.png" alt="" hidden>
+    <img id="dog-sleep" class="sprite" src="pet-sleep.png" alt="">
   </div>
 </div>
 <script>
@@ -117,16 +122,18 @@ function tick(){
 tick();
 setInterval(tick,2000);
 // 自主验收通道：狗矩形上报 + 召唤检测（托盘"召唤小狗"→回中央+强制重绘）
+// 召唤计数走 IPC：本页受 app CSP 约束（connect-src 'self' ipc: http://ipc.localhost），
+// 直接 fetch http://127.0.0.1:9401/pet.json 会被 CSP 拒掉（历史 bug：自救开关因此失效）。
 var lastSummon=-1;
 setInterval(function(){
   var r=critter.getBoundingClientRect();
-  if(window.__TAURI_INTERNALS__){
-    window.__TAURI_INTERNALS__.invoke('set_pet_rect',{x:r.left,y:r.top,w:r.width,h:r.height}).catch(function(){});
-  }
-  fetch('http://127.0.0.1:9401/pet.json').then(function(res){return res.json();}).then(function(d){
-    if(lastSummon<0){lastSummon=d.summon;return;}
-    if(d.summon>lastSummon){
-      lastSummon=d.summon;
+  if(!window.__TAURI_INTERNALS__)return;
+  var I=window.__TAURI_INTERNALS__.invoke;
+  I('set_pet_rect',{x:r.left,y:r.top,w:r.width,h:r.height}).catch(function(){});
+  I('get_summon_count').then(function(n){
+    if(lastSummon<0||typeof n!=='number'){lastSummon=n;return;}
+    if(n>lastSummon){
+      lastSummon=n;
       // 召唤：移到屏幕中央 + 触发重绘（对冲任何合成异常）
       setDog(window.innerWidth/2-75);
       critter.style.transition='none';critter.style.left=(window.innerWidth/2-75)+'px';

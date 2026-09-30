@@ -2470,6 +2470,14 @@ fn set_pet_rect(x: f64, y: f64, w: f64, h: f64) {
     dock::set_pet_rect(x, y, w, h);
 }
 
+/// 托盘「🐕 召唤小狗」的计数。宠物页每 500ms 轮询它，变大就把狗瞬移回屏幕中央。
+/// 必须走 IPC：app CSP 的 connect-src 只有 'self' + ipc，页面内 fetch
+/// http://127.0.0.1:9401/pet.json 会被 CSP 直接拒掉（历史 bug，自救开关因此失效）。
+#[tauri::command]
+fn get_summon_count() -> u32 {
+    dock::summon_count()
+}
+
 /// 调用窗口自己的宿主：main=zcode，cap-<host>=<host>（多胶囊架构）。
 #[tauri::command]
 fn get_dock_host(window: tauri::WebviewWindow) -> String {
@@ -3658,7 +3666,7 @@ pub fn run() {
                 .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions, get_live_session, set_live_session, get_session_cost_alert, set_pet_rect, embed_zcode, embed_codex, get_walk_state])
+        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions, get_live_session, set_live_session, get_session_cost_alert, set_pet_rect, get_summon_count, embed_zcode, embed_codex, get_walk_state])
         .setup(|app| {
             // A 36px always-on-top bar is an accessory, not an app: drop the Dock icon
             // and the app menu so CostDog lives entirely in the menu bar.

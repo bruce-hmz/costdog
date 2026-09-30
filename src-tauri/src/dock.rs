@@ -267,34 +267,50 @@ pub fn make_non_activating(window: &tauri::WebviewWindow) {
     }
 }
 
-/// 跨 Space 可见（canJoinAllSpaces | fullScreenAuxiliary）。失败仅打日志。
-#[cfg(target_os = "macos")]
 /// 禁用 App Nap：宠物窗永不激活，macOS 会节流其 WKWebView 的 JS 定时器
-/// （表现为"恍惚的影子"——几秒才渲染一帧）。beginActivity 永久持有。
+/// （表现为"恍惚的影子"——几秒才渲染一帧）。
+///
+/// 关键：`beginActivityWithOptions:reason:` 返回的 token 一旦 dealloc，系统会
+/// **自动结束**该活动（NSProcessInfo.h："If the object is deallocated before the
+/// -endActivity: call, the activity will be automatically ended"）。它是 +0
+/// autoreleased 对象，所以只把裸指针丢掉等于什么都没做（历史 bug：日志照打，
+/// 节流照旧）。这里把 token 的所有权永久转移（into_raw 后不再 release），
+/// 连同 reason 字符串一起存进进程级 static，存活到进程退出。
+#[cfg(target_os = "macos")]
+static APP_NAP_HOLD: std::sync::OnceLock<(usize, usize)> = std::sync::OnceLock::new();
+
 #[cfg(target_os = "macos")]
 pub fn disable_app_nap() {
-    use std::os::raw::c_void;
     unsafe {
         let Some(cls) = objc2::runtime::AnyClass::get(c"NSProcessInfo") else { return };
         let pi: *mut objc2::runtime::AnyObject = objc2::msg_send![cls, processInfo];
-        // NSActivityLatencyCritical(0xFF<<20) | idleSystemSleep | idleDisplaySleep
-        let opts: u64 = (0xFFu64 << 20) | (1 << 20) | (1 << 0);
-        // reason: NSString —— CFString toll-free bridged
+        // NSActivityUserInitiated(0x00FF_FFFF，已含 IdleSystemSleepDisabled = 1<<20)
+        // | NSActivityLatencyCritical(0xFF << 32) | NSActivityIdleDisplaySleepDisabled(1 << 40)
+        // 注意两个关键位的位置：LatencyCritical 在 bit 32-39、IdleDisplaySleep 在 bit 40。
+        // 早期版本写的是 (0xFF<<20)|(1<<20)|(1<<0) —— 两个关键位都没设上（bit 20 是对的）。
+        let opts: u64 = 0x00FF_FFFFu64 | (0xFFu64 << 32) | (1u64 << 40);
+        // reason: NSString —— CFString toll-free bridged（随 token 一起永久持有）
         let bytes = b"CostDog pet animation\0";
         let cfstr = ffi::CFStringCreateWithCString(
             std::ptr::null(),
             bytes.as_ptr(),
             ffi::K_CF_UTF8,
         );
-        let activity: *mut c_void = objc2::msg_send![
+        let activity: *mut objc2::runtime::AnyObject = objc2::msg_send![
             pi,
             beginActivityWithOptions: opts
             reason: cfstr as *mut objc2::runtime::AnyObject
         ];
-        // 永久持有（不 end）——变量本身不存也 OK：activity 对象被系统保留在
-        // 进程活动表，进程存活期间有效。
-        let _ = activity;
-        eprintln!("[CostDog] app nap disabled (latency critical)");
+        if activity.is_null() {
+            eprintln!("[CostDog] beginActivity returned nil — app nap NOT disabled");
+            return;
+        }
+        // +1 持有后 into_raw：不再 release，活动持续到进程退出。
+        let held = objc2::rc::Retained::into_raw(
+            objc2::rc::Retained::retain(activity).expect("retain of activity token"),
+        ) as usize;
+        let _ = APP_NAP_HOLD.set((held, cfstr as usize));
+        eprintln!("[CostDog] app nap disabled (userInitiated|latencyCritical|noDisplaySleep)");
     }
 }
 
