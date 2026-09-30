@@ -19,15 +19,20 @@ img.sprite{transform-origin:center}
 body.walking #dog-run{animation:walkcycle 1s steps(8) infinite,stepbob .5s ease-in-out infinite}
 
 @keyframes stepbob{0%,100%{transform:translateY(0)}25%{transform:translateY(-2.5px)}50%{transform:translateY(0)}75%{transform:translateY(-1.5px)}}
-.plate{position:absolute;top:-2px;left:50%;transform:translateX(-50%);background:rgba(22,22,28,.92);border:1px solid rgba(255,255,255,.15);border-radius:9px;padding:2px 7px;color:#e8e8e8;font-family:monospace;font-variant-numeric:tabular-nums;box-shadow:0 0 0 1px rgba(255,255,255,.12),0 3px 10px rgba(0,0,0,.45);text-align:center;line-height:1.25}
+/* 铭牌贴住狗头顶：狗盒高 72px，bottom:80px ⇒ 与头顶留 8px（跑动 stepbob 抬 2.5px 仍有余量）。
+   历史 bug：这里原用 top:-2px 钉在 170px 容器顶部，而狗被 flex-end 压在底部，中间空出 70px。 */
+.plate{position:absolute;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(22,22,28,.92);border:1px solid rgba(255,255,255,.15);border-radius:9px;padding:2px 7px;color:#e8e8e8;font-family:monospace;font-variant-numeric:tabular-nums;box-shadow:0 0 0 1px rgba(255,255,255,.12),0 3px 10px rgba(0,0,0,.45);text-align:center;line-height:1.25}
 .plate .prow{white-space:nowrap}
 .plate .pt{font-size:8px;color:#9aa0aa;max-width:150px;overflow:hidden;text-overflow:ellipsis}
 .plate .pb{font-size:11px}
 .plate b{color:#f97316}
 .plate .sep{color:rgba(255,255,255,.25);margin:0 2px}
-#switcher{position:absolute;top:16px;left:6px;background:#1c1c22;border:1px solid rgba(255,255,255,.2);border-radius:9px;font-size:10px;padding:1px 6px;color:#7fb8ff;font-family:monospace;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.3)}
+/* 切换芯片与 Zzz 排在铭牌上方一行（bottom = 铭牌 80 + 铭牌高约 30 + 4px 间隙），
+   不再压在铭牌上（原 top:16px 与铭牌重叠） */
+#switcher{position:absolute;bottom:114px;left:6px;background:#1c1c22;border:1px solid rgba(255,255,255,.2);border-radius:9px;font-size:10px;padding:1px 6px;color:#7fb8ff;font-family:monospace;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.3)}
 #switcher:hover{color:#fff;border-color:#7fb8ff}
-#zzz{position:absolute;top:28px;right:6px;font-family:monospace;color:#7fb8ff;font-size:10px;text-shadow:0 1px 3px #000;display:none;animation:floatz 2.2s ease-in-out infinite}
+/* Zzz 与切换芯片同排（铭牌上方），随 floatz 上飘 */
+#zzz{position:absolute;bottom:114px;right:6px;font-family:monospace;color:#7fb8ff;font-size:10px;text-shadow:0 1px 3px #000;display:none;animation:floatz 2.2s ease-in-out infinite}
 body[data-state="sleep"] #zzz{display:block}
 @keyframes floatz{0%,100%{transform:translate(0,0);opacity:.35}50%{transform:translate(5px,-7px);opacity:1}}
 /* 可见性只由 data-state 决定：#dog-sleep 在非 sleep 态隐藏，其余状态显示。
