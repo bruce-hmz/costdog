@@ -37,6 +37,32 @@ def background_to_alpha(im, thresh=235):
     )
 
 
+def add_outline(im, white_px=2, shadow_px=3, shadow_alpha=70):
+    """把白描边 + 柔和投影烘焙进素材（替代 CSS 的 filter: drop-shadow）。
+
+    为什么非烘不可：走路精灵是 `div` + `background-image`，浏览器给这种元素做
+    drop-shadow 时按**元素盒子**算（实测四边可见率 24%/21%/67%），于是宠物外面
+    多出一个"贴纸边框"；`<img>` 才会跟着 alpha 走。烘进素材后两边一致，
+    CSS 也不用再挂滤镜。
+    """
+    from PIL import ImageFilter
+    a = im.convert('RGBA')
+    alpha = a.getchannel('A')
+    # 投影：向下偏移 1px 的黑色柔光
+    shadow_mask = alpha.filter(ImageFilter.MaxFilter(shadow_px * 2 + 1)).point(
+        lambda v: min(255, int(v * shadow_alpha / 255))
+    )
+    out = Image.new('RGBA', (a.size[0] + 4, a.size[1] + 6), (0, 0, 0, 0))
+    dark = Image.new('RGBA', a.size, (0, 0, 0, 255))
+    out.paste(dark, (2, 4), shadow_mask)
+    # 白描边
+    ring = alpha.filter(ImageFilter.MaxFilter(white_px * 2 + 1))
+    white = Image.new('RGBA', a.size, (255, 255, 255, 255))
+    out.paste(white, (2, 2), ring)
+    out.paste(a, (2, 2), a)
+    return out
+
+
 def main():
     src, dst = sys.argv[1], sys.argv[2]
     args = sys.argv[3:]
@@ -60,6 +86,8 @@ def main():
     if out.size[0] > maxw:
         print(f"⚠️ 宽度 {out.size[0]}px 超过 {maxw}px，按宽度缩放")
         out = out.resize((maxw, max(1, round(out.size[1] * maxw / out.size[0]))), Image.LANCZOS)
+    if opt('--outline',1):
+        out = add_outline(out, white_px=4, shadow_px=6, shadow_alpha=70)  # 3× 图按比例加粗
     out.save(dst)
     fill = 100 * opaque.mean()
     print(f"✅ 输出 {dst}: {out.size[0]}x{out.size[1]}（去白底前内容占比 {fill:.1f}%）")

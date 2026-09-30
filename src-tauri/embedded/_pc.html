@@ -16,19 +16,19 @@ body.dragging .critter *{cursor:grabbing}
 /* 雪碧图真值：8 帧 × 86.75px = 694×218，帧内容在纵向 0..71。元素只开 86px 视窗，
    steps(8) 总位移 694px ⇒ 每步 86.75px = 恰好一帧。此两处若写成 5552(=694×8)，
    素材会被横向拉伸 8 倍、纵向压扁 3 倍，狗变成一条涂抹（历史 bug）。 */
-#dog-run.sheet{width:100px;height:78px;background-image:url("walk-sheet.png");background-size:828px 78px;background-repeat:no-repeat;animation:walkcycle .6s steps(8) infinite}
-@keyframes walkcycle{from{background-position:0 0}to{background-position:-828px 0}}
+#dog-run.sheet{width:100px;height:72px;background-image:url("walk-sheet.png");background-size:824px 72px;background-repeat:no-repeat;animation:walkcycle .6s steps(8) infinite}
+@keyframes walkcycle{from{background-position:0 0}to{background-position:-824px 0}}
 body:not(.walking) #dog-run.sheet{animation:none;background-position:0 0}
 #dog-run{transition:transform .3s}
 body.walking #dog-run{animation:walkcycle .6s steps(8) infinite}
 /* 橘猫走路雪碧图：8 帧 × 107px = 856×72（生成图 2172×724 → 去白底 → 等分切帧 → 缩放到 72 高） */
-#cat-run.sheet{width:79px;height:78px;background-image:url("cat-walk-sheet.png");background-size:660px 78px;background-repeat:no-repeat;animation:catwalk .6s steps(8) infinite}
-@keyframes catwalk{from{background-position:0 0}to{background-position:-660px 0}}
+#cat-run.sheet{width:79px;height:72px;background-image:url("cat-walk-sheet.png");background-size:656px 72px;background-repeat:no-repeat;animation:catwalk .6s steps(8) infinite}
+@keyframes catwalk{from{background-position:0 0}to{background-position:-656px 0}}
 body:not(.walking) #cat-run.sheet{animation:none;background-position:0 0}
 body.walking #cat-run{animation:catwalk .6s steps(8) infinite}
 /* 灰兔走路雪碧图：8 帧 × 88px = 704×72 */
-#rabbit-run.sheet{width:83px;height:78px;background-image:url("rabbit-walk-sheet.png");background-size:692px 78px;background-repeat:no-repeat;animation:rabbitwalk .6s steps(8) infinite}
-@keyframes rabbitwalk{from{background-position:0 0}to{background-position:-692px 0}}
+#rabbit-run.sheet{width:83px;height:72px;background-image:url("rabbit-walk-sheet.png");background-size:688px 72px;background-repeat:no-repeat;animation:rabbitwalk .6s steps(8) infinite}
+@keyframes rabbitwalk{from{background-position:0 0}to{background-position:-688px 0}}
 body:not(.walking) #rabbit-run.sheet{animation:none;background-position:0 0}
 body.walking #rabbit-run{animation:rabbitwalk .6s steps(8) infinite}
 /* .crit-run 只是"当前跑图"的标记类（三个跑图元素都是雪碧图 div.sheet，尺寸与帧动画各自声明），
@@ -41,7 +41,7 @@ body.walking #rabbit-run{animation:rabbitwalk .6s steps(8) infinite}
    的"body height stable"判据），而不是在 CSS 里补一个。 */
 /* 白描边+投影让宠物在任何背景上都看得见。注意用 .sprite 而非 img.sprite——
    狗的跑图是 div（雪碧图），原选择器把它漏掉了，走路态因此没有描边。 */
-.sprite{transform-origin:center;-webkit-user-drag:none;user-select:none}
+.sprite{filter:drop-shadow(0 0 1.5px rgba(255,255,255,.9)) drop-shadow(0 2px 3px rgba(255,255,255,.5)) drop-shadow(0 5px 12px rgba(0,0,0,.5));transform-origin:center;-webkit-user-drag:none;user-select:none}
 
 /* 起伏幅度砍半：72px 精灵上抖 5px（3.3Hz）看起来是抽搐而不是走路。
    频率保持每循环两次（四足对角步态本来如此），只压幅度。 */
@@ -72,7 +72,7 @@ body[data-pet="cat"]:not([data-state="sleep"]) #cat-run,
 body[data-pet="cat"][data-state="sleep"] #cat-sleep,
 body[data-pet="rabbit"]:not([data-state="sleep"]) #rabbit-run,
 body[data-pet="rabbit"][data-state="sleep"] #rabbit-sleep{display:block}
-</style></head>
+</style><style>html,body{background:#6b6b6b !important}</style></head>
 <body data-pet="dog" data-state="idle">
 <div id="stage">
   <div class="critter" id="critter">

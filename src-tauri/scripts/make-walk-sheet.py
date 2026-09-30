@@ -29,6 +29,32 @@ def background_to_alpha(im, thresh=235):
     bg = (a[:,:,0]==255)&(a[:,:,1]==0)&(a[:,:,2]==255)
     return Image.fromarray(np.dstack([np.array(im), np.where(bg,0,255).astype(np.uint8)]), 'RGBA')
 
+def add_outline(im, white_px=2, shadow_px=3, shadow_alpha=70):
+    """把白描边 + 柔和投影烘焙进素材（替代 CSS 的 filter: drop-shadow）。
+
+    为什么非烘不可：走路精灵是 `div` + `background-image`，浏览器给这种元素做
+    drop-shadow 时按**元素盒子**算（实测四边可见率 24%/21%/67%），于是宠物外面
+    多出一个"贴纸边框"；`<img>` 才会跟着 alpha 走。烘进素材后两边一致，
+    CSS 也不用再挂滤镜。
+    """
+    from PIL import ImageFilter
+    a = im.convert('RGBA')
+    alpha = a.getchannel('A')
+    # 投影：向下偏移 1px 的黑色柔光
+    shadow_mask = alpha.filter(ImageFilter.MaxFilter(shadow_px * 2 + 1)).point(
+        lambda v: min(255, int(v * shadow_alpha / 255))
+    )
+    out = Image.new('RGBA', (a.size[0] + 4, a.size[1] + 6), (0, 0, 0, 0))
+    dark = Image.new('RGBA', a.size, (0, 0, 0, 255))
+    out.paste(dark, (2, 4), shadow_mask)
+    # 白描边
+    ring = alpha.filter(ImageFilter.MaxFilter(white_px * 2 + 1))
+    white = Image.new('RGBA', a.size, (255, 255, 255, 255))
+    out.paste(white, (2, 2), ring)
+    out.paste(a, (2, 2), a)
+    return out
+
+
 def ink_runs(ink, min_w=8, min_gap=2):
     cols = ink.any(axis=0); runs=[]; s=None; gap=0
     for i,v in enumerate(cols):
@@ -99,6 +125,8 @@ def main():
         sheet = Image.new('RGBA',(pitch*len(frames),CH),(0,0,0,0))
         for i,f in enumerate(frames): sheet.alpha_composite(f,(i*pitch+(pw-f.size[0])//2,0))
         frames_out = frames
+    if opt('--outline',1):
+        sheet = add_outline(sheet)
     sheet.save(dst)
     print(f"✅ 输出 {dst}: {sheet.size[0]}x{sheet.size[1]}  {len(frames_out)} 帧 帧宽={[f.size[0] for f in frames_out]} pitch={pitch}")
     pw2=max(f.size[0] for f in frames_out)
