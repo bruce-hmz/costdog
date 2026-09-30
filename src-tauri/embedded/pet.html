@@ -4,7 +4,10 @@ body{margin:0;background:transparent;overflow:hidden;user-select:none}
 /* 底部横条舞台：只有 220px 高，绝不全屏铺 absolute —— 全铺布局会触发
    透明窗合成死区（历史教训） */
 #stage{position:fixed;left:0;right:0;bottom:0;height:220px}
-.critter{position:absolute;bottom:110px;width:150px;height:170px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;transition:left 1.2s linear}
+.critter{position:absolute;bottom:110px;width:150px;height:170px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;transition:left 1.2s linear;cursor:grab;touch-action:none}
+/* 拖动中：去掉 left 的 1.2s 缓动（否则宠物追不上光标），并换成抓取光标 */
+body.dragging .critter{transition:none;cursor:grabbing}
+body.dragging .critter *{cursor:grabbing}
 /* ── 三只宠物：每只一对元素（跑/睡）。可见性只由 data-pet × data-state 决定，
    全程不换 img.src（铁律 2：高频换 src 会重绘风暴挤出铭牌层）。
    狗有 8 帧走路雪碧图；猫/兔只有单帧跑图，靠步态弹跳 + 位移表现走动。 ── */
@@ -34,7 +37,7 @@ body.walking #rabbit-run{animation:rabbitwalk 1s steps(8) infinite,stepbob .5s e
 body.walking .crit-run{animation:stepbob .5s ease-in-out infinite}
 /* 白描边+投影让宠物在任何背景上都看得见。注意用 .sprite 而非 img.sprite——
    狗的跑图是 div（雪碧图），原选择器把它漏掉了，走路态因此没有描边。 */
-.sprite{filter:drop-shadow(0 0 1.5px rgba(255,255,255,.9)) drop-shadow(0 2px 3px rgba(255,255,255,.5)) drop-shadow(0 5px 12px rgba(0,0,0,.5));transform-origin:center}
+.sprite{filter:drop-shadow(0 0 1.5px rgba(255,255,255,.9)) drop-shadow(0 2px 3px rgba(255,255,255,.5)) drop-shadow(0 5px 12px rgba(0,0,0,.5));transform-origin:center;-webkit-user-drag:none;user-select:none}
 
 @keyframes stepbob{0%,100%{transform:translateY(0)}25%{transform:translateY(-2.5px)}50%{transform:translateY(0)}75%{transform:translateY(-1.5px)}}
 /* 铭牌贴住狗头顶：狗盒高 72px，bottom:80px ⇒ 与头顶留 8px（跑动 stepbob 抬 2.5px 仍有余量）。
@@ -112,6 +115,7 @@ function applyPet(){
 }
 document.getElementById('switcher').addEventListener('click',function(e){
   e.stopPropagation();
+  if(dragMoved)return;                     // 刚拖动过就别顺手切换
   petIdx=(petIdx+1)%PETS.length;
   try{localStorage.setItem('costdog.pet',curPet().id);}catch(err){}
   applyPet();
@@ -122,9 +126,69 @@ var SW=window.innerWidth;
 var dogX=SW*0.4, dir=1, walkTarget=null;
 var state='pause', stateUntil=Date.now()+2000;
 var lastLive=0, sleeping=false;
+/* 宠物底边距窗口底部的距离（拖动可改，之后就在这个高度上散步） */
+var roamBottom=110, PET_W=150, PET_H=170;
 function clampX(x){return Math.max(10,Math.min(SW-160,x));}
 function setDog(x){dogX=clampX(x);critter.style.left=dogX+'px';}
+function clampBottom(b){return Math.max(6,Math.min(window.innerHeight-PET_H-30,b));}   // 顶部留 30px 避开菜单栏
+function setPetBottom(b){roamBottom=clampBottom(b);critter.style.bottom=roamBottom+'px';}
+/* 位置持久化：记住拖动后的 (left, bottom)，下次启动就从那儿开始
+   （换分辨率/换屏后由 setDog/setPetBottom 夹取修正；拖动结束与召唤时写入） */
+var POS_KEY='costdog.pos';
+function savePos(){
+  try{localStorage.setItem(POS_KEY,JSON.stringify({x:Math.round(dogX),b:Math.round(roamBottom)}));}catch(err){}
+}
+try{
+  var savedPos=JSON.parse(localStorage.getItem(POS_KEY)||'null');
+  if(savedPos&&typeof savedPos.x==='number')dogX=savedPos.x;
+  if(savedPos&&typeof savedPos.b==='number')roamBottom=clampBottom(savedPos.b);
+}catch(err){}
 setDog(dogX);
+setPetBottom(roamBottom);
+/* ── 拖动 ──
+   绝不移动窗口（铁律 1：程序化移窗会让非激活窗的移动帧不被合成 → 隐身），
+   拖动只改宠物在窗内的 left/bottom；窗口是全屏的，所以视觉上等价于"拖着它在桌面上走"。
+   与漫游的关系：拖动期间冻结状态机，松手后停 3s 再从新位置继续散步（手动位置优先）。 */
+var dragging=false, dragMoved=false, grabDX=0, grabDY=0, dragX0=0, dragY0=0, dragLost=null;
+function setDragMode(on){
+  if(!window.__TAURI_INTERNALS__)return;
+  window.__TAURI_INTERNALS__.invoke('set_pet_dragging',{dragging:on}).catch(function(){});
+  clearTimeout(dragLost);
+  if(on)dragLost=setTimeout(function(){ if(dragging)endDrag(); },15000);   // 兜底：pointerup 丢了也要收工
+}
+function onDragDown(e){
+  if(e.button!==undefined&&e.button!==0)return;
+  dragging=true; dragMoved=false;
+  grabDX=e.clientX-dogX;
+  grabDY=e.clientY-(window.innerHeight-roamBottom-PET_H);   // 光标相对宠物框左上角
+  dragX0=e.clientX; dragY0=e.clientY;
+  try{critter.setPointerCapture(e.pointerId);}catch(err){}
+  setDragMode(true);
+}
+function onDragMove(e){
+  if(!dragging)return;
+  if(!dragMoved){
+    if(Math.abs(e.clientX-dragX0)<4&&Math.abs(e.clientY-dragY0)<4)return;   // 4px 阈值：之内算点击
+    dragMoved=true;
+    document.body.classList.add('dragging');
+    state='pause'; stateUntil=Date.now()+1e9;    // 冻结漫游，别和手指抢位置
+  }
+  setDog(e.clientX-grabDX);
+  setPetBottom(window.innerHeight-(e.clientY-grabDY)-PET_H);
+}
+function endDrag(){
+  if(!dragging)return;
+  dragging=false;
+  document.body.classList.remove('dragging');
+  try{critter.releasePointerCapture&&critter.releasePointerCapture(1);}catch(err){}
+  setDragMode(false);
+  if(dragMoved){ state='pause'; stateUntil=Date.now()+3000; walkTarget=null; setDog(dogX); savePos(); }
+}
+critter.addEventListener('pointerdown',onDragDown);
+critter.addEventListener('pointermove',onDragMove);
+critter.addEventListener('pointerup',endDrag);
+critter.addEventListener('pointercancel',endDrag);
+window.addEventListener('blur',endDrag);
 function liveNow(){return Date.now()-lastLive<8000;}
 setInterval(function(){
   SW=window.innerWidth;
@@ -152,6 +216,7 @@ setInterval(function(){
 var SESSIONS=[],lockedSession=null;
 plate.addEventListener('click',function(e){
   e.stopPropagation();
+  if(dragMoved)return;                     // 拖完松手不要顺带切换会话
   if(!SESSIONS.length)return;
   var ids=SESSIONS.map(function(x){return x.session_id;});
   var next;
@@ -204,6 +269,7 @@ setInterval(function(){
       requestAnimationFrame(function(){critter.style.transition='';});
       document.body.style.opacity='0.99';
       setTimeout(function(){document.body.style.opacity='1';},60);
+      savePos();
     }
   }).catch(function(){});
 },500);

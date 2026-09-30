@@ -57,8 +57,8 @@ CLAUDE.md                    — **第 5-69 节为本会话全部迭代记录，
 | # | 问题 | 现状/线索 |
 |---|---|---|
 | 1 | **间歇隐身未 100% 根除** | 修掉 8 个诱因后实测 2 分钟 10 采样全可见，但用户仍偶发"不见"（同刻实拍可见——疑与前台应用/系统状态相关）。缓解=召唤开关。建议 review：窗口服务日志抓剔除事件，或换 NSPanel 子类方案 |
-| 2 | 猫/兔无 8 帧走路图 | 仅狗有雪碧图；猫/兔是单帧平移。ChatGPT 生图链路已自动化（隔离 Chrome profile ~/.costdog/chrome-profile + CDP 9222）可复用 |
-| 3 | 宠物拖拽手感 | 全屏穿透窗内 drag-region 拖拽与光标守卫（解除穿透条件 ±12px）交互未调优；现拖拽基本不可用 |
+| 2 | 猫/兔走路图 | **已解决**：三只宠物都有 8 帧走路雪碧图（猫 856×72 pitch 107、兔 704×72 pitch 88，狗 694×72 pitch 86.75），流程脚本化在 `src-tauri/scripts/`（见 §9.7）。遗留：新生成的猫/兔行走帧是**像素风**（边缘对比度 14.7~21），与它们自己的睡姿帧（2.5D 渲染，3.8~4.4）风格不同 —— 狗本来就是"走路像素风/睡觉渲染风"，现在三只统一成这个约定了；想要走路也保持渲染质感需重新生图（措辞要更强） |
+| 3 | 宠物拖拽 | **已支持**（见 §9.8）：窗内拖动（不移窗），Pointer Events + 4px 阈值区分点击/拖动，拖动期间光标守卫强制保持可交互 + 10s 超时自愈。手感调优点待用户实测反馈 |
 | 4 | 会话切换芯片（⇄）点击区小 | 自动化点不中，仅人工可点 |
 | 5 | CDP 注入路线未完成 | costdog-inject.mjs 已写好（Dream Skin 模式注入宿主 DOM），embed_zcode/embed_codex 托盘命令会重启对应客户端带调试端口；因用户转向宠物形态而搁置 |
 | 6 | 149 提交未 push | remote 为 bruce-hmz/costdog；push 前建议 squash 整理（大量"修了又修"的隐身系列） |
@@ -84,3 +84,30 @@ screencapture -x -R<x-25>,<y-40>,200,250 /tmp/dog.png  # 按 pet.json 坐标裁�
 3. pet.html：确认无换 src 动画、无 inset 全铺、setDog 的 clamp（SW-160）。
 4. 9401 服务仅绑 127.0.0.1 且 CORS *（本机工具可接受，但 review 确认无监听 0.0.0.0）。
 5. CLAUDE.md §5-69 与 git log 对照，确认文档声称的每个"已修复"都有对应提交与验证记录。
+
+## 9. 2026-09-29 晚 Review 修复记录（DSH review agent）
+
+完整 review 见 `HANDOFF-REVIEW.md`。本轮修掉 4 个 P0（均在部署后的实例上验证过）：
+
+1. **睡姿精灵永不显示 → 静默 60s 后狗彻底消失**（`embedded/pet.html`）：`<img id="dog-sleep">` 的 `hidden` 属性从无代码移除，sleep 态下 `#dog-run` 被 `body[data-state="sleep"]` 隐藏、`#dog-sleep` 被 `[hidden]` 隐藏 → 两个精灵都不画。现可见性只由 `data-state` 决定（删 `hidden` 与 `img.sprite[hidden]` 规则，改为 `body:not([data-state="sleep"]) #dog-sleep{display:none}`）。逐版核对：自 9f2cc99（09-26）以来没有任何一版能显示睡姿。
+2. **走路雪碧图被声明成 8 倍大 → 走路是一条 88×19 涂抹**（`embedded/pet.html`）：素材真值 694×218（8 帧 ×86.75px），而 CSS 写 `background-size:5552px 72px`(=694×8) / `to{background-position:-5552px}`。改为 `694px 218px` / `-694px`，元素宽 88→86px。
+3. **App Nap 实际没被禁用**（`src/dock.rs`）：`beginActivityWithOptions:reason:` 返回 +0 autoreleased token，裸指针一丢活动即自动结束（NSProcessInfo.h 明示），且位掩码 `(0xFF<<20)|(1<<20)|(1<<0)` 没设上 `NSActivityLatencyCritical`(bit 32-39) 与 `IdleDisplaySleepDisabled`(bit 40)。现为进程级永久持有（`APP_NAP_HOLD`）+ 正确掩码 `0x00FFFFFF | 0xFF<<32 | 1<<40`。**验证：`pmset -g assertions` 出现两条 `CostDog pet animation` 断言（修复前 0 条）。**
+4. **托盘「召唤小狗」是死的**（CSP）：`pet.html` 内 `fetch('http://127.0.0.1:9401/pet.json')` 被 app CSP 的 `connect-src 'self' ipc: http://ipc.localhost` 拒掉（netstat 实测该 fetch 从未发生）。新增 IPC 命令 `get_summon_count` 取代（app 命令不受 ACL 限制，宠物页本来就走 IPC）。
+
+本轮验证手段（不依赖屏幕录制权限）：`cargo test` 38/38；内联脚本 `node --check`；headless Chrome 读 computed style + canvas 复现 CSS 背景 → sleep 态 `#dog-sleep`=block / `#dog-run`=none，帧墨迹 84×72（新）vs 88×20（旧）；部署后 `/pet.json`、`/stats.json`、`lsof`（仅 127.0.0.1）、`pmset` 断言、unified log（宠物页 500ms IPC 节拍存活、无新增崩溃）。
+
+**仍未修**（优先级见 REVIEW 报告）：zcode 速率没有"生成中"（查询过滤掉 `status='running'`，`now<end` 分支是死代码）；claude-code/opencode 命中率 >1000%（分母只对 codex 分支修过）；面板窗口无 capability（事件订阅被 ACL 拒）；光标守卫重复 spawn 两份；`NSPoint` 编码写成 `{NSPoint=dd}`（真机 `{CGPoint=dd}`，debug 构建会让守卫线程 panic）；`full_scan()` 在主线程阻塞首帧；9.3MB 无引用素材（现在是 ~9.0MB，猫/兔素材已启用）；`npm run test:ts` 目前是红的（index.html 947 处 CJK vs 断言 null，且没有测试覆盖 pet.html）。
+
+5. **铭牌离宠物 70px**（`embedded/pet.html`）：全文屏改写时留下的布局残留——铭牌 `top:-2px` 钉在 170px 容器顶部，而宠物被 `justify-content:flex-end` 压在底部。实测空隙 70.3px。改为贴底锚定：`.plate{bottom:80px}`（宠物盒高 72 + 8px 头顶间隙），`#switcher`/`#zzz` 移到 `bottom:114px`（铭牌上方一行，原来 `top:16px` 是**压在铭牌上**的）。Chrome 实测三只宠物 × 跑/睡/停 六种组合空隙均为 8.0px。
+6. **⇄ 芯片做成真切换**（`embedded/pet.html`）：原点击处理只有 `stopPropagation()`（三宠物切换逻辑在 9f2cc99 回滚时丢了，猫/兔素材完全不可达）。现为每只宠物一对元素（跑/睡共 6 个），可见性 = `body[data-pet] × body[data-state]` 的 CSS 矩阵，**全程不换 `img.src`**（铁律 2）；点击循环 柴犬→橘猫→灰兔 并写入 `localStorage['costdog.pet']`，标题动态提示"当前：X 点击换成 Y"。顺带修掉两个 review 里点出的老 bug：①转向改用独立 `scale` 属性（原行内 `scaleX(-1)` 被 `stepbob` 的 `transform` 动画覆盖 → 走动时宠物从不回头）；②白描边选择器 `img.sprite` → `.sprite`（狗的跑图是 div，原选择器把它漏掉，走路态没有描边）。
+7. **猫/兔也补上 8 帧走路雪碧图 + 生图链路脚本化**：`embedded/cat-walk-sheet.png`(856×72)、`embedded/rabbit-walk-sheet.png`(704×72)，三只跑图元素统一成 `div.sheet` + `background-position steps(8)`（与狗同机制，零重排）。新增两个可复用脚本：
+   - `src-tauri/scripts/chatgpt-gen-image.mjs`：CDP 驱动隔离 profile 里已登录的 ChatGPT 生图（新会话→上传参考图→输入提示词→回车→等新图→canvas dataURL 落盘）。实测成品稳定 2172×724 / 8 帧横排，约 40~70s。文件头写了启动 Chrome 的完整命令与踩坑（composer 不是 `#prompt-textarea`；结果有两份 blob；参考图缩略图也会被 `img` 命中，必须按 `naturalWidth` 过滤）。
+   - `src-tauri/scripts/make-walk-sheet.py`：横排原图 → 去白底（**从四边泛洪**，白毛角色不会被抠掉）→ 按模型自带等分列切帧（避免逐帧 bbox 居中导致身体左右抖）→ 缩放到 72 高 → 等距拼接，并打印逐帧墨迹/帧间差异与可直接抄用的 CSS 参数。
+   - 提示词模板（狗/猫/兔同一套，只换物种）：「生成一张图片：<物种>侧面走路循环精灵图（sprite sheet），横向排列8帧，从左到右构成一个完整的步行周期（迈前腿→四腿交替→蹬地→回收）。严格保持参考图里这只<物种>的角色形象、配色、渲染风格与大小比例完全一致，纯白背景，帧间等距，每帧姿态基线一致，无文字、无边框、无地面阴影。」
+   - 验证：headless Chrome 用 Web Animations API 把动画拨到 t=0/500/999ms，三只的背景位移分别精确落在 4×/7× pitch（狗 -347/-607.25、猫 -428/-749、兔 -352/-616）→ 8 帧逐步推进无误；三只 × idle/run/sleep 九种组合都只显示一个元素、与铭牌空隙均为 8.0px。
+8. **拖动支持**（`embedded/pet.html` + `dock.rs` + `lib.rs`）：铁律 1 禁止程序化移窗，所以拖动**只改宠物在窗内的 left/bottom**（窗口是全屏的，视觉上等价于拖着它在桌面上走）。要点：
+   - Pointer Events + **4px 阈值**区分点击与拖动（阈值内照旧触发铭牌切会话 / ⇄ 切宠物；拖动过就不触发，避免"拖完顺手切了宠物"）；`-webkit-user-drag:none` 挡掉图片原生拖拽；`setPointerCapture` 保证移出元素后仍收得到 move。
+   - 拖动期间 `body.dragging` 把 `.critter` 的 `left 1.2s` 缓动关掉（否则宠物追不上光标）、光标切 `grabbing`、漫游状态机冻结（`stateUntil=now+1e9`）；松手后停 3s 再从新位置继续散步，**纵向位置会成为新的散步高度**。
+   - 新增 IPC `set_pet_dragging(bool)`：光标守卫在拖动期间**强制保持窗口可交互**。这是老问题（§6.3）的根因——快速拖动时光标会瞬时离开宠物矩形，守卫切回穿透 → pointermove 断流 → 拖动卡在中途。带 **10s 超时自愈**（`PET_DRAG_AT` 存时间戳而非 bool），万一 pointerup 丢了也不会让全屏窗一直吃掉用户点击。
+   - 守卫轮询 **80ms → 40ms**：这个周期就是"光标移入宠物→解除穿透"的延迟，直接决定"按下能不能抓住"。
+   - 验证：headless Chrome 合成 PointerEvent → 位移精确（抓点 +200/−60 得到 Δ=(200,−60)）、拖动中 `transition=0s`/`cursor=grabbing`/`body.dragging=true`、松手恢复 1.2s；拖到屏幕外夹取到 `left=innerWidth−160` / `top=30`（避开菜单栏）；拖后立刻点 ⇄ 不切换、2px 抖动不触发拖动；`cargo test` 38/38。

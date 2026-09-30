@@ -2478,6 +2478,12 @@ fn get_summon_count() -> u32 {
     dock::summon_count()
 }
 
+/// 宠物页拖动开始/结束。拖动期间光标守卫强制保持窗口可交互（否则快速拖动会断流卡住）。
+#[tauri::command]
+fn set_pet_dragging(dragging: bool) {
+    dock::set_pet_dragging(dragging);
+}
+
 /// 调用窗口自己的宿主：main=zcode，cap-<host>=<host>（多胶囊架构）。
 #[tauri::command]
 fn get_dock_host(window: tauri::WebviewWindow) -> String {
@@ -3666,7 +3672,7 @@ pub fn run() {
                 .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions, get_live_session, set_live_session, get_session_cost_alert, set_pet_rect, get_summon_count, embed_zcode, embed_codex, get_walk_state])
+        .invoke_handler(tauri::generate_handler![resize_window, get_data, get_analytics, get_source_status, get_monthly_budget, set_monthly_budget, set_activity_category_override, dismiss_alert, scan, refresh_pricing, close_window, check_for_updates, get_dock_zcode, set_dock_zcode, get_live_stats, get_session_metrics, get_dock_host, list_recent_sessions, get_live_session, set_live_session, get_session_cost_alert, set_pet_rect, get_summon_count, set_pet_dragging, embed_zcode, embed_codex, get_walk_state])
         .setup(|app| {
             // A 36px always-on-top bar is an accessory, not an app: drop the Dock icon
             // and the app menu so CostDog lives entirely in the menu bar.

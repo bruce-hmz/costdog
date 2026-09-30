@@ -25,6 +25,27 @@ static ROAM_TARGET_X: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI6
 static ROAM_WALKING: AtomicBool = AtomicBool::new(false);
 /// 召唤计数：托盘触发 +1，前端轮询发现后把狗移到屏幕中央并强制重绘。
 static SUMMON: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// 拖动中：由宠物页 pointerdown 写入时间戳(ms)，pointerup / pointercancel 写 0。
+/// 光标守卫在拖动期间**强制保持窗口可交互**——否则快速拖动时光标会短暂离开宠物矩形，
+/// 守卫立刻恢复穿透，指针事件断流、拖动卡在中途（HANDOFF §6.3 记的老问题）。
+/// 带 10s 超时自愈：万一 pointerup 丢了，也不会让全屏窗一直吃掉用户点击。
+static PET_DRAG_AT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+pub fn set_pet_dragging(dragging: bool) {
+    PET_DRAG_AT.store(if dragging { now_ms() } else { 0 }, Ordering::Relaxed);
+}
+
+pub fn pet_dragging() -> bool {
+    let t = PET_DRAG_AT.load(Ordering::Relaxed);
+    t != 0 && now_ms().saturating_sub(t) < 10_000
+}
 
 pub fn bump_summon() -> u32 {
     SUMMON.fetch_add(1, Ordering::Relaxed) + 1
@@ -227,7 +248,9 @@ pub fn spawn_cursor_guard(app: tauri::AppHandle) {
         use tauri::Manager;
         let mut pass_through = true;
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(80));
+            // 40ms 而非 80ms：光标进入宠物范围→解除穿透的延迟就是这个周期，
+            // 直接决定"按下能不能抓住宠物"的手感（80ms 时快速移入后立刻按下会被穿透吃掉）。
+            std::thread::sleep(std::time::Duration::from_millis(40));
             let (px, py, pw, ph) = match PET_RECT.lock() {
                 Ok(g) => *g,
                 Err(_) => (0.0, 0.0, 0.0, 0.0),
@@ -237,10 +260,13 @@ pub fn spawn_cursor_guard(app: tauri::AppHandle) {
             }
             let Some((mx, my)) = cursor_point() else { continue };
             let margin = 12.0;
-            let inside = mx >= px - margin
-                && mx <= px + pw + margin
-                && my >= py - margin
-                && my <= py + ph + margin;
+            // 拖动期间不看命中：指针捕获 + 快速位移会让光标瞬时离开矩形，
+            // 一旦切回穿透，pointermove 就断流，拖动会卡住。
+            let inside = pet_dragging()
+                || (mx >= px - margin
+                    && mx <= px + pw + margin
+                    && my >= py - margin
+                    && my <= py + ph + margin);
             if inside == pass_through {
                 if let Some(w) = app.get_webview_window("topbar") {
                     w.set_ignore_cursor_events(!inside).ok();
